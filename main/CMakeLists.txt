@@ -217,6 +217,15 @@ elseif(CONFIG_BOARD_TYPE_M5STACK_CORE_S3)
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)
     set(BUILTIN_ICON_FONT font_material_symbols_20_4)
     set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_64)
+elseif(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3)
+    set(BOARD_DIR "m5stack/provisions-core-s3")
+    set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)
+    set(BUILTIN_ICON_FONT font_material_symbols_20_4)
+    set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_64)
+    list(APPEND SOURCES
+        "boards/m5stack/core-s3/cores3_audio_codec.cc"
+        "provisions_endpoint_policy.cc"
+    )
 elseif(CONFIG_BOARD_TYPE_M5STACK_STICK_S3)
     set(BOARD_DIR "m5stack/stick-s3")
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_16_4)
@@ -1020,8 +1029,10 @@ if(CONFIG_IDF_TARGET_ESP32)
                              )
 endif()
 
-# Include EspVideo if target is ESP32S3 or ESP32P4
-if(CONFIG_IDF_TARGET_ESP32S3 OR CONFIG_IDF_TARGET_ESP32P4)
+# Include camera/video support only for profiles that expose it. Gate 1 keeps
+# the CoreS3 camera physically present but deliberately unavailable in firmware.
+if((CONFIG_IDF_TARGET_ESP32S3 OR CONFIG_IDF_TARGET_ESP32P4)
+   AND NOT CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3)
     list(APPEND SOURCES "boards/common/esp_video.cc"
                         "boards/common/rndis_board.cc"
                         )
@@ -1032,8 +1043,8 @@ if(CONFIG_IDF_TARGET_ESP32S31)
     list(APPEND SOURCES "boards/common/esp_video.cc")
 endif()
 
-# Include Esp32Camera if target is ESP32S3
-if(CONFIG_IDF_TARGET_ESP32S3)
+# Include Esp32Camera if target is ESP32S3 and the board profile allows it.
+if(CONFIG_IDF_TARGET_ESP32S3 AND NOT CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3)
     list(APPEND SOURCES "boards/common/esp32_camera.cc")
 endif()
 

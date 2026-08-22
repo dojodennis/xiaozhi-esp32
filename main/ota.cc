@@ -2,6 +2,9 @@
 #include "system_info.h"
 #include "settings.h"
 #include "assets/lang_config.h"
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+#include "provisions_endpoint_policy.h"
+#endif
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -44,12 +47,16 @@ Ota::~Ota() {
 }
 
 std::string Ota::GetCheckVersionUrl() {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    return ProvisionsEndpointPolicy::BootstrapUrl();
+#else
     Settings settings("wifi", false);
     std::string url = settings.GetString("ota_url");
     if (url.empty()) {
         url = CONFIG_OTA_URL;
     }
     return url;
+#endif
 }
 
 std::unique_ptr<Http> Ota::SetupHttp() {
@@ -67,6 +74,18 @@ std::unique_ptr<Http> Ota::SetupHttp() {
     http->SetHeader("User-Agent", user_agent);
     http->SetHeader("Accept-Language", Lang::CODE);
     http->SetHeader("Content-Type", "application/json");
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    Settings settings("provisions", false);
+    std::string token = settings.GetString("device_token");
+    if (!ProvisionsEndpointPolicy::IsValidDeviceToken(token)) {
+        ESP_LOGE(TAG, "Provisions device credential is missing or malformed");
+        return nullptr;
+    }
+    http->SetHeader("Authorization", "Bearer " + token);
+    http->SetHeader("Protocol-Version", "1");
+    http->SetHeader("X-Provisions-Boot-Id", SystemInfo::GetBootId());
+    http->SetHeader("X-Provisions-Firmware-Version", esp_app_get_description()->version);
+#endif
 
     return http;
 }
@@ -87,8 +106,17 @@ esp_err_t Ota::CheckVersion() {
         ESP_LOGE(TAG, "Check version URL is not properly set");
         return ESP_ERR_INVALID_ARG;
     }
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    if (!ProvisionsEndpointPolicy::IsAllowedBootstrapUrl(url)) {
+        ESP_LOGE(TAG, "Compiled Provisions bootstrap endpoint was rejected");
+        return ESP_ERR_INVALID_ARG;
+    }
+#endif
 
     auto http = SetupHttp();
+    if (http == nullptr) {
+        return ESP_ERR_INVALID_STATE;
+    }
 
     std::string data = board.GetSystemInfoJson();
     std::string method = data.length() > 0 ? "POST" : "GET";
@@ -145,6 +173,11 @@ esp_err_t Ota::CheckVersion() {
 
     has_mqtt_config_ = false;
     cJSON *mqtt = cJSON_GetObjectItem(root, "mqtt");
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    if (cJSON_IsObject(mqtt)) {
+        ESP_LOGW(TAG, "Ignoring MQTT configuration for the Provisions gateway build");
+    }
+#else
     if (cJSON_IsObject(mqtt)) {
         Settings settings("mqtt", true);
         cJSON *item = NULL;
@@ -163,9 +196,30 @@ esp_err_t Ota::CheckVersion() {
     } else {
         ESP_LOGI(TAG, "No mqtt section found !");
     }
+#endif
 
     has_websocket_config_ = false;
     cJSON *websocket = cJSON_GetObjectItem(root, "websocket");
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    if (cJSON_IsObject(websocket)) {
+        cJSON* url = cJSON_GetObjectItem(websocket, "url");
+        cJSON* version = cJSON_GetObjectItem(websocket, "version");
+        const bool valid_version =
+            version == nullptr || (cJSON_IsNumber(version) && version->valueint == 1);
+        if (cJSON_IsString(url) && valid_version &&
+            ProvisionsEndpointPolicy::IsAllowedWebsocketUrl(url->valuestring)) {
+            Settings settings("websocket", true);
+            settings.SetString("url", ProvisionsEndpointPolicy::WebsocketUrl());
+            settings.EraseKey("token");
+            settings.SetInt("version", 1);
+            has_websocket_config_ = true;
+        } else {
+            ESP_LOGE(TAG, "Bootstrap returned an unapproved WebSocket configuration");
+        }
+    } else {
+        ESP_LOGE(TAG, "Bootstrap response has no WebSocket configuration");
+    }
+#else
     if (cJSON_IsObject(websocket)) {
         Settings settings("websocket", true);
         cJSON *item = NULL;
@@ -184,6 +238,7 @@ esp_err_t Ota::CheckVersion() {
     } else {
         ESP_LOGI(TAG, "No websocket section found!");
     }
+#endif
 
     has_server_time_ = false;
     cJSON *server_time = cJSON_GetObjectItem(root, "server_time");
@@ -211,6 +266,8 @@ esp_err_t Ota::CheckVersion() {
     }
 
     has_new_version_ = false;
+    firmware_version_.clear();
+    firmware_url_.clear();
     cJSON *firmware = cJSON_GetObjectItem(root, "firmware");
     if (cJSON_IsObject(firmware)) {
         cJSON *version = cJSON_GetObjectItem(firmware, "version");
@@ -218,11 +275,15 @@ esp_err_t Ota::CheckVersion() {
             firmware_version_ = version->valuestring;
         }
         cJSON *url = cJSON_GetObjectItem(firmware, "url");
-        if (cJSON_IsString(url)) {
+        if (cJSON_IsString(url)
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+            && ProvisionsEndpointPolicy::IsAllowedFirmwareUrl(url->valuestring)
+#endif
+        ) {
             firmware_url_ = url->valuestring;
         }
 
-        if (cJSON_IsString(version) && cJSON_IsString(url)) {
+        if (cJSON_IsString(version) && !firmware_url_.empty()) {
             // Check if the version is newer, for example, 0.1.0 is newer than 0.0.1
             has_new_version_ = IsNewVersionAvailable(current_version_, firmware_version_);
             if (has_new_version_) {
@@ -235,6 +296,10 @@ esp_err_t Ota::CheckVersion() {
             if (cJSON_IsNumber(force) && force->valueint == 1) {
                 has_new_version_ = true;
             }
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        } else if (cJSON_IsString(url)) {
+            ESP_LOGE(TAG, "Bootstrap returned an unapproved firmware URL");
+#endif
         }
     } else {
         ESP_LOGW(TAG, "No firmware section found!");
@@ -264,7 +329,23 @@ void Ota::MarkCurrentVersionValid() {
     }
 }
 
+bool Ota::IsCurrentVersionPendingVerification() const {
+    auto partition = esp_ota_get_running_partition();
+    if (partition == nullptr || strcmp(partition->label, "factory") == 0) {
+        return false;
+    }
+    esp_ota_img_states_t state;
+    return esp_ota_get_state_partition(partition, &state) == ESP_OK &&
+           state == ESP_OTA_IMG_PENDING_VERIFY;
+}
+
 bool Ota::Upgrade(const std::string& firmware_url, std::function<void(int progress, size_t speed)> callback) {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    if (!ProvisionsEndpointPolicy::IsAllowedFirmwareUrl(firmware_url)) {
+        ESP_LOGE(TAG, "Refusing firmware URL outside the Provisions preview policy");
+        return false;
+    }
+#endif
     ESP_LOGI(TAG, "Upgrading firmware from %s", firmware_url.c_str());
     esp_ota_handle_t update_handle = 0;
     auto update_partition = esp_ota_get_next_update_partition(NULL);
@@ -279,6 +360,17 @@ bool Ota::Upgrade(const std::string& firmware_url, std::function<void(int progre
 
     auto network = Board::GetInstance().GetNetwork();
     auto http = network->CreateHttp(0);
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    Settings settings("provisions", false);
+    std::string token = settings.GetString("device_token");
+    if (!ProvisionsEndpointPolicy::IsValidDeviceToken(token)) {
+        ESP_LOGE(TAG, "Provisions device credential is missing or malformed");
+        return false;
+    }
+    http->SetHeader("Authorization", "Bearer " + token);
+    http->SetHeader("X-Provisions-Boot-Id", SystemInfo::GetBootId());
+    http->SetHeader("X-Provisions-Firmware-Version", esp_app_get_description()->version);
+#endif
     if (!http->Open("GET", firmware_url)) {
         ESP_LOGE(TAG, "Failed to open HTTP connection");
         return false;
@@ -469,6 +561,9 @@ esp_err_t Ota::Activate() {
     }
 
     auto http = SetupHttp();
+    if (http == nullptr) {
+        return ESP_ERR_INVALID_STATE;
+    }
 
     std::string data = GetActivationPayload();
     http->SetContent(std::move(data));

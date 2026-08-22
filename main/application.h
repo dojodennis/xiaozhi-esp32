@@ -6,12 +6,13 @@
 #include <freertos/task.h>
 #include <esp_timer.h>
 
-#include <string>
-#include <mutex>
-#include <deque>
-#include <memory>
-#include <functional>
+#include <atomic>
 #include <cstdint>
+#include <deque>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <string>
 #include <vector>
 
 #include "protocol.h"
@@ -151,6 +152,15 @@ private:
     bool assets_version_checked_ = false;
     bool play_popup_on_listening_ = false;  // Flag to play popup sound after state changes to listening
     bool pending_listening_start_ = false;  // Waiting for playback to drain before starting listening (auto mode)
+    std::atomic<bool> manual_listening_requested_{false};
+    std::atomic<bool> network_connected_{false};
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    std::atomic<bool> provisions_response_pending_{false};
+    int provisions_heartbeat_ticks_ = 0;
+    int provisions_response_ticks_ = 0;
+    int provisions_reconnect_wait_ticks_ = 0;
+    int provisions_reconnect_attempts_ = 0;
+#endif
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;
 
@@ -165,6 +175,11 @@ private:
     void HandleActivationDoneEvent();
     void HandleWakeWordDetectedEvent();
     void ContinueOpenAudioChannel(ListeningMode mode);
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    void HandleProvisionsGatewayMaintenance();
+    void SetProvisionsResponsePending(bool pending);
+    const char* GetProvisionsIdleStatus() const;
+#endif
     void BeginWakeWordInvoke(const std::string& wake_word);
     void ContinueWakeWordInvoke(const std::string& wake_word);
     void StartListeningAudio();

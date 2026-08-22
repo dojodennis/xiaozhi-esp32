@@ -333,6 +333,9 @@ choice BOARD_TYPE
     config BOARD_TYPE_M5STACK_CORE_S3
         bool "M5Stack CoreS3"
         depends on IDF_TARGET_ESP32S3
+    config BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3
+        bool "M5Stack Provisions Kitchen Helper CoreS3"
+        depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_M5STACK_STICK_S3
         bool "M5Stack StickS3"
         depends on IDF_TARGET_ESP32S3
@@ -866,6 +869,7 @@ config USE_MULTILINE_CHAT_MESSAGE
 
 choice WAKE_WORD_TYPE
     prompt "Wake Word Implementation Type"
+    default WAKE_WORD_DISABLED if BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3
     default USE_AFE_WAKE_WORD if (IDF_TARGET_ESP32S3 || IDF_TARGET_ESP32P4 || IDF_TARGET_ESP32S31) && SPIRAM
     default WAKE_WORD_DISABLED
     help
@@ -884,17 +888,36 @@ choice WAKE_WORD_TYPE
 
     config USE_AFE_WAKE_WORD
         bool "Wakenet model with AFE"
-        depends on (IDF_TARGET_ESP32S3 || IDF_TARGET_ESP32P4 || IDF_TARGET_ESP32S31) && SPIRAM
+        depends on (IDF_TARGET_ESP32S3 || IDF_TARGET_ESP32P4 || IDF_TARGET_ESP32S31) && SPIRAM && !BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3
         help
             Support AEC if available, requires ESP32-S3, ESP32-P4, or ESP32-S31 and PSRAM
 
     config USE_CUSTOM_WAKE_WORD
         bool "Multinet model (Custom Wake Word)"
-        depends on (IDF_TARGET_ESP32S3 || IDF_TARGET_ESP32P4 || IDF_TARGET_ESP32S31) && SPIRAM
+        depends on (IDF_TARGET_ESP32S3 || IDF_TARGET_ESP32P4 || IDF_TARGET_ESP32S31) && SPIRAM && !BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3
         help
             Requires ESP32-S3, ESP32-P4, or ESP32-S31 and PSRAM
 
 endchoice
+
+config PROVISIONS_GATEWAY_REQUIRED
+    bool
+    default y if BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3
+
+config PROVISIONS_PREVIEW_HOST
+    string
+    default "app.provisions-app.com"
+    depends on PROVISIONS_GATEWAY_REQUIRED
+
+config PROVISIONS_PREVIEW_PATH_PREFIX
+    string
+    default "/kitchen-helper/preview/v1/"
+    depends on PROVISIONS_GATEWAY_REQUIRED
+
+config PROVISIONS_PREVIEW_WEBSOCKET_URL
+    string
+    default "wss://app.provisions-app.com/kitchen-helper/preview/v1/device"
+    depends on PROVISIONS_GATEWAY_REQUIRED
 
 config CUSTOM_WAKE_WORD
     string "Custom Wake Word"

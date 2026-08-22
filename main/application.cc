@@ -10,15 +10,75 @@
 #include "system_info.h"
 #include "text_glyph_payload.h"
 #include "websocket_protocol.h"
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+#include "provisions_endpoint_policy.h"
+#endif
 
 #include <driver/gpio.h>
 #include <esp_log.h>
+#include <esp_system.h>
 #include <arpa/inet.h>
 #include <cJSON.h>
+#include <algorithm>
 #include <cstring>
+#include <initializer_list>
 #include <limits>
+#include <string_view>
 
 #define TAG "Application"
+
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+namespace {
+constexpr int kProvisionsHeartbeatIntervalSeconds = 15;
+constexpr int kProvisionsResponseTimeoutSeconds = 30;
+constexpr int kProvisionsMaximumReconnectAttempts = 5;
+
+bool HasExactKeys(const cJSON* object, std::initializer_list<std::string_view> expected_keys) {
+    if (!cJSON_IsObject(object) ||
+        cJSON_GetArraySize(object) != static_cast<int>(expected_keys.size())) {
+        return false;
+    }
+    for (auto expected : expected_keys) {
+        bool found = false;
+        cJSON* item = nullptr;
+        cJSON_ArrayForEach (item, object) {
+            if (item->string != nullptr && expected == item->string) {
+                if (found) {
+                    return false;
+                }
+                found = true;
+            }
+        }
+        if (!found) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool IsApprovedShortText(const char* text) {
+    if (text == nullptr) {
+        return false;
+    }
+    const size_t length = std::strlen(text);
+    if (length == 0 || length > 48) {
+        return false;
+    }
+    return std::all_of(text, text + length, [](unsigned char character) {
+        return character >= 0x20 && character <= 0x7e;
+    });
+}
+
+bool IsApprovedReceiptText(std::string_view text) {
+    return text == "Found" || text == "No match" || text == "Draft only" ||
+           text == "Cancelled" || text == "Check app";
+}
+
+bool IsBoundedTtsText(const char* text) {
+    return text != nullptr && std::strlen(text) <= 2048;
+}
+}
+#endif
 
 Application::Application() : notify_player_(audio_service_) {
     event_group_ = xEventGroupCreate();
@@ -99,9 +159,11 @@ void Application::Initialize() {
     esp_timer_start_periodic(clock_timer_handle_, 1000000);
 
     // Add MCP common tools (only once during initialization)
+#if !CONFIG_PROVISIONS_GATEWAY_REQUIRED
     auto& mcp_server = McpServer::GetInstance();
     mcp_server.AddCommonTools();
     mcp_server.AddUserOnlyTools();
+#endif
 
     // Set network event callback for UI updates and network state handling
     board.SetNetworkEventCallback([this](NetworkEvent event, const std::string& data) {
@@ -109,6 +171,7 @@ void Application::Initialize() {
 
         switch (event) {
             case NetworkEvent::Scanning:
+                network_connected_.store(false);
                 display->ShowNotification(Lang::Strings::SCANNING_WIFI, 30000);
                 xEventGroupSetBits(event_group_, MAIN_EVENT_NETWORK_DISCONNECTED);
                 break;
@@ -126,6 +189,7 @@ void Application::Initialize() {
                 break;
             }
             case NetworkEvent::Connected: {
+                network_connected_.store(true);
                 std::string msg = Lang::Strings::CONNECTED_TO;
                 msg += data;
                 display->ShowNotification(msg.c_str(), 30000);
@@ -133,6 +197,7 @@ void Application::Initialize() {
                 break;
             }
             case NetworkEvent::Disconnected:
+                network_connected_.store(false);
                 xEventGroupSetBits(event_group_, MAIN_EVENT_NETWORK_DISCONNECTED);
                 break;
             case NetworkEvent::WifiConfigModeEnter:
@@ -185,12 +250,23 @@ void Application::Run() {
         auto bits = xEventGroupWaitBits(event_group_, ALL_EVENTS, pdTRUE, pdFALSE, portMAX_DELAY);
 
         if (bits & MAIN_EVENT_ERROR) {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+            SetProvisionsResponsePending(false);
+            if (provisions_reconnect_wait_ticks_ == 0) {
+                provisions_reconnect_wait_ticks_ = 1;
+            }
+#endif
             if (GetDeviceState() == kDeviceStateNotifying) {
                 StopNotification();
             }
             SetDeviceState(kDeviceStateIdle);
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+            Alert("Unavailable", last_error_message_.c_str(), "cancel",
+                  Lang::Sounds::OGG_EXCLAMATION);
+#else
             Alert(Lang::Strings::ERROR, last_error_message_.c_str(), "cancel",
                   Lang::Sounds::OGG_EXCLAMATION);
+#endif
         }
 
         if (bits & MAIN_EVENT_NETWORK_CONNECTED) {
@@ -273,6 +349,10 @@ void Application::Run() {
             auto display = Board::GetInstance().GetDisplay();
             display->UpdateStatusBar();
 
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+            HandleProvisionsGatewayMaintenance();
+#endif
+
             // Print debug info every 10 seconds
             if (clock_ticks_ % 10 == 0) {
                 SystemInfo::PrintHeapStats();
@@ -285,6 +365,7 @@ void Application::Run() {
 
 void Application::HandleNetworkConnectedEvent() {
     ESP_LOGI(TAG, "Network connected");
+    network_connected_.store(true);
     auto state = GetDeviceState();
 
     if (state == kDeviceStateStarting || state == kDeviceStateWifiConfiguring) {
@@ -305,21 +386,43 @@ void Application::HandleNetworkConnectedEvent() {
             "activation", 4096 * 2, this, 2, &activation_task_handle_);
     }
 
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    if (state == kDeviceStateIdle && protocol_) {
+        provisions_reconnect_attempts_ = 0;
+        provisions_reconnect_wait_ticks_ = 0;
+    }
+#endif
+
     // Update the status bar immediately to show the network state
     auto display = Board::GetInstance().GetDisplay();
     display->UpdateStatusBar(true);
 }
 
 void Application::HandleNetworkDisconnectedEvent() {
+    network_connected_.store(false);
     // Close current conversation when network disconnected
     auto state = GetDeviceState();
     if (state == kDeviceStateNotifying) {
         StopNotification();
     }
-    if (state == kDeviceStateConnecting || state == kDeviceStateListening ||
-        state == kDeviceStateSpeaking) {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    if (protocol_) {
+        SetProvisionsResponsePending(false);
+        provisions_reconnect_attempts_ = 0;
+        provisions_reconnect_wait_ticks_ = 1;
+#else
+    if (protocol_ && (state == kDeviceStateConnecting || state == kDeviceStateListening ||
+                      state == kDeviceStateSpeaking)) {
+#endif
         ESP_LOGI(TAG, "Closing audio channel due to network disconnection");
         protocol_->CloseAudioChannel();
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        if (state == kDeviceStateConnecting || state == kDeviceStateListening ||
+            state == kDeviceStateSpeaking) {
+            SetDeviceState(kDeviceStateIdle);
+        }
+        Board::GetInstance().GetDisplay()->SetStatus("Unavailable");
+#endif
     }
 
     // Update the status bar immediately to show the network state
@@ -330,14 +433,33 @@ void Application::HandleNetworkDisconnectedEvent() {
 void Application::HandleActivationDoneEvent() {
     ESP_LOGI(TAG, "Activation done");
 
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    if (!protocol_ || !protocol_->IsAudioChannelOpened()) {
+        ESP_LOGE(TAG, "Provisions gateway authentication is not ready");
+        Alert("Unavailable", "Gateway authentication failed", "cancel",
+              Lang::Sounds::OGG_EXCLAMATION);
+        return;
+    }
+#endif
+
     SystemInfo::PrintHeapStats();
     SetDeviceState(kDeviceStateIdle);
 
     has_server_time_ = ota_->HasServerTime();
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    // Provisions firmware is healthy only after its gateway has authenticated this boot.
+    ota_->MarkCurrentVersionValid();
+    provisions_reconnect_attempts_ = 0;
+    provisions_reconnect_wait_ticks_ = 0;
+#endif
 
     auto display = Board::GetInstance().GetDisplay();
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    display->SetStatus("Ready");
+#else
     std::string message = std::string(Lang::Strings::VERSION) + ota_->GetCurrentVersion();
     display->ShowNotification(message.c_str());
+#endif
     display->SetChatMessage("system", "");
 
     // Release OTA object after activation is complete
@@ -361,8 +483,29 @@ void Application::ActivationTask() {
     // Check for new firmware version
     CheckNewVersion();
 
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    if (!ota_->HasWebsocketConfig()) {
+        ESP_LOGE(TAG, "Provisions bootstrap did not produce an approved gateway session");
+        last_error_message_ = "Gateway bootstrap failed";
+        xEventGroupSetBits(event_group_, MAIN_EVENT_ERROR);
+        if (ota_->IsCurrentVersionPendingVerification()) {
+            ESP_LOGE(TAG, "Pending firmware did not pass bootstrap; rebooting for rollback");
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            esp_restart();
+        }
+        return;
+    }
+#endif
+
     // Initialize the protocol
     InitializeProtocol();
+
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    if (!protocol_ || !protocol_->IsAudioChannelOpened()) {
+        ESP_LOGE(TAG, "Provisions gateway authentication failed during activation");
+        return;
+    }
+#endif
 
     // Signal completion to main loop
     xEventGroupSetBits(event_group_, MAIN_EVENT_ACTIVATION_DONE);
@@ -374,6 +517,14 @@ void Application::CheckAssetsVersion() {
         return;
     }
     assets_version_checked_ = true;
+
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    // Gate 1 ships fixed local assets and must not honor an old arbitrary download URL.
+    Settings provisions_assets_settings("assets", true);
+    provisions_assets_settings.EraseKey("download_url");
+    Assets::GetInstance().Apply();
+    return;
+#endif
 
     auto& board = Board::GetInstance();
     auto display = board.GetDisplay();
@@ -429,9 +580,14 @@ void Application::CheckAssetsVersion() {
 }
 
 void Application::CheckNewVersion() {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    const int MAX_RETRY = 3;
+    int retry_delay = 1;  // Preview boot fails closed after two short waits.
+#else
     const int MAX_RETRY = 10;
-    int retry_count = 0;
     int retry_delay = 10;  // Initial retry delay in seconds
+#endif
+    int retry_count = 0;
 
     auto& board = Board::GetInstance();
     while (true) {
@@ -477,7 +633,11 @@ void Application::CheckNewVersion() {
             continue;
         }
         retry_count = 0;
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        retry_delay = 1;
+#else
         retry_delay = 10;  // Reset retry delay
+#endif
 
         if (ota_->HasNewVersion()) {
             if (UpgradeFirmware(ota_->GetFirmwareUrl(), ota_->GetFirmwareVersion())) {
@@ -487,7 +647,9 @@ void Application::CheckNewVersion() {
         }
 
         // No new version, mark the current version as valid
+#if !CONFIG_PROVISIONS_GATEWAY_REQUIRED
         ota_->MarkCurrentVersionValid();
+#endif
         if (!ota_->HasActivationCode() && !ota_->HasActivationChallenge()) {
             // Exit the loop if done checking new version
             break;
@@ -524,6 +686,16 @@ void Application::InitializeProtocol() {
 
     display->SetStatus(Lang::Strings::LOADING_PROTOCOL);
 
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    if (ota_->HasWebsocketConfig()) {
+        protocol_ = std::make_unique<WebsocketProtocol>();
+    } else {
+        ESP_LOGE(TAG, "Provisions bootstrap did not return the approved WebSocket");
+        last_error_message_ = "Approved gateway configuration is unavailable";
+        xEventGroupSetBits(event_group_, MAIN_EVENT_ERROR);
+        return;
+    }
+#else
     if (ota_->HasMqttConfig()) {
         protocol_ = std::make_unique<MqttProtocol>();
     } else if (ota_->HasWebsocketConfig()) {
@@ -532,10 +704,21 @@ void Application::InitializeProtocol() {
         ESP_LOGW(TAG, "No protocol specified in the OTA config, using MQTT");
         protocol_ = std::make_unique<MqttProtocol>();
     }
+#endif
 
-    protocol_->OnConnected([this]() { DismissAlert(); });
+    protocol_->OnConnected([this]() {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        provisions_heartbeat_ticks_ = 0;
+        provisions_reconnect_attempts_ = 0;
+        provisions_reconnect_wait_ticks_ = 0;
+#endif
+        DismissAlert();
+    });
 
     protocol_->OnNetworkError([this](const std::string& message) {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        provisions_response_pending_.store(false);
+#endif
         last_error_message_ = message;
         xEventGroupSetBits(event_group_, MAIN_EVENT_ERROR);
     });
@@ -559,8 +742,18 @@ void Application::InitializeProtocol() {
     protocol_->OnAudioChannelClosed([this, &board]() {
         board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
         Schedule([this]() {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+            SetProvisionsResponsePending(false);
+            provisions_heartbeat_ticks_ = 0;
+            if (provisions_reconnect_wait_ticks_ == 0) {
+                provisions_reconnect_wait_ticks_ = 1;
+            }
+#endif
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+            display->SetStatus("Unavailable");
+#endif
             SetDeviceState(kDeviceStateIdle);
         });
     });
@@ -572,6 +765,89 @@ void Application::InitializeProtocol() {
             ESP_LOGW(TAG, "Incoming JSON message has no type");
             return;
         }
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        auto reject_gateway_frame = [this]() {
+            Schedule([this]() {
+                SetProvisionsResponsePending(false);
+                if (protocol_) {
+                    protocol_->CloseAudioChannel();
+                }
+                Alert("Unavailable", "Invalid gateway response", "cancel",
+                      Lang::Sounds::OGG_EXCLAMATION);
+            });
+        };
+        if (strcmp(type->valuestring, "provisions") != 0 &&
+            strcmp(type->valuestring, "tts") != 0) {
+            ESP_LOGE(TAG, "Rejecting unsupported Provisions gateway frame type");
+            reject_gateway_frame();
+            return;
+        }
+#endif
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        if (strcmp(type->valuestring, "provisions") == 0) {
+            auto session = cJSON_GetObjectItem(root, "session_id");
+            auto state = cJSON_GetObjectItem(root, "state");
+            auto text = cJSON_GetObjectItem(root, "text");
+            const bool valid_session = cJSON_IsString(session) && protocol_ &&
+                                       protocol_->session_id() == session->valuestring;
+            bool valid = valid_session && cJSON_IsString(state);
+            bool working = false;
+            bool terminal = false;
+            std::string display_text;
+
+            if (valid && strcmp(state->valuestring, "heartbeat") == 0) {
+                valid = HasExactKeys(root, {"session_id", "type", "state"});
+                if (valid) {
+                    return;
+                }
+            } else if (valid && strcmp(state->valuestring, "working") == 0) {
+                valid = HasExactKeys(root, {"session_id", "type", "state", "text"}) &&
+                        cJSON_IsString(text) && strcmp(text->valuestring, "Working") == 0;
+                working = valid;
+            } else if (valid && strcmp(state->valuestring, "result") == 0) {
+                auto receipt_id = cJSON_GetObjectItem(root, "receipt_id");
+                valid = HasExactKeys(
+                            root, {"session_id", "type", "state", "text", "receipt_id"}) &&
+                        cJSON_IsString(text) &&
+                        IsApprovedReceiptText(text->valuestring) &&
+                        cJSON_IsString(receipt_id) &&
+                        ProvisionsEndpointPolicy::IsCanonicalUuid(receipt_id->valuestring);
+                terminal = valid;
+                if (valid) {
+                    display_text = text->valuestring;
+                }
+            } else if (valid &&
+                       (strcmp(state->valuestring, "success") == 0 ||
+                        strcmp(state->valuestring, "not_found") == 0 ||
+                        strcmp(state->valuestring, "warning") == 0)) {
+                valid = HasExactKeys(root, {"session_id", "type", "state", "text"}) &&
+                        cJSON_IsString(text) && IsApprovedShortText(text->valuestring);
+                terminal = valid;
+                if (valid) {
+                    display_text = text->valuestring;
+                }
+            } else {
+                valid = false;
+            }
+
+            if (!valid) {
+                ESP_LOGE(TAG, "Rejecting malformed Provisions state frame");
+                reject_gateway_frame();
+                return;
+            }
+            if (working) {
+                Schedule([this]() { SetProvisionsResponsePending(true); });
+                return;
+            }
+            if (terminal) {
+                Schedule([this, display, message = std::move(display_text)]() {
+                    SetProvisionsResponsePending(false);
+                    display->ShowNotification(message.c_str(), 3000);
+                });
+                return;
+            }
+        } else
+#endif
         if (strcmp(type->valuestring, "notify") == 0) {
             auto audio_url = cJSON_GetObjectItem(root, "audio_url");
             if (!cJSON_IsString(audio_url) || audio_url->valuestring[0] == '\0') {
@@ -607,16 +883,50 @@ void Application::InitializeProtocol() {
             });
         } else if (strcmp(type->valuestring, "tts") == 0) {
             auto state = cJSON_GetObjectItem(root, "state");
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+            auto session = cJSON_GetObjectItem(root, "session_id");
+            const bool valid_session = cJSON_IsString(session) && protocol_ &&
+                                       protocol_->session_id() == session->valuestring;
+            if (!valid_session) {
+                ESP_LOGE(TAG, "Rejecting TTS frame with an invalid session");
+                reject_gateway_frame();
+                return;
+            }
+#endif
             if (!cJSON_IsString(state)) {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+                ESP_LOGE(TAG, "Rejecting TTS frame without a state");
+                reject_gateway_frame();
+#endif
                 return;
             }
             if (strcmp(state->valuestring, "start") == 0) {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+                if (!HasExactKeys(root, {"session_id", "type", "state"})) {
+                    ESP_LOGE(TAG, "Rejecting malformed TTS start frame");
+                    reject_gateway_frame();
+                    return;
+                }
+#endif
                 Schedule([this]() {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+                    SetProvisionsResponsePending(false);
+#endif
                     aborted_ = false;
                     SetDeviceState(kDeviceStateSpeaking);
                 });
             } else if (strcmp(state->valuestring, "stop") == 0) {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+                if (!HasExactKeys(root, {"session_id", "type", "state"})) {
+                    ESP_LOGE(TAG, "Rejecting malformed TTS stop frame");
+                    reject_gateway_frame();
+                    return;
+                }
+#endif
                 Schedule([this]() {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+                    SetProvisionsResponsePending(false);
+#endif
                     if (GetDeviceState() == kDeviceStateSpeaking) {
                         if (listening_mode_ == kListeningModeManualStop) {
                             SetDeviceState(kDeviceStateIdle);
@@ -626,6 +936,7 @@ void Application::InitializeProtocol() {
                     }
                 });
             } else if (strcmp(state->valuestring, "sentence_start") == 0) {
+#if !CONFIG_PROVISIONS_GATEWAY_REQUIRED
                 auto text = cJSON_GetObjectItem(root, "text");
                 if (cJSON_IsString(text)) {
                     std::vector<TextGlyph> glyphs;
@@ -640,8 +951,22 @@ void Application::InitializeProtocol() {
                         display->SetChatMessage("assistant", message.c_str());
                     });
                 }
+#endif
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+                auto text = cJSON_GetObjectItem(root, "text");
+                if (!HasExactKeys(root, {"session_id", "type", "state", "text"}) ||
+                    !cJSON_IsString(text) || !IsBoundedTtsText(text->valuestring)) {
+                    ESP_LOGE(TAG, "Rejecting malformed TTS sentence frame");
+                    reject_gateway_frame();
+                    return;
+                }
+            } else {
+                ESP_LOGE(TAG, "Rejecting unsupported TTS state");
+                reject_gateway_frame();
+#endif
             }
         } else if (strcmp(type->valuestring, "stt") == 0) {
+#if !CONFIG_PROVISIONS_GATEWAY_REQUIRED
             auto text = cJSON_GetObjectItem(root, "text");
             if (cJSON_IsString(text)) {
                 std::vector<TextGlyph> glyphs;
@@ -656,6 +981,7 @@ void Application::InitializeProtocol() {
                     display->SetChatMessage("user", message.c_str());
                 });
             }
+#endif
         } else if (strcmp(type->valuestring, "llm") == 0) {
             auto emotion = cJSON_GetObjectItem(root, "emotion");
             if (cJSON_IsString(emotion)) {
@@ -680,6 +1006,9 @@ void Application::InitializeProtocol() {
                 }
             }
         } else if (strcmp(type->valuestring, "alert") == 0) {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+            provisions_response_pending_.store(false);
+#endif
             auto status = cJSON_GetObjectItem(root, "status");
             auto message = cJSON_GetObjectItem(root, "message");
             auto emotion = cJSON_GetObjectItem(root, "emotion");
@@ -707,7 +1036,11 @@ void Application::InitializeProtocol() {
         }
     });
 
-    protocol_->Start();
+    if (!protocol_->Start()) {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        ESP_LOGE(TAG, "Failed to authenticate the Provisions gateway");
+#endif
+    }
 }
 
 void Application::ShowActivationCode(const std::string& code, const std::string& message) {
@@ -749,17 +1082,138 @@ void Application::Alert(const char* status, const char* message, const char* emo
 void Application::DismissAlert() {
     if (GetDeviceState() == kDeviceStateIdle) {
         auto display = Board::GetInstance().GetDisplay();
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        display->SetStatus(GetProvisionsIdleStatus());
+#else
         display->SetStatus(Lang::Strings::STANDBY);
+#endif
         display->SetEmotion("neutral");
         display->SetChatMessage("system", "");
     }
 }
 
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+const char* Application::GetProvisionsIdleStatus() const {
+    if (!protocol_ || !protocol_->IsAudioChannelOpened()) {
+        return "Unavailable";
+    }
+    return provisions_response_pending_.load() ? "Working" : "Ready";
+}
+
+void Application::SetProvisionsResponsePending(bool pending) {
+    provisions_response_pending_.store(pending);
+    provisions_response_ticks_ = 0;
+    if (GetDeviceState() == kDeviceStateIdle) {
+        Board::GetInstance().GetDisplay()->SetStatus(GetProvisionsIdleStatus());
+    }
+}
+
+void Application::HandleProvisionsGatewayMaintenance() {
+    if (!protocol_ || activation_task_handle_ != nullptr ||
+        GetDeviceState() != kDeviceStateIdle) {
+        return;
+    }
+
+    auto websocket = static_cast<WebsocketProtocol*>(protocol_.get());
+    auto display = Board::GetInstance().GetDisplay();
+
+    if (provisions_response_pending_.load()) {
+        provisions_response_ticks_++;
+        if (provisions_response_ticks_ >= kProvisionsResponseTimeoutSeconds) {
+            ESP_LOGE(TAG, "Provisions gateway response timed out");
+            SetProvisionsResponsePending(false);
+            protocol_->CloseAudioChannel();
+            provisions_reconnect_attempts_ = 0;
+            provisions_reconnect_wait_ticks_ = 1;
+            Alert("Unavailable", "Request timed out", "cancel", Lang::Sounds::OGG_EXCLAMATION);
+            return;
+        }
+    }
+
+    if (!network_connected_.load()) {
+        provisions_heartbeat_ticks_ = 0;
+        display->SetStatus("Unavailable");
+        return;
+    }
+
+    if (websocket->IsGatewayHeartbeatExpired()) {
+        ESP_LOGW(TAG, "Provisions gateway heartbeat expired");
+        SetProvisionsResponsePending(false);
+        protocol_->CloseAudioChannel();
+        provisions_heartbeat_ticks_ = 0;
+        provisions_reconnect_attempts_ = 0;
+        provisions_reconnect_wait_ticks_ = 1;
+        display->SetStatus("Unavailable");
+        return;
+    }
+
+    if (protocol_->IsAudioChannelOpened()) {
+        provisions_reconnect_attempts_ = 0;
+        provisions_reconnect_wait_ticks_ = 0;
+        provisions_heartbeat_ticks_++;
+        if (provisions_heartbeat_ticks_ >= kProvisionsHeartbeatIntervalSeconds) {
+            provisions_heartbeat_ticks_ = 0;
+            if (!websocket->SendGatewayHeartbeat()) {
+                ESP_LOGW(TAG, "Failed to send Provisions gateway heartbeat");
+                SetProvisionsResponsePending(false);
+                protocol_->CloseAudioChannel();
+                provisions_reconnect_wait_ticks_ = 1;
+                display->SetStatus("Unavailable");
+            }
+        }
+        return;
+    }
+
+    SetProvisionsResponsePending(false);
+    provisions_heartbeat_ticks_ = 0;
+    if (provisions_reconnect_attempts_ >= kProvisionsMaximumReconnectAttempts) {
+        display->SetStatus("Unavailable");
+        if (ota_ && ota_->IsCurrentVersionPendingVerification()) {
+            ESP_LOGE(TAG, "Pending firmware failed gateway health; rebooting for rollback");
+            esp_restart();
+        }
+        return;
+    }
+    if (provisions_reconnect_wait_ticks_ > 0) {
+        provisions_reconnect_wait_ticks_--;
+        return;
+    }
+
+    display->SetStatus("Connecting");
+    if (protocol_->OpenAudioChannel()) {
+        provisions_reconnect_attempts_ = 0;
+        provisions_reconnect_wait_ticks_ = 0;
+        if (ota_) {
+            has_server_time_ = ota_->HasServerTime();
+            ota_->MarkCurrentVersionValid();
+            ota_.reset();
+        }
+        Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+        display->SetStatus(GetProvisionsIdleStatus());
+        return;
+    }
+
+    const int attempt = provisions_reconnect_attempts_++;
+    provisions_reconnect_wait_ticks_ = 1 << attempt;
+    display->SetStatus("Unavailable");
+}
+#endif
+
 void Application::ToggleChatState() { xEventGroupSetBits(event_group_, MAIN_EVENT_TOGGLE_CHAT); }
 
-void Application::StartListening() { xEventGroupSetBits(event_group_, MAIN_EVENT_START_LISTENING); }
+void Application::StartListening() {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    manual_listening_requested_.store(true);
+#endif
+    xEventGroupSetBits(event_group_, MAIN_EVENT_START_LISTENING);
+}
 
-void Application::StopListening() { xEventGroupSetBits(event_group_, MAIN_EVENT_STOP_LISTENING); }
+void Application::StopListening() {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    manual_listening_requested_.store(false);
+#endif
+    xEventGroupSetBits(event_group_, MAIN_EVENT_STOP_LISTENING);
+}
 
 void Application::HandleToggleChatEvent() {
     auto state = GetDeviceState();
@@ -808,6 +1262,12 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
     if (GetDeviceState() != kDeviceStateConnecting) {
         return;
     }
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    if (mode == kListeningModeManualStop && !manual_listening_requested_.load()) {
+        SetDeviceState(kDeviceStateIdle);
+        return;
+    }
+#endif
 
     // Switch to performance mode before connecting to reduce latency
     auto& board = Board::GetInstance();
@@ -822,10 +1282,26 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
         }
     }
 
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    if (mode == kListeningModeManualStop && !manual_listening_requested_.load()) {
+        SetDeviceState(kDeviceStateIdle);
+        return;
+    }
+#endif
+
     SetListeningMode(mode);
 }
 
 void Application::HandleStartListeningEvent() {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    if (!manual_listening_requested_.load()) {
+        return;
+    }
+    if (provisions_response_pending_.load()) {
+        ESP_LOGW(TAG, "Ignoring Talk while the previous request is working");
+        return;
+    }
+#endif
     auto state = GetDeviceState();
 
     if (state == kDeviceStateNotifying) {
@@ -870,8 +1346,16 @@ void Application::HandleStopListeningEvent() {
         audio_service_.EnableAudioTesting(false);
         SetDeviceState(kDeviceStateWifiConfiguring);
         return;
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    } else if (state == kDeviceStateConnecting) {
+        SetDeviceState(kDeviceStateIdle);
+        return;
+#endif
     } else if (state == kDeviceStateListening) {
         if (protocol_) {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+            SetProvisionsResponsePending(true);
+#endif
             protocol_->SendStopListening();
         }
         SetDeviceState(kDeviceStateIdle);
@@ -991,7 +1475,11 @@ void Application::HandleStateChangedEvent() {
     switch (new_state) {
         case kDeviceStateUnknown:
         case kDeviceStateIdle:
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+            display->SetStatus(GetProvisionsIdleStatus());
+#else
             display->SetStatus(Lang::Strings::STANDBY);
+#endif
             display->ClearChatMessages();    // Clear messages first
             display->SetEmotion("neutral");  // Then set emotion (wechat mode checks child count)
             audio_service_.EnableVoiceProcessing(false);
@@ -1052,6 +1540,12 @@ void Application::StartListeningAudio() {
     if (GetDeviceState() != kDeviceStateListening) {
         return;
     }
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    if (listening_mode_ == kListeningModeManualStop && !manual_listening_requested_.load()) {
+        SetDeviceState(kDeviceStateIdle);
+        return;
+    }
+#endif
 
     // Send the start listening command
     protocol_->SendStartListening(listening_mode_);
