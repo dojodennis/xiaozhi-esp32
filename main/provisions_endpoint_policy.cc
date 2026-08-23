@@ -20,6 +20,9 @@
 #ifndef CONFIG_OTA_URL
 #error "The Provisions bootstrap URL must be compiled into the firmware"
 #endif
+#ifndef BOARD_NAME
+#error "The Provisions firmware identity must be compiled into the firmware"
+#endif
 
 namespace {
 
@@ -33,6 +36,18 @@ constexpr std::string_view kExpectedOtaManifestUrl =
     "https://app.provisions-app.com/kitchen-helper/preview/v1/firmware/manifest.json";
 constexpr std::string_view kExpectedHealthUrl =
     "https://app.provisions-app.com/kitchen-helper/preview/v1/health";
+constexpr std::string_view kExpectedFirmwareIdentity = BOARD_NAME;
+
+#if defined(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3) && \
+    defined(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE)
+#error "Select exactly one Provisions CoreS3 hardware profile"
+#elif defined(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3)
+constexpr std::string_view kSelectedHardwareIdentity = "provisions-kitchen-helper-core-s3";
+#elif defined(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE)
+constexpr std::string_view kSelectedHardwareIdentity = "provisions-kitchen-helper-core-s3-lite";
+#else
+#error "A Provisions CoreS3 hardware profile is required"
+#endif
 
 static_assert(std::string_view(CONFIG_PROVISIONS_PREVIEW_HOST) == kExpectedHost,
               "Gate 1 must use the approved Provisions preview host");
@@ -42,6 +57,8 @@ static_assert(std::string_view(CONFIG_PROVISIONS_PREVIEW_WEBSOCKET_URL) == kExpe
               "Gate 1 must use the approved Provisions device WebSocket");
 static_assert(std::string_view(CONFIG_OTA_URL) == kExpectedBootstrapUrl,
               "Gate 1 must use the approved Provisions bootstrap URL");
+static_assert(kExpectedFirmwareIdentity == kSelectedHardwareIdentity,
+              "The CoreS3 hardware and OTA identities must match");
 
 struct ParsedUrl {
     std::string scheme;
@@ -264,8 +281,8 @@ bool ParseFirmwareUrl(const std::string& url, std::string& version, std::string&
     }
 
     const auto segments = SplitPath(parsed.path);
-    constexpr std::string_view kExpectedSegments[] = {
-        "kitchen-helper", "preview", "v1", "firmware", "provisions-kitchen-helper-core-s3"};
+    const std::string_view kExpectedSegments[] = {"kitchen-helper", "preview", "v1", "firmware",
+                                                  kExpectedFirmwareIdentity};
     if (segments.size() != 7) {
         return false;
     }

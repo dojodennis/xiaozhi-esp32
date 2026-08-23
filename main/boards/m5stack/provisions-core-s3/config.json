@@ -6,9 +6,34 @@
         {
             "name": "provisions-kitchen-helper-core-s3",
             "sdkconfig_append": [
+                "CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3=y",
                 "CONFIG_SPIRAM_MODE_QUAD=y",
                 "CONFIG_LOG_DEFAULT_LEVEL_INFO=y",
                 "CONFIG_LOG_MAXIMUM_LEVEL_INFO=y",
+                "CONFIG_CAMERA_GC0308=n",
+                "CONFIG_ESP_VIDEO_ENABLE_DVP_VIDEO_DEVICE=n",
+                "CONFIG_OTA_URL=\"https://app.provisions-app.com/kitchen-helper/preview/v1/bootstrap\"",
+                "CONFIG_PARTITION_TABLE_CUSTOM=y",
+                "CONFIG_BOOTLOADER_SKIP_VALIDATE_ALWAYS=y",
+                "CONFIG_SECURE_BOOT=n",
+                "CONFIG_SECURE_BOOT_V2_ENABLED=n",
+                "CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=n",
+                "CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=n",
+                "CONFIG_SECURE_FLASH_ENC_ENABLED=n",
+                "CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=n",
+                "CONFIG_NVS_ENCRYPTION=n",
+                "CONFIG_NVS_SEC_KEY_PROTECT_USING_FLASH_ENC=n"
+            ]
+        },
+        {
+            "name": "provisions-kitchen-helper-core-s3-lite",
+            "sdkconfig_append": [
+                "CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE=y",
+                "CONFIG_SPIRAM_MODE_QUAD=y",
+                "CONFIG_LOG_DEFAULT_LEVEL_INFO=y",
+                "CONFIG_LOG_MAXIMUM_LEVEL_INFO=y",
+                "CONFIG_CAMERA_GC0308=n",
+                "CONFIG_ESP_VIDEO_ENABLE_DVP_VIDEO_DEVICE=n",
                 "CONFIG_OTA_URL=\"https://app.provisions-app.com/kitchen-helper/preview/v1/bootstrap\"",
                 "CONFIG_PARTITION_TABLE_CUSTOM=y",
                 "CONFIG_BOOTLOADER_SKIP_VALIDATE_ALWAYS=y",

@@ -219,13 +219,18 @@ elseif(CONFIG_BOARD_TYPE_M5STACK_CORE_S3)
     set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_64)
 elseif(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3)
     set(BOARD_DIR "m5stack/provisions-core-s3")
+    set(PROVISIONS_CORE_S3_PROFILE ON)
+    set(PROVISIONS_CORE_S3_BOARD_NAME "provisions-kitchen-helper-core-s3")
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)
     set(BUILTIN_ICON_FONT font_material_symbols_20_4)
     set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_64)
-    list(APPEND SOURCES
-        "boards/m5stack/core-s3/cores3_audio_codec.cc"
-        "provisions_endpoint_policy.cc"
-    )
+elseif(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE)
+    set(BOARD_DIR "m5stack/provisions-core-s3")
+    set(PROVISIONS_CORE_S3_PROFILE ON)
+    set(PROVISIONS_CORE_S3_BOARD_NAME "provisions-kitchen-helper-core-s3-lite")
+    set(BUILTIN_TEXT_FONT font_noto_sans_basic_20_4)
+    set(BUILTIN_ICON_FONT font_material_symbols_20_4)
+    set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_64)
 elseif(CONFIG_BOARD_TYPE_M5STACK_STICK_S3)
     set(BOARD_DIR "m5stack/stick-s3")
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_16_4)
@@ -850,6 +855,19 @@ elseif(CONFIG_BOARD_TYPE_LCDWIKI_ES3C35P)
     set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_128)
 endif()
 
+if(PROVISIONS_CORE_S3_PROFILE)
+    if(BOARD_NAME AND NOT BOARD_NAME STREQUAL PROVISIONS_CORE_S3_BOARD_NAME)
+        message(FATAL_ERROR
+            "The selected Provisions CoreS3 Kconfig profile does not match BOARD_NAME '${BOARD_NAME}'"
+        )
+    endif()
+    set(BOARD_NAME "${PROVISIONS_CORE_S3_BOARD_NAME}")
+    list(APPEND SOURCES
+        "boards/m5stack/core-s3/cores3_audio_codec.cc"
+        "provisions_endpoint_policy.cc"
+    )
+endif()
+
 if(NOT BOARD_DIR AND NOT CMAKE_BUILD_EARLY_EXPANSION)
     message(FATAL_ERROR "The selected board does not define BOARD_DIR")
 endif()
@@ -1032,7 +1050,8 @@ endif()
 # Include camera/video support only for profiles that expose it. Gate 1 keeps
 # the CoreS3 camera physically present but deliberately unavailable in firmware.
 if((CONFIG_IDF_TARGET_ESP32S3 OR CONFIG_IDF_TARGET_ESP32P4)
-   AND NOT CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3)
+   AND NOT CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3
+   AND NOT CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE)
     list(APPEND SOURCES "boards/common/esp_video.cc"
                         "boards/common/rndis_board.cc"
                         )
@@ -1044,7 +1063,9 @@ if(CONFIG_IDF_TARGET_ESP32S31)
 endif()
 
 # Include Esp32Camera if target is ESP32S3 and the board profile allows it.
-if(CONFIG_IDF_TARGET_ESP32S3 AND NOT CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3)
+if(CONFIG_IDF_TARGET_ESP32S3
+   AND NOT CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3
+   AND NOT CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE)
     list(APPEND SOURCES "boards/common/esp32_camera.cc")
 endif()
 

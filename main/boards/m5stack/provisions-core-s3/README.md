@@ -1,22 +1,49 @@
-# Provisions Kitchen Helper CoreS3
+# Provisions Kitchen Helper CoreS3 family
 
-Gate 1 board profile for the full M5Stack CoreS3. It keeps the stock CoreS3
-microphone, speaker, display, PMIC, battery reporting and charging support. It
-does not initialize touch, camera or a wake word.
+Gate 1 has one maintained firmware architecture and two non-interchangeable
+hardware/OTA identities:
 
-Connect a M5Stack Unit Button U027 to Port.B. Its active-low signal is GPIO8.
-Hold the button to talk and release it to stop the microphone turn.
+| Build identity | Intended use | U027 white wire | Battery/base |
+| --- | --- | --- | --- |
+| `provisions-kitchen-helper-core-s3` | first sacrificial bench test | Port.B / GPIO8 | 500 mAh DIN base; bench only |
+| `provisions-kitchen-helper-core-s3-lite` | later client rollout | Port.A / GPIO1 | internal 200 mAh; no DIN base |
+
+Both products use the same internal microphone, speaker, 320x240 display,
+AXP2101 PMIC, AW9523B IO expander and audio/display pin map. The build guard
+changes only the external Talk pin and physical profile metadata. Hold the
+active-low M5Stack Unit Button U027 to talk and release it to end the turn.
+
+Touch, wake word and every camera software path are unavailable. The GC0308 is
+never initialized, its reset remains asserted by the IO expander, and OTA URLs
+must contain the exact compiled build identity. Fit an opaque physical lens
+cover as an additional visible privacy control; it is not a substitute for the
+firmware guard.
+
+Kconfig, CMake `BOARD_NAME`, the signed application identity marker and the OTA
+path are bound to the same profile. Factory and pre-flash verification reject a
+mutable `sdkconfig.h` sidecar that attempts to relabel a signed application.
+
+For a fixed kitchen installation, use protected, continuously rated USB-C 5 V
+power with cable strain relief. Treat either battery as short backup only. The
+Lite magnetic back cover can attach to a removable non-conductive bracket, but
+must remain outside splash, steam and direct heat zones with room for the side
+Port.A cable. Do not add the DIN base to the client enclosure.
 
 The build is locked to the preview namespace at
 `app.provisions-app.com/kitchen-helper/preview/v1`. It accepts the device bearer
 only from the untracked `provisions.device_token` NVS value. Do not put a token,
 Wi-Fi SSID or Wi-Fi password in this repository.
 
-Build with ESP-IDF 6.0.2:
+Build both profiles with ESP-IDF 6.0.2:
 
 ```sh
 python3 scripts/build.py m5stack/provisions-core-s3 \
   --name provisions-kitchen-helper-core-s3 \
+  --language en-US \
+  --wake-word disabled
+
+python3 scripts/build.py m5stack/provisions-core-s3 \
+  --name provisions-kitchen-helper-core-s3-lite \
   --language en-US \
   --wake-word disabled
 ```
@@ -58,14 +85,15 @@ approved public verification key. Raw unsigned build output, a generic/dev
 profile, an automatic in-container private-key build, a mismatched partition
 table or a dirty/non-release version is rejected.
 
-Obtain the CoreS3 Wi-Fi STA MAC with a read-only `esptool read-mac` operation and
+Obtain the device Wi-Fi STA MAC with a read-only `esptool read-mac` operation and
 register that exact lowercase value with the backend. Prepare a JSON file outside
 this repository with mode `0600`. Paste the server-issued device UUID and `pvd1`
 credential; do not put secrets on the command line or in an environment variable:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
+  "hardware_profile": "provisions-kitchen-helper-core-s3-lite",
   "device_uuid": "<server-issued lowercase UUID v4>",
   "hardware_serial": "<lowercase Wi-Fi STA MAC>",
   "device_credential": "<server-issued pvd1 credential>",
@@ -103,6 +131,12 @@ credential; do not put secrets on the command line or in an environment variable
   }
 }
 ```
+
+Set `hardware_profile` to the exact signed build being prepared. Use
+`provisions-kitchen-helper-core-s3` only for the sacrificial full-CoreS3 bench
+unit and `provisions-kitchen-helper-core-s3-lite` for a Lite. Legacy schema 1 is
+accepted only as the existing full-CoreS3 identity; all new bundles use schema
+2 so the operator choice, sdkconfig board symbol and manifest must agree.
 
 The `2.4GHz` values are operator assertions: an offline tool cannot infer radio
 band from an SSID. Supply exactly one primary network and at most one distinct
@@ -171,5 +205,16 @@ Wi-Fi change requires a technician-only signed maintenance/OTA path that reuses
 that key; release-mode devices cannot use this original plaintext UART factory
 flow after first boot. That maintenance path is not implemented here.
 
-This profile still requires a physical CoreS3/U027 smoke test for button
-polarity, audio, battery, charging, display, reconnects and short Talk presses.
+## Remaining physical gates
+
+Before the first bench boot, verify the full CoreS3 Wi-Fi MAC, U027 Port.B
+polarity/GPIO8, camera reset and opaque cover, display, microphone, speaker,
+battery/charging, USB-C supply, reconnect behavior, short Talk releases,
+rollback and recovery after interrupted OTA on the sacrificial unit.
+
+Before any Lite client rollout, repeat those checks on a real Lite using U027
+Port.A white/GPIO1. Also measure 200 mAh runtime, charging and enclosure
+temperature, validate magnetic/bracket retention and cable strain relief in the
+intended orientation, inspect splash/steam clearance, and prove that the Lite
+accepts only its own signed OTA identity while the backend registry recognizes
+that identity. No full-CoreS3 bench result substitutes for these Lite checks.

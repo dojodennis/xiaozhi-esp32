@@ -10,6 +10,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 BOARD_DIR = ROOT / "main/boards/m5stack/provisions-core-s3"
+FULL_PROFILE = "provisions-kitchen-helper-core-s3"
+LITE_PROFILE = "provisions-kitchen-helper-core-s3-lite"
+PROFILE_SYMBOLS = {
+    FULL_PROFILE: "CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3",
+    LITE_PROFILE: "CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE",
+}
 SPEC = importlib.util.spec_from_file_location("provisions_build", ROOT / "scripts/build.py")
 build = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
@@ -20,25 +26,42 @@ class ProvisionsCoreS3ProfileTests(unittest.TestCase):
     def test_board_is_unique_and_resolves_to_its_kconfig_symbol(self):
         config = json.loads((BOARD_DIR / "config.json").read_text(encoding="utf-8"))
         self.assertEqual(config["manufacturer"], "m5stack")
-        self.assertEqual(config["type"], "provisions-kitchen-helper-core-s3")
-        self.assertEqual(config["builds"][0]["name"], "provisions-kitchen-helper-core-s3")
-        self.assertEqual(
-            build._resolve_board_config("m5stack/provisions-core-s3", "esp32s3", []),
-            "CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3",
-        )
+        self.assertEqual(config["type"], FULL_PROFILE)
+        self.assertEqual({item["name"] for item in config["builds"]}, set(PROFILE_SYMBOLS))
+        for profile in config["builds"]:
+            name = profile["name"]
+            sdkconfig = set(profile["sdkconfig_append"])
+            self.assertIn(f"{PROFILE_SYMBOLS[name]}=y", sdkconfig)
+            self.assertTrue(
+                all(
+                    f"{symbol}=y" not in sdkconfig
+                    for other_name, symbol in PROFILE_SYMBOLS.items()
+                    if other_name != name
+                )
+            )
+            self.assertEqual(
+                build._resolve_board_config(
+                    "m5stack/provisions-core-s3",
+                    "esp32s3",
+                    profile["sdkconfig_append"],
+                    variant_name=name,
+                ),
+                PROFILE_SYMBOLS[name],
+            )
 
     def test_release_logging_cannot_emit_debug_request_headers(self):
         config = json.loads((BOARD_DIR / "config.json").read_text(encoding="utf-8"))
-        sdkconfig = set(config["builds"][0]["sdkconfig_append"])
-        self.assertIn("CONFIG_LOG_DEFAULT_LEVEL_INFO=y", sdkconfig)
-        self.assertIn("CONFIG_LOG_MAXIMUM_LEVEL_INFO=y", sdkconfig)
-        self.assertFalse(any("DEBUG=y" in item or "VERBOSE=y" in item for item in sdkconfig))
+        for profile in config["builds"]:
+            sdkconfig = set(profile["sdkconfig_append"])
+            self.assertIn("CONFIG_LOG_DEFAULT_LEVEL_INFO=y", sdkconfig)
+            self.assertIn("CONFIG_LOG_MAXIMUM_LEVEL_INFO=y", sdkconfig)
+            self.assertFalse(
+                any("DEBUG=y" in item or "VERBOSE=y" in item for item in sdkconfig)
+            )
 
     def test_developer_profile_explicitly_resets_pilot_security_choices(self):
         config = json.loads((BOARD_DIR / "config.json").read_text(encoding="utf-8"))
-        sdkconfig = set(config["builds"][0]["sdkconfig_append"])
-        self.assertTrue(
-            {
+        required = {
                 "CONFIG_SECURE_BOOT=n",
                 "CONFIG_SECURE_BOOT_V2_ENABLED=n",
                 "CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=n",
@@ -47,10 +70,11 @@ class ProvisionsCoreS3ProfileTests(unittest.TestCase):
                 "CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=n",
                 "CONFIG_NVS_ENCRYPTION=n",
                 "CONFIG_NVS_SEC_KEY_PROTECT_USING_FLASH_ENC=n",
-            }.issubset(sdkconfig)
-        )
+            }
+        for profile in config["builds"]:
+            self.assertTrue(required.issubset(set(profile["sdkconfig_append"])))
 
-    def test_board_keeps_core_hardware_and_only_adds_active_low_talk(self):
+    def test_board_keeps_shared_hardware_and_profile_guards_external_talk_pin(self):
         source = (BOARD_DIR / "provisions_core_s3.cc").read_text(encoding="utf-8")
         config = (BOARD_DIR / "config.h").read_text(encoding="utf-8")
         self.assertEqual(source.count("DECLARE_BOARD("), 1)
@@ -61,19 +85,33 @@ class ProvisionsCoreS3ProfileTests(unittest.TestCase):
         self.assertIn("OnPressUp", source)
         self.assertIn("StopListening", source)
         self.assertIn("#define TALK_BUTTON_GPIO GPIO_NUM_8", config)
+        self.assertIn("#define TALK_BUTTON_GPIO GPIO_NUM_1", config)
+        self.assertIn("PROVISIONS_NOMINAL_BATTERY_MAH 500", config)
+        self.assertIn("PROVISIONS_NOMINAL_BATTERY_MAH 200", config)
+        self.assertIn("PROVISIONS_HAS_DIN_BASE true", config)
+        self.assertIn("PROVISIONS_HAS_DIN_BASE false", config)
         self.assertIn("CoreS3AudioCodec", source)
         self.assertIn("GetBatteryLevel", source)
-        self.assertNotIn("Camera", source)
+        self.assertIn("kCameraResetHeld = 0b10001110", source)
+        self.assertIn("kDisplayResetHeld = 0b10001100", source)
+        self.assertIn('"PROVISIONS_SIGNED_HARDWARE_IDENTITY=" BOARD_NAME', source)
+        self.assertNotIn('#include "camera', source.casefold())
+        self.assertNotIn("GetCamera", source)
+        self.assertNotIn("new Esp32Camera", source)
+        self.assertNotIn("new EspVideo", source)
         self.assertNotIn("Touch", source)
         self.assertNotIn("WakeWord", source)
 
     def test_profile_uses_local_assets_and_exact_preview_bootstrap(self):
         config = json.loads((BOARD_DIR / "config.json").read_text(encoding="utf-8"))
-        sdkconfig = config["builds"][0]["sdkconfig_append"]
-        self.assertIn(
-            'CONFIG_OTA_URL="https://app.provisions-app.com/kitchen-helper/preview/v1/bootstrap"',
-            sdkconfig,
-        )
+        for profile in config["builds"]:
+            sdkconfig = profile["sdkconfig_append"]
+            self.assertIn(
+                'CONFIG_OTA_URL="https://app.provisions-app.com/kitchen-helper/preview/v1/bootstrap"',
+                sdkconfig,
+            )
+            self.assertIn("CONFIG_CAMERA_GC0308=n", sdkconfig)
+            self.assertIn("CONFIG_ESP_VIDEO_ENABLE_DVP_VIDEO_DEVICE=n", sdkconfig)
         serialized = json.dumps(config)
         self.assertNotIn("wifi_ssid", serialized.casefold())
         self.assertNotIn("wifi_password", serialized.casefold())
@@ -81,6 +119,18 @@ class ProvisionsCoreS3ProfileTests(unittest.TestCase):
 
         cmake = (ROOT / "main/CMakeLists.txt").read_text(encoding="utf-8")
         self.assertIn('set(BOARD_DIR "m5stack/provisions-core-s3")', cmake)
+        self.assertEqual(cmake.count('set(BOARD_DIR "m5stack/provisions-core-s3")'), 2)
+        self.assertIn(
+            'set(PROVISIONS_CORE_S3_BOARD_NAME "provisions-kitchen-helper-core-s3")',
+            cmake,
+        )
+        self.assertIn(
+            'set(PROVISIONS_CORE_S3_BOARD_NAME "provisions-kitchen-helper-core-s3-lite")',
+            cmake,
+        )
+        self.assertIn(
+            "NOT BOARD_NAME STREQUAL PROVISIONS_CORE_S3_BOARD_NAME", cmake
+        )
         self.assertIn("DEFAULT_EMOJI_COLLECTION noto-color-emoji_64", cmake)
         self.assertIn('"boards/m5stack/core-s3/cores3_audio_codec.cc"', cmake)
         self.assertIn('"provisions_endpoint_policy.cc"', cmake)
@@ -88,12 +138,15 @@ class ProvisionsCoreS3ProfileTests(unittest.TestCase):
             "NOT CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3",
             cmake,
         )
+        self.assertIn(
+            "NOT CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE",
+            cmake,
+        )
 
     def test_pilot_profile_requires_signed_boot_encrypted_flash_and_nvs(self):
         config = json.loads(
             (BOARD_DIR / "pilot_profile.json").read_text(encoding="utf-8")
         )
-        sdkconfig = set(config["builds"][0]["sdkconfig_append"])
         required = {
             "CONFIG_BOOTLOADER_SKIP_VALIDATE_ALWAYS=n",
             "CONFIG_SECURE_BOOT=y",
@@ -106,8 +159,23 @@ class ProvisionsCoreS3ProfileTests(unittest.TestCase):
             "CONFIG_NVS_SEC_KEY_PROTECT_USING_FLASH_ENC=y",
             'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions/provisions/16m.csv"',
         }
-        self.assertTrue(required.issubset(sdkconfig))
-        self.assertFalse(any("SECURE_BOOT_SIGNING_KEY" in item for item in sdkconfig))
+        self.assertEqual({item["name"] for item in config["builds"]}, set(PROFILE_SYMBOLS))
+        for profile in config["builds"]:
+            sdkconfig = set(profile["sdkconfig_append"])
+            self.assertTrue(required.issubset(sdkconfig))
+            self.assertIn(f"{PROFILE_SYMBOLS[profile['name']]}=y", sdkconfig)
+            self.assertTrue(
+                all(
+                    f"{symbol}=y" not in sdkconfig
+                    for other_name, symbol in PROFILE_SYMBOLS.items()
+                    if other_name != profile["name"]
+                )
+            )
+            self.assertIn("CONFIG_CAMERA_GC0308=n", sdkconfig)
+            self.assertIn("CONFIG_ESP_VIDEO_ENABLE_DVP_VIDEO_DEVICE=n", sdkconfig)
+            self.assertFalse(
+                any("SECURE_BOOT_SIGNING_KEY" in item for item in sdkconfig)
+            )
 
         partition_table = (
             ROOT / "partitions/provisions/16m.csv"
@@ -398,6 +466,9 @@ class ProvisionsEndpointPolicyCompileTests(unittest.TestCase):
                 assert(IsAllowedFirmwareUrl(
                     "https://app.provisions-app.com/kitchen-helper/preview/v1/firmware/"
                     "provisions-kitchen-helper-core-s3/1.0.0/" + hash + ".bin"));
+                assert(!IsAllowedFirmwareUrl(
+                    "https://app.provisions-app.com/kitchen-helper/preview/v1/firmware/"
+                    "provisions-kitchen-helper-core-s3-lite/1.0.0/" + hash + ".bin"));
                 assert(FirmwareUrlMatchesVersion(
                     "https://app.provisions-app.com/kitchen-helper/preview/v1/firmware/"
                     "provisions-kitchen-helper-core-s3/1.0.0/" + hash + ".bin", "1.0.0"));
@@ -495,6 +566,8 @@ class ProvisionsEndpointPolicyCompileTests(unittest.TestCase):
                 "-Wall",
                 "-Wextra",
                 "-Werror",
+                f'-DBOARD_NAME="{FULL_PROFILE}"',
+                "-DCONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3=1",
                 f'-DCONFIG_PROVISIONS_PREVIEW_HOST="app.provisions-app.com"',
                 f'-DCONFIG_PROVISIONS_PREVIEW_PATH_PREFIX="/kitchen-helper/preview/v1/"',
                 "-DCONFIG_PROVISIONS_PREVIEW_WEBSOCKET_URL=\"wss://app.provisions-app.com/kitchen-helper/preview/v1/device\"",
@@ -508,6 +581,92 @@ class ProvisionsEndpointPolicyCompileTests(unittest.TestCase):
             ]
             subprocess.run(command, check=True, cwd=ROOT)
             subprocess.run([str(executable)], check=True, cwd=ROOT)
+
+    @unittest.skipUnless(shutil.which("c++"), "host C++ compiler is unavailable")
+    def test_lite_ota_identity_accepts_only_lite_firmware(self):
+        test_source = textwrap.dedent(
+            r"""
+            #include "provisions_endpoint_policy.h"
+            #include <cassert>
+            #include <string>
+
+            int main() {
+                using namespace ProvisionsEndpointPolicy;
+                const std::string hash(64, 'a');
+                const std::string prefix =
+                    "https://app.provisions-app.com/kitchen-helper/preview/v1/firmware/";
+                assert(IsAllowedFirmwareUrl(
+                    prefix + "provisions-kitchen-helper-core-s3-lite/1.0.0/" +
+                    hash + ".bin"));
+                assert(!IsAllowedFirmwareUrl(
+                    prefix + "provisions-kitchen-helper-core-s3/1.0.0/" +
+                    hash + ".bin"));
+            }
+            """
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary = Path(temporary_directory)
+            source = temporary / "lite_policy_test.cc"
+            executable = temporary / "lite_policy_test"
+            source.write_text(test_source, encoding="utf-8")
+            command = [
+                shutil.which("c++"),
+                "-std=c++17",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                f'-DBOARD_NAME="{LITE_PROFILE}"',
+                "-DCONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE=1",
+                '-DCONFIG_PROVISIONS_PREVIEW_HOST="app.provisions-app.com"',
+                '-DCONFIG_PROVISIONS_PREVIEW_PATH_PREFIX="/kitchen-helper/preview/v1/"',
+                '-DCONFIG_PROVISIONS_PREVIEW_WEBSOCKET_URL="wss://app.provisions-app.com/kitchen-helper/preview/v1/device"',
+                '-DCONFIG_OTA_URL="https://app.provisions-app.com/kitchen-helper/preview/v1/bootstrap"',
+                "-I",
+                str(ROOT / "main"),
+                str(ROOT / "main/provisions_endpoint_policy.cc"),
+                str(source),
+                "-o",
+                str(executable),
+            ]
+            subprocess.run(command, check=True, cwd=ROOT)
+            subprocess.run([str(executable)], check=True, cwd=ROOT)
+
+    @unittest.skipUnless(shutil.which("c++"), "host C++ compiler is unavailable")
+    def test_hardware_profile_and_ota_identity_must_match_at_compile_time(self):
+        test_source = "int main() { return 0; }\n"
+        mismatches = (
+            ("CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3", LITE_PROFILE),
+            ("CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE", FULL_PROFILE),
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary = Path(temporary_directory)
+            source = temporary / "mismatched_policy_test.cc"
+            source.write_text(test_source, encoding="utf-8")
+            for index, (board_symbol, board_name) in enumerate(mismatches):
+                executable = temporary / f"mismatched_policy_test_{index}"
+                command = [
+                    shutil.which("c++"),
+                    "-std=c++17",
+                    "-Wall",
+                    "-Wextra",
+                    "-Werror",
+                    f'-DBOARD_NAME="{board_name}"',
+                    f"-D{board_symbol}=1",
+                    '-DCONFIG_PROVISIONS_PREVIEW_HOST="app.provisions-app.com"',
+                    '-DCONFIG_PROVISIONS_PREVIEW_PATH_PREFIX="/kitchen-helper/preview/v1/"',
+                    '-DCONFIG_PROVISIONS_PREVIEW_WEBSOCKET_URL="wss://app.provisions-app.com/kitchen-helper/preview/v1/device"',
+                    '-DCONFIG_OTA_URL="https://app.provisions-app.com/kitchen-helper/preview/v1/bootstrap"',
+                    "-I",
+                    str(ROOT / "main"),
+                    str(ROOT / "main/provisions_endpoint_policy.cc"),
+                    str(source),
+                    "-o",
+                    str(executable),
+                ]
+                result = subprocess.run(
+                    command, cwd=ROOT, capture_output=True, text=True, check=False
+                )
+                self.assertNotEqual(result.returncode, 0)
 
 
 if __name__ == "__main__":

@@ -24,6 +24,23 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BOARD_PROFILE = "provisions-kitchen-helper-core-s3"
+BOARD_PROFILE_LITE = "provisions-kitchen-helper-core-s3-lite"
+BOARD_PROFILES = frozenset((BOARD_PROFILE, BOARD_PROFILE_LITE))
+BOARD_PROFILE_CONFIG_DEFINES = {
+    BOARD_PROFILE: "#define CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3 1",
+    BOARD_PROFILE_LITE: (
+        "#define CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE 1"
+    ),
+}
+BOARD_PROFILE_SDKCONFIG_OPTIONS = {
+    profile: define.removeprefix("#define ").removesuffix(" 1") + "=y"
+    for profile, define in BOARD_PROFILE_CONFIG_DEFINES.items()
+}
+SIGNED_HARDWARE_IDENTITY_MARKERS = {
+    profile: f"PROVISIONS_SIGNED_HARDWARE_IDENTITY={profile}".encode("ascii")
+    + b"\x00"
+    for profile in BOARD_PROFILES
+}
 CHIP = "esp32s3"
 NVS_PARTITION_OFFSET = 0x9000
 NVS_PARTITION_SIZE = 0x4000
@@ -80,8 +97,7 @@ FIRMWARE_ARTIFACTS = (
 )
 FIRMWARE_HASH_KEYS = {artifact.key for artifact in FIRMWARE_ARTIFACTS}
 
-PILOT_SDKCONFIG_DEFINES = {
-    "#define CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3 1",
+PILOT_SHARED_SDKCONFIG_DEFINES = {
     "#define CONFIG_PARTITION_TABLE_CUSTOM 1",
     '#define CONFIG_PARTITION_TABLE_CUSTOM_FILENAME "partitions/provisions/16m.csv"',
     "#define CONFIG_SECURE_BOOT 1",
@@ -95,12 +111,17 @@ PILOT_SDKCONFIG_DEFINES = {
     "#define CONFIG_PROVISIONS_GATEWAY_REQUIRED 1",
     "#define CONFIG_WAKE_WORD_DISABLED 1",
 }
+PILOT_SDKCONFIG_DEFINES = PILOT_SHARED_SDKCONFIG_DEFINES | {
+    BOARD_PROFILE_CONFIG_DEFINES[BOARD_PROFILE]
+}
 FORBIDDEN_PILOT_SDKCONFIG_DEFINES = {
     "#define CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES 1",
     "#define CONFIG_SECURE_BOOT_INSECURE 1",
     "#define CONFIG_SECURE_BOOT_V2_ECDSA_INSECURE 1",
     "#define CONFIG_SECURE_FLASH_ENCRYPTION_MODE_DEVELOPMENT 1",
     "#define CONFIG_BOOTLOADER_SKIP_VALIDATE_ALWAYS 1",
+    "#define CONFIG_CAMERA_GC0308 1",
+    "#define CONFIG_ESP_VIDEO_ENABLE_DVP_VIDEO_DEVICE 1",
 }
 
 
@@ -126,6 +147,7 @@ class WifiNetwork:
 
 @dataclass(frozen=True, repr=False)
 class ProvisioningInput:
+    hardware_profile: str
     device_uuid: str
     hardware_serial: str
     device_credential: str
@@ -206,21 +228,30 @@ def parse_provisioning_document(raw: bytes) -> ProvisioningInput:
 
     if not isinstance(document, dict):
         raise ProvisioningError("input JSON must be an object")
-    _require_exact_keys(
-        document,
-        {
-            "schema_version",
-            "device_uuid",
-            "hardware_serial",
-            "device_credential",
-            "wifi",
-            "serial_port",
-            "firmware",
-        },
-        "input JSON",
-    )
-    if type(document["schema_version"]) is not int or document["schema_version"] != 1:
-        raise ProvisioningError("schema_version must be 1")
+    schema_version = document.get("schema_version")
+    common_keys = {
+        "schema_version",
+        "device_uuid",
+        "hardware_serial",
+        "device_credential",
+        "wifi",
+        "serial_port",
+        "firmware",
+    }
+    if type(schema_version) is not int or schema_version not in (1, 2):
+        raise ProvisioningError("schema_version must be 1 or 2")
+    if schema_version == 1:
+        _require_exact_keys(document, common_keys, "input JSON")
+        hardware_profile = BOARD_PROFILE
+    else:
+        _require_exact_keys(
+            document, common_keys | {"hardware_profile"}, "input JSON"
+        )
+        hardware_profile = _require_string(
+            document["hardware_profile"], "hardware_profile"
+        )
+        if hardware_profile not in BOARD_PROFILES:
+            raise ProvisioningError("hardware_profile is not an approved build identity")
 
     device_uuid = _parse_uuid_v4(
         _require_string(document["device_uuid"], "device_uuid"), "device_uuid"
@@ -345,6 +376,7 @@ def parse_provisioning_document(raw: bytes) -> ProvisioningInput:
         )
 
     return ProvisioningInput(
+        hardware_profile=hardware_profile,
         device_uuid=device_uuid,
         hardware_serial=hardware_serial,
         device_credential=device_credential,
@@ -395,7 +427,9 @@ def load_private_input(path: Path) -> ProvisioningInput:
     return parse_provisioning_document(raw)
 
 
-def _validate_firmware_contract() -> None:
+def _validate_firmware_contract(board_profile: str = BOARD_PROFILE) -> None:
+    if board_profile not in BOARD_PROFILES:
+        raise ProvisioningError("CoreS3 hardware profile is not approved")
     try:
         config = json.loads(PILOT_CONFIG.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -405,13 +439,31 @@ def _validate_firmware_contract() -> None:
             "CoreS3 pilot configuration no longer matches this tool"
         )
     builds = config.get("builds")
-    if not isinstance(builds, list) or len(builds) != 1:
+    if not isinstance(builds, list) or len(builds) != len(BOARD_PROFILES):
         raise ProvisioningError("CoreS3 pilot configuration has an unsafe build set")
-    build = builds[0]
-    if not isinstance(build, dict) or build.get("name") != BOARD_PROFILE:
-        raise ProvisioningError("CoreS3 pilot build identity no longer matches")
+    builds_by_name = {
+        build.get("name"): build for build in builds if isinstance(build, dict)
+    }
+    if set(builds_by_name) != BOARD_PROFILES:
+        raise ProvisioningError("CoreS3 pilot build identities no longer match")
+    for profile, profile_build in builds_by_name.items():
+        profile_options = profile_build.get("sdkconfig_append")
+        other_profile_options = {
+            option
+            for other_profile, option in BOARD_PROFILE_SDKCONFIG_OPTIONS.items()
+            if other_profile != profile
+        }
+        if (
+            not isinstance(profile_options, list)
+            or BOARD_PROFILE_SDKCONFIG_OPTIONS[profile] not in profile_options
+            or other_profile_options.intersection(profile_options)
+        ):
+            raise ProvisioningError("CoreS3 pilot build identity is not profile-bound")
+    build = builds_by_name[board_profile]
     sdkconfig_append = build.get("sdkconfig_append")
     required_options = {
+        "CONFIG_CAMERA_GC0308=n",
+        "CONFIG_ESP_VIDEO_ENABLE_DVP_VIDEO_DEVICE=n",
         "CONFIG_PARTITION_TABLE_CUSTOM=y",
         'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions/provisions/16m.csv"',
         "CONFIG_SECURE_BOOT=y",
@@ -504,9 +556,28 @@ def _hash_file(path: Path) -> tuple[str, int]:
     return digest.hexdigest(), size
 
 
+def _validate_signed_application_identity(path: Path, board_profile: str) -> None:
+    try:
+        image = path.read_bytes()
+    except OSError:
+        raise ProvisioningError("signed application identity is unavailable") from None
+    expected_marker = SIGNED_HARDWARE_IDENTITY_MARKERS[board_profile]
+    if image.count(expected_marker) != 1 or any(
+        marker in image
+        for profile, marker in SIGNED_HARDWARE_IDENTITY_MARKERS.items()
+        if profile != board_profile
+    ):
+        raise ProvisioningError(
+            "signed application identity does not match the requested hardware profile"
+        )
+
+
 def _validate_firmware_artifacts(
     firmware: FirmwareInput,
+    board_profile: str = BOARD_PROFILE,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    if board_profile not in BOARD_PROFILES:
+        raise ProvisioningError("CoreS3 hardware profile is not approved")
     try:
         artifact_metadata = firmware.artifact_directory.lstat()
     except OSError:
@@ -537,8 +608,18 @@ def _validate_firmware_artifacts(
     sdkconfig_lines = set(
         _read_bounded_text(sdkconfig_path, "pilot sdkconfig").splitlines()
     )
-    if not PILOT_SDKCONFIG_DEFINES.issubset(sdkconfig_lines):
+    expected_defines = PILOT_SHARED_SDKCONFIG_DEFINES | {
+        BOARD_PROFILE_CONFIG_DEFINES[board_profile]
+    }
+    if not expected_defines.issubset(sdkconfig_lines):
         raise ProvisioningError("build is not the approved secure pilot profile")
+    other_profile_defines = {
+        define
+        for profile, define in BOARD_PROFILE_CONFIG_DEFINES.items()
+        if profile != board_profile
+    }
+    if other_profile_defines.intersection(sdkconfig_lines):
+        raise ProvisioningError("build identity does not match the requested hardware profile")
     if FORBIDDEN_PILOT_SDKCONFIG_DEFINES.intersection(sdkconfig_lines):
         raise ProvisioningError("build enables a forbidden development security mode")
     if any(
@@ -555,6 +636,8 @@ def _validate_firmware_artifacts(
             raise ProvisioningError("pilot firmware artifact hash is not approved")
         if size == 0 or size > artifact.maximum_size:
             raise ProvisioningError("pilot firmware artifact size is invalid")
+        if artifact.key == "application":
+            _validate_signed_application_identity(path, board_profile)
         metadata[artifact.key] = {
             "source": path,
             "relative_path": artifact.relative_path.as_posix(),
@@ -672,8 +755,14 @@ def _run_secret_processing_command(
 
 
 def _pilot_artifact_verifier_command(
-    firmware_directory: Path, expected_version: str
+    firmware_directory: Path, expected_version: str, expected_profile: str
 ) -> list[str]:
+    if expected_profile not in BOARD_PROFILES:
+        raise ProvisioningError("CoreS3 hardware profile is not approved")
+    identity_markers = tuple(
+        SIGNED_HARDWARE_IDENTITY_MARKERS[profile]
+        for profile in sorted(BOARD_PROFILES)
+    )
     firmware_mount = (
         f"type=bind,source={firmware_directory},target=/pilot-release,readonly"
     )
@@ -685,6 +774,14 @@ $PY -m esptool --chip esp32s3 image-info /pilot-release/application.bin >/work/a
 grep -Fqx 'Project name: xiaozhi' /work/app-info.txt
 grep -Fqx 'App version: {expected_version}' /work/app-info.txt
 grep -Fqx 'ESP-IDF: v6.0.2' /work/app-info.txt
+$PY - <<'PY'
+from pathlib import Path
+image = Path('/pilot-release/application.bin').read_bytes()
+expected = {SIGNED_HARDWARE_IDENTITY_MARKERS[expected_profile]!r}
+markers = {identity_markers!r}
+if image.count(expected) != 1 or any(marker != expected and marker in image for marker in markers):
+    raise SystemExit(1)
+PY
 $PY /opt/esp/idf/components/partition_table/gen_esp32part.py /pilot-release/pilot-partitions.csv /work/expected-partition-table.bin >/dev/null 2>&1
 cmp /work/expected-partition-table.bin /pilot-release/partition_table.bin >/dev/null
 """
@@ -705,9 +802,11 @@ cmp /work/expected-partition-table.bin /pilot-release/partition_table.bin >/dev/
 
 
 def _run_pilot_artifact_verifier(
-    firmware_directory: Path, expected_version: str
+    firmware_directory: Path, expected_version: str, expected_profile: str
 ) -> None:
-    command = _pilot_artifact_verifier_command(firmware_directory, expected_version)
+    command = _pilot_artifact_verifier_command(
+        firmware_directory, expected_version, expected_profile
+    )
     _run_secret_processing_command(
         command,
         "signed pilot artifact verification failed; reject this build",
@@ -1015,12 +1114,12 @@ def generate_bundle(
     *,
     generator: Callable[[Path], None] | None = None,
     schema_inspector: Callable[[Path], list[dict[str, Any]]] | None = None,
-    firmware_verifier: Callable[[Path, str], None] | None = None,
+    firmware_verifier: Callable[[Path, str, str], None] | None = None,
     now: Callable[[], datetime] | None = None,
 ) -> dict[str, Any]:
-    _validate_firmware_contract()
+    _validate_firmware_contract(request.hardware_profile)
     firmware_metadata, public_key_metadata = _validate_firmware_artifacts(
-        request.firmware
+        request.firmware, request.hardware_profile
     )
     if not output_directory.is_absolute():
         raise ProvisioningError("output directory must be absolute")
@@ -1094,7 +1193,7 @@ def generate_bundle(
         if copied_partition_contract_size != partition_contract_size:
             raise ProvisioningError("pilot partition contract size changed")
         (firmware_verifier or _run_pilot_artifact_verifier)(
-            firmware_directory, request.firmware.version
+            firmware_directory, request.firmware.version, request.hardware_profile
         )
 
         with tempfile.TemporaryDirectory(
@@ -1228,6 +1327,7 @@ def generate_bundle(
                 "sensitive": True,
                 "created_at": created_at_text,
                 "device_uuid": request.device_uuid,
+                "hardware_profile": request.hardware_profile,
                 "firmware_version": request.firmware.version,
                 "external_approval_gate": {
                     "signing_public_key_sha256": public_key_metadata["sha256"],
@@ -1237,7 +1337,9 @@ def generate_bundle(
                 "files": checksums,
             }
             artifact_verifier_command = _pilot_artifact_verifier_command(
-                firmware_directory, request.firmware.version
+                firmware_directory,
+                request.firmware.version,
+                request.hardware_profile,
             )
             verifier_text = _render_private_preflash_verifier(
                 private_manifest_name, checksums, artifact_verifier_command
@@ -1250,7 +1352,7 @@ def generate_bundle(
                 "artifact": "provisions-core-s3-secure-factory-bundle",
                 "created_at": created_at_text,
                 "device": {
-                    "profile": BOARD_PROFILE,
+                    "profile": request.hardware_profile,
                     "uuid": request.device_uuid,
                     "hardware_serial": request.hardware_serial,
                 },
@@ -1273,7 +1375,7 @@ def generate_bundle(
                     ],
                 },
                 "firmware": {
-                    "profile": BOARD_PROFILE,
+                    "profile": request.hardware_profile,
                     "version": request.firmware.version,
                     "source_artifact_directory": "<redacted>",
                     "approved_artifacts_verified": True,

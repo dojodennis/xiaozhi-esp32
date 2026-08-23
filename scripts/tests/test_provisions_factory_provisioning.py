@@ -32,7 +32,7 @@ def digest(content):
     return hashlib.sha256(content).hexdigest()
 
 
-def make_release_artifacts(parent):
+def make_release_artifacts(parent, profile=provisioning.BOARD_PROFILE):
     artifact_directory = parent / "pilot-release"
     (artifact_directory / "bootloader").mkdir(parents=True)
     (artifact_directory / "partition_table").mkdir()
@@ -41,7 +41,10 @@ def make_release_artifacts(parent):
         "bootloader": b"approved-externally-signed-bootloader",
         "partition_table": b"approved-partition-table",
         "ota_data": b"approved-ota-data",
-        "application": b"approved-externally-signed-application",
+        "application": (
+            b"approved-externally-signed-application\x00"
+            + provisioning.SIGNED_HARDWARE_IDENTITY_MARKERS[profile]
+        ),
         "assets": b"approved-assets",
     }
     for artifact in provisioning.FIRMWARE_ARTIFACTS:
@@ -59,7 +62,13 @@ def make_release_artifacts(parent):
         encoding="utf-8",
     )
     (artifact_directory / "config/sdkconfig.h").write_text(
-        "\n".join(sorted(provisioning.PILOT_SDKCONFIG_DEFINES)) + "\n",
+        "\n".join(
+            sorted(
+                provisioning.PILOT_SHARED_SDKCONFIG_DEFINES
+                | {provisioning.BOARD_PROFILE_CONFIG_DEFINES[profile]}
+            )
+        )
+        + "\n",
         encoding="utf-8",
     )
     public_key = parent / "approved-signing-public-key.pem"
@@ -78,6 +87,7 @@ def valid_document(
     hashes=None,
     public_key=Path("/private/approved-signing-public-key.pem"),
     fallback=False,
+    hardware_profile=None,
 ):
     networks = [
         {
@@ -96,8 +106,8 @@ def valid_document(
                 "band": "2.4GHz",
             }
         )
-    return {
-        "schema_version": 1,
+    document = {
+        "schema_version": 1 if hardware_profile is None else 2,
         "device_uuid": DEVICE_UUID,
         "hardware_serial": "24:6f:28:12:34:56",
         "device_credential": DEVICE_CREDENTIAL,
@@ -116,6 +126,9 @@ def valid_document(
             },
         },
     }
+    if hardware_profile is not None:
+        document["hardware_profile"] = hardware_profile
+    return document
 
 
 def parse(document):
@@ -185,7 +198,9 @@ def fake_generator(work_directory):
     )
 
 
-def accept_signed_artifacts(_firmware_directory, _expected_version):
+def accept_signed_artifacts(
+    _firmware_directory, _expected_version, _expected_profile
+):
     return None
 
 
@@ -216,6 +231,15 @@ class ProvisioningInputTests(unittest.TestCase):
                 ["device_token", "data", "string", DEVICE_CREDENTIAL],
             ],
         )
+
+    def test_schema_two_binds_the_lite_hardware_identity(self):
+        document = valid_document(hardware_profile=provisioning.BOARD_PROFILE_LITE)
+        request = parse(document)
+        self.assertEqual(request.hardware_profile, provisioning.BOARD_PROFILE_LITE)
+
+        document["hardware_profile"] = "unapproved-core-s3"
+        with self.assertRaisesRegex(provisioning.ProvisioningError, "profile"):
+            parse(document)
 
     def test_rejects_unsupported_or_ambiguous_inputs(self):
         invalid_documents = []
@@ -356,10 +380,17 @@ class ProvisioningInputTests(unittest.TestCase):
 
 
 class ProvisioningBundleTests(unittest.TestCase):
-    def make_request(self, temporary, fallback=False):
-        artifact_directory, hashes, public_key = make_release_artifacts(Path(temporary))
+    def make_request(self, temporary, fallback=False, hardware_profile=None):
+        profile = hardware_profile or provisioning.BOARD_PROFILE
+        artifact_directory, hashes, public_key = make_release_artifacts(
+            Path(temporary), profile
+        )
         document = valid_document(
-            artifact_directory, hashes, public_key, fallback=fallback
+            artifact_directory,
+            hashes,
+            public_key,
+            fallback=fallback,
+            hardware_profile=hardware_profile,
         )
         return parse(document), artifact_directory, public_key
 
@@ -389,14 +420,22 @@ class ProvisioningBundleTests(unittest.TestCase):
                 / "main/boards/m5stack/provisions-core-s3/pilot_profile.json"
             ).read_text(encoding="utf-8")
         )
-        profile_settings = set(profile["builds"][0]["sdkconfig_append"])
-        self.assertTrue(
-            {
+        required_settings = {
                 "CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y",
                 "CONFIG_PROVISIONS_GATEWAY_REQUIRED=y",
                 "CONFIG_WAKE_WORD_DISABLED=y",
-            }.issubset(profile_settings)
+            }
+        self.assertEqual(
+            {build["name"] for build in profile["builds"]},
+            set(provisioning.BOARD_PROFILES),
         )
+        for build in profile["builds"]:
+            profile_settings = set(build["sdkconfig_append"])
+            self.assertTrue(required_settings.issubset(profile_settings))
+            self.assertIn(
+                provisioning.BOARD_PROFILE_SDKCONFIG_OPTIONS[build["name"]],
+                profile_settings,
+            )
 
         with tempfile.TemporaryDirectory() as temporary:
             request, artifact_directory, _public_key = self.make_request(temporary)
@@ -468,6 +507,12 @@ class ProvisioningBundleTests(unittest.TestCase):
             self.assertNotIn(WIFI_PASSWORD.encode(), nvs_path.read_bytes())
 
             self.assertEqual(manifest["created_at"], "2026-08-23T12:00:00Z")
+            self.assertEqual(
+                manifest["device"]["profile"], provisioning.BOARD_PROFILE
+            )
+            self.assertEqual(
+                manifest["firmware"]["profile"], provisioning.BOARD_PROFILE
+            )
             self.assertEqual(manifest["wifi"]["network_count"], 1)
             self.assertEqual(manifest["wifi"]["networks"][0]["role"], "primary")
             self.assertEqual(manifest["nvs"]["encryption"], "XTS-AES")
@@ -528,6 +573,73 @@ class ProvisioningBundleTests(unittest.TestCase):
                 command_text.index("erase-flash"),
             )
             self.assertIn("STOP", command_text)
+
+    def test_lite_bundle_requires_and_records_the_lite_signed_build(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            request, artifact_directory, _public_key = self.make_request(
+                temporary, hardware_profile=provisioning.BOARD_PROFILE_LITE
+            )
+            output_directory = Path(temporary) / "lite-bundle"
+            manifest = self.generate(request, output_directory)
+            self.assertEqual(
+                manifest["device"]["profile"], provisioning.BOARD_PROFILE_LITE
+            )
+            self.assertEqual(
+                manifest["firmware"]["profile"], provisioning.BOARD_PROFILE_LITE
+            )
+
+            sdkconfig_path = artifact_directory / "config/sdkconfig.h"
+            sdkconfig_path.write_text(
+                "\n".join(sorted(provisioning.PILOT_SDKCONFIG_DEFINES)) + "\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(provisioning.ProvisioningError, "profile"):
+                provisioning._validate_firmware_artifacts(
+                    request.firmware, request.hardware_profile
+                )
+
+            lite_defines = provisioning.PILOT_SHARED_SDKCONFIG_DEFINES | {
+                provisioning.BOARD_PROFILE_CONFIG_DEFINES[
+                    provisioning.BOARD_PROFILE_LITE
+                ],
+                "#define CONFIG_CAMERA_GC0308 1",
+            }
+            sdkconfig_path.write_text(
+                "\n".join(sorted(lite_defines)) + "\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(provisioning.ProvisioningError, "forbidden"):
+                provisioning._validate_firmware_artifacts(
+                    request.firmware, request.hardware_profile
+                )
+
+    def test_signed_application_identity_rejects_sdkconfig_sidecar_relabel(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            artifact_directory, hashes, public_key = make_release_artifacts(
+                Path(temporary), provisioning.BOARD_PROFILE
+            )
+            sdkconfig_path = artifact_directory / "config/sdkconfig.h"
+            lite_defines = provisioning.PILOT_SHARED_SDKCONFIG_DEFINES | {
+                provisioning.BOARD_PROFILE_CONFIG_DEFINES[
+                    provisioning.BOARD_PROFILE_LITE
+                ]
+            }
+            sdkconfig_path.write_text(
+                "\n".join(sorted(lite_defines)) + "\n", encoding="utf-8"
+            )
+            request = parse(
+                valid_document(
+                    artifact_directory,
+                    hashes,
+                    public_key,
+                    hardware_profile=provisioning.BOARD_PROFILE_LITE,
+                )
+            )
+            with self.assertRaisesRegex(
+                provisioning.ProvisioningError, "signed application identity"
+            ):
+                provisioning._validate_firmware_artifacts(
+                    request.firmware, request.hardware_profile
+                )
 
     def test_two_network_bundle_contains_only_upstream_fallback_keys(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -702,7 +814,9 @@ class ProvisioningBundleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             request, _artifacts, _public_key = self.make_request(temporary)
 
-            def reject_signature(_firmware_directory, _expected_version):
+            def reject_signature(
+                _firmware_directory, _expected_version, _expected_profile
+            ):
                 raise provisioning.ProvisioningError("signature rejected")
 
             output_directory = Path(temporary) / "signature-failure"
@@ -804,7 +918,9 @@ class ProvisioningBundleTests(unittest.TestCase):
     def test_artifact_verifier_checks_signatures_and_exact_partition(self, run):
         run.return_value = subprocess.CompletedProcess([], 0, b"", b"")
         provisioning._run_pilot_artifact_verifier(
-            Path("/private/pilot-firmware"), "2.4.2"
+            Path("/private/pilot-firmware"),
+            "2.4.2",
+            provisioning.BOARD_PROFILE,
         )
 
         command = run.call_args.args[0]
@@ -814,6 +930,12 @@ class ProvisioningBundleTests(unittest.TestCase):
         self.assertEqual(serialized.count("verify-signature"), 2)
         self.assertIn("--keyfile", serialized)
         self.assertIn("App version: 2.4.2", serialized)
+        self.assertIn(
+            provisioning.SIGNED_HARDWARE_IDENTITY_MARKERS[
+                provisioning.BOARD_PROFILE
+            ].rstrip(b"\x00").decode("ascii"),
+            serialized,
+        )
         self.assertIn("gen_esp32part.py", serialized)
         self.assertIn("partition_table.bin", serialized)
         self.assertNotIn("merged-binary", serialized)

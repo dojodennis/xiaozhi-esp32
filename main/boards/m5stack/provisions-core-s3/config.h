@@ -3,7 +3,28 @@
 
 #include <driver/gpio.h>
 
-// M5Stack CoreS3 audio hardware
+// CoreS3 and CoreS3 Lite use the same internal audio, display, PMIC and IO
+// expander wiring. Keep only the external/base differences profile-guarded.
+#if defined(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3) && \
+    defined(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE)
+#error "Select exactly one Provisions CoreS3 hardware profile"
+#elif defined(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE)
+#define PROVISIONS_HARDWARE_PROFILE "core-s3-lite-client"
+#define PROVISIONS_NOMINAL_BATTERY_MAH 200
+#define PROVISIONS_HAS_DIN_BASE false
+// U027 on the Lite's exposed Port.A: black=GND, red=5V, white=GPIO1.
+#define TALK_BUTTON_GPIO GPIO_NUM_1
+#elif defined(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3)
+#define PROVISIONS_HARDWARE_PROFILE "core-s3-bench"
+#define PROVISIONS_NOMINAL_BATTERY_MAH 500
+#define PROVISIONS_HAS_DIN_BASE true
+// U027 on the full CoreS3 DIN base Port.B: black=GND, red=5V, white=GPIO8.
+#define TALK_BUTTON_GPIO GPIO_NUM_8
+#else
+#error "A Provisions CoreS3 hardware profile is required"
+#endif
+
+// Shared internal hardware.
 #define AUDIO_INPUT_REFERENCE false
 #define AUDIO_INPUT_SAMPLE_RATE 24000
 #define AUDIO_OUTPUT_SAMPLE_RATE 24000
@@ -18,9 +39,6 @@
 #define AUDIO_CODEC_I2C_SCL_PIN GPIO_NUM_11
 #define AUDIO_CODEC_AW88298_ADDR AW88298_CODEC_DEFAULT_ADDR
 #define AUDIO_CODEC_ES7210_ADDR ES7210_CODEC_DEFAULT_ADDR
-
-// M5Stack Unit Button U027 in CoreS3 Port.B, active-low with internal pull-up.
-#define TALK_BUTTON_GPIO GPIO_NUM_8
 
 #define DISPLAY_WIDTH 320
 #define DISPLAY_HEIGHT 240

@@ -17,6 +17,12 @@
 
 #define TAG "ProvisionsCoreS3"
 
+namespace {
+
+constexpr char kSignedHardwareIdentity[] = "PROVISIONS_SIGNED_HARDWARE_IDENTITY=" BOARD_NAME;
+
+}  // namespace
+
 class Pmic : public Axp2101 {
 public:
     Pmic(i2c_master_bus_handle_t i2c_bus, uint8_t addr) : Axp2101(i2c_bus, addr) {
@@ -54,9 +60,14 @@ private:
 
 class Aw9523 : public I2cDevice {
 public:
+    // P1_0 is GC0308 reset and P1_1 is LCD reset on both approved profiles.
+    // Keep the camera reset asserted low for the complete firmware lifetime.
+    static constexpr uint8_t kCameraResetHeld = 0b10001110;
+    static constexpr uint8_t kDisplayResetHeld = 0b10001100;
+
     Aw9523(i2c_master_bus_handle_t i2c_bus, uint8_t addr) : I2cDevice(i2c_bus, addr) {
         WriteReg(0x02, 0b00000111);
-        WriteReg(0x03, 0b10001111);
+        WriteReg(0x03, kCameraResetHeld);
         WriteReg(0x04, 0b00011000);
         WriteReg(0x05, 0b00001100);
         WriteReg(0x11, 0b00010000);
@@ -65,10 +76,10 @@ public:
     }
 
     void ResetIli9342() {
-        ESP_LOGI(TAG, "Reset ILI9342");
-        WriteReg(0x03, 0b10000001);
+        ESP_LOGI(TAG, "Reset ILI9342 with camera held in reset");
+        WriteReg(0x03, kDisplayResetHeld);
         vTaskDelay(pdMS_TO_TICKS(20));
-        WriteReg(0x03, 0b10000011);
+        WriteReg(0x03, kCameraResetHeld);
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 };
@@ -167,6 +178,10 @@ private:
 
 public:
     ProvisionsCoreS3Board() : talk_button_(TALK_BUTTON_GPIO, false) {
+        ESP_LOGI(TAG, "%s hardware_profile=%s nominal_battery=%dmAh din_base=%s talk_gpio=%d",
+                 kSignedHardwareIdentity, PROVISIONS_HARDWARE_PROFILE,
+                 PROVISIONS_NOMINAL_BATTERY_MAH, PROVISIONS_HAS_DIN_BASE ? "yes" : "no",
+                 TALK_BUTTON_GPIO);
         InitializePowerSaveTimer();
         InitializeI2c();
         InitializePower();

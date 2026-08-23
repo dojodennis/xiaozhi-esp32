@@ -334,7 +334,10 @@ choice BOARD_TYPE
         bool "M5Stack CoreS3"
         depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3
-        bool "M5Stack Provisions Kitchen Helper CoreS3"
+        bool "M5Stack Provisions Kitchen Helper CoreS3 (bench)"
+        depends on IDF_TARGET_ESP32S3
+    config BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE
+        bool "M5Stack Provisions Kitchen Helper CoreS3 Lite (client)"
         depends on IDF_TARGET_ESP32S3
     config BOARD_TYPE_M5STACK_STICK_S3
         bool "M5Stack StickS3"
@@ -869,7 +872,7 @@ config USE_MULTILINE_CHAT_MESSAGE
 
 choice WAKE_WORD_TYPE
     prompt "Wake Word Implementation Type"
-    default WAKE_WORD_DISABLED if BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3
+    default WAKE_WORD_DISABLED if BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3 || BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE
     default USE_AFE_WAKE_WORD if (IDF_TARGET_ESP32S3 || IDF_TARGET_ESP32P4 || IDF_TARGET_ESP32S31) && SPIRAM
     default WAKE_WORD_DISABLED
     help
@@ -888,13 +891,13 @@ choice WAKE_WORD_TYPE
 
     config USE_AFE_WAKE_WORD
         bool "Wakenet model with AFE"
-        depends on (IDF_TARGET_ESP32S3 || IDF_TARGET_ESP32P4 || IDF_TARGET_ESP32S31) && SPIRAM && !BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3
+        depends on (IDF_TARGET_ESP32S3 || IDF_TARGET_ESP32P4 || IDF_TARGET_ESP32S31) && SPIRAM && !BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3 && !BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE
         help
             Support AEC if available, requires ESP32-S3, ESP32-P4, or ESP32-S31 and PSRAM
 
     config USE_CUSTOM_WAKE_WORD
         bool "Multinet model (Custom Wake Word)"
-        depends on (IDF_TARGET_ESP32S3 || IDF_TARGET_ESP32P4 || IDF_TARGET_ESP32S31) && SPIRAM && !BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3
+        depends on (IDF_TARGET_ESP32S3 || IDF_TARGET_ESP32P4 || IDF_TARGET_ESP32S31) && SPIRAM && !BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3 && !BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE
         help
             Requires ESP32-S3, ESP32-P4, or ESP32-S31 and PSRAM
 
@@ -902,7 +905,7 @@ endchoice
 
 config PROVISIONS_GATEWAY_REQUIRED
     bool
-    default y if BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3
+    default y if BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3 || BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE
 
 config PROVISIONS_PREVIEW_HOST
     string
