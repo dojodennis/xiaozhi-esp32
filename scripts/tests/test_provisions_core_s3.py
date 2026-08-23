@@ -34,6 +34,22 @@ class ProvisionsCoreS3ProfileTests(unittest.TestCase):
         self.assertIn("CONFIG_LOG_MAXIMUM_LEVEL_INFO=y", sdkconfig)
         self.assertFalse(any("DEBUG=y" in item or "VERBOSE=y" in item for item in sdkconfig))
 
+    def test_developer_profile_explicitly_resets_pilot_security_choices(self):
+        config = json.loads((BOARD_DIR / "config.json").read_text(encoding="utf-8"))
+        sdkconfig = set(config["builds"][0]["sdkconfig_append"])
+        self.assertTrue(
+            {
+                "CONFIG_SECURE_BOOT=n",
+                "CONFIG_SECURE_BOOT_V2_ENABLED=n",
+                "CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=n",
+                "CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=n",
+                "CONFIG_SECURE_FLASH_ENC_ENABLED=n",
+                "CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=n",
+                "CONFIG_NVS_ENCRYPTION=n",
+                "CONFIG_NVS_SEC_KEY_PROTECT_USING_FLASH_ENC=n",
+            }.issubset(sdkconfig)
+        )
+
     def test_board_keeps_core_hardware_and_only_adds_active_low_talk(self):
         source = (BOARD_DIR / "provisions_core_s3.cc").read_text(encoding="utf-8")
         config = (BOARD_DIR / "config.h").read_text(encoding="utf-8")
@@ -72,6 +88,64 @@ class ProvisionsCoreS3ProfileTests(unittest.TestCase):
             "NOT CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3",
             cmake,
         )
+
+    def test_pilot_profile_requires_signed_boot_encrypted_flash_and_nvs(self):
+        config = json.loads(
+            (BOARD_DIR / "pilot_profile.json").read_text(encoding="utf-8")
+        )
+        sdkconfig = set(config["builds"][0]["sdkconfig_append"])
+        required = {
+            "CONFIG_BOOTLOADER_SKIP_VALIDATE_ALWAYS=n",
+            "CONFIG_SECURE_BOOT=y",
+            "CONFIG_SECURE_BOOT_V2_ENABLED=y",
+            "CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y",
+            "CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=n",
+            "CONFIG_SECURE_FLASH_ENC_ENABLED=y",
+            "CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=y",
+            "CONFIG_NVS_ENCRYPTION=y",
+            "CONFIG_NVS_SEC_KEY_PROTECT_USING_FLASH_ENC=y",
+            'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions/provisions/16m.csv"',
+        }
+        self.assertTrue(required.issubset(sdkconfig))
+        self.assertFalse(any("SECURE_BOOT_SIGNING_KEY" in item for item in sdkconfig))
+
+        partition_table = (
+            ROOT / "partitions/provisions/16m.csv"
+        ).read_text(encoding="utf-8")
+        self.assertIn("nvs_keys,   data, nvs_keys, 0x10000,  0x1000,   encrypted", partition_table)
+
+    def test_factory_wifi_has_no_chef_setup_portal_or_plaintext_ssid_log(self):
+        wifi_board = (ROOT / "main/boards/common/wifi_board.cc").read_text(
+            encoding="utf-8"
+        )
+        application = (ROOT / "main/application.cc").read_text(encoding="utf-8")
+        self.assertIn('#if CONFIG_PROVISIONS_GATEWAY_REQUIRED\n'
+                      '    // The pilot is factory-provisioned.', wifi_board)
+        self.assertIn('config.ssid_prefix = "Provisions";', wifi_board)
+        self.assertIn('config.show_ota_config = false;', wifi_board)
+        self.assertIn('config.show_sleep_config = false;', wifi_board)
+        self.assertIn('esp_log_level_set("WifiStation", ESP_LOG_WARN);', wifi_board)
+        self.assertIn('esp_log_level_set("SsidManager", ESP_LOG_WARN);', wifi_board)
+        self.assertIn('"Interactive WiFi configuration is disabled', wifi_board)
+        self.assertIn('"Configured WiFi connection is still unavailable"', wifi_board)
+        self.assertIn("WifiManager::GetInstance().IsConnected()", wifi_board)
+        self.assertNotIn("provisions_wifi_retry", wifi_board)
+        self.assertIn('#if CONFIG_PROVISIONS_GATEWAY_REQUIRED\n'
+                      '                display->SetStatus("Connecting");', application)
+
+    def test_ota_binds_signed_image_version_and_cleans_up_partial_downloads(self):
+        ota = (ROOT / "main/ota.cc").read_text(encoding="utf-8")
+        self.assertIn("IsApprovedFirmwareImageVersion(", ota)
+        self.assertIn("new_app_info.magic_word != ESP_APP_DESC_MAGIC_WORD", ota)
+        self.assertIn(
+            "image_header.append(buffer + write_offset, static_cast<size_t>(ret));",
+            ota,
+        )
+        self.assertIn("total_read + static_cast<size_t>(ret) > content_length", ota)
+        self.assertIn("if (image_header_checked &&", ota)
+        read_error = ota.index('ESP_LOGE(TAG, "Failed to read HTTP data: %s"')
+        read_error_end = ota.index("#if CONFIG_PROVISIONS_GATEWAY_REQUIRED", read_error)
+        self.assertIn("esp_ota_abort(update_handle);", ota[read_error:read_error_end])
 
 
 class ProvisionsGatewayIntegrationTests(unittest.TestCase):
@@ -115,16 +189,67 @@ class ProvisionsGatewayIntegrationTests(unittest.TestCase):
         self.assertIn('strcmp(state->valuestring, "result") == 0', application)
         self.assertIn('text == "Found"', application)
         self.assertIn('text == "Check app"', application)
+        for receipt_text in (
+            "Delivered",
+            "On the way",
+            "Recorded",
+            "Choose one",
+            "Need unit",
+            "Ready to add",
+            "Added",
+            "Undone",
+            "Not changed",
+        ):
+            self.assertIn(f'text == "{receipt_text}"', application)
         self.assertIn('protocol_->session_id() == session->valuestring', application)
         self.assertIn('HasExactKeys(root, {"session_id", "type", "state"})', application)
         self.assertIn("IsBoundedTtsText", application)
+
+    def test_talk_release_is_a_hard_audio_upload_boundary(self):
+        application = (ROOT / "main/application.cc").read_text(encoding="utf-8")
+        audio_service = (ROOT / "main/audio/audio_service.cc").read_text(
+            encoding="utf-8"
+        )
+        audio_header = (ROOT / "main/audio/audio_service.h").read_text(
+            encoding="utf-8"
+        )
+
+        stop_handler = application.split(
+            "void Application::HandleStopListeningEvent()", 1
+        )[1].split("void Application::HandleWakeWordDetectedEvent()", 1)[0]
+        disable = stop_handler.index("audio_service_.EnableVoiceProcessing(false);")
+        stop_frame = stop_handler.index("protocol_->SendStopListening();")
+        idle = stop_handler.index("SetDeviceState(kDeviceStateIdle);", stop_frame)
+        self.assertLess(disable, stop_frame)
+        self.assertLess(stop_frame, idle)
+
+        release_entrypoint = application.split("void Application::StopListening()", 1)[
+            1
+        ].split("void Application::HandleToggleChatEvent()", 1)[0]
+        self.assertIn("manual_listening_requested_.store(false", release_entrypoint)
+        self.assertIn("audio_service_.CloseVoiceUploadGate();", release_entrypoint)
+        self.assertLess(
+            release_entrypoint.index("audio_service_.CloseVoiceUploadGate();"),
+            release_entrypoint.index(
+                "xEventGroupSetBits(event_group_, MAIN_EVENT_STOP_LISTENING);"
+            ),
+        )
+        self.assertIn('VoiceUploadGate voice_upload_gate_;', audio_header)
+        self.assertIn("voice_upload_gate_.Close();", audio_service)
+        self.assertIn("audio_send_queue_.clear();", audio_service)
+        self.assertGreaterEqual(audio_service.count("voice_upload_gate_.Allows"), 3)
+        send_loop = application.split("if (bits & MAIN_EVENT_SEND_AUDIO)", 1)[1].split(
+            "if (bits & MAIN_EVENT_WAKE_WORD_DETECTED)", 1
+        )[0]
+        self.assertGreaterEqual(send_loop.count("manual_listening_requested_.load"), 2)
+        self.assertIn("WithVoiceUploadLease", send_loop)
         self.assertIn("#if !CONFIG_PROVISIONS_GATEWAY_REQUIRED\n                auto text", application)
 
     def test_ready_working_watchdog_and_fast_release_are_explicit(self):
         application = (ROOT / "main/application.cc").read_text(encoding="utf-8")
         header = (ROOT / "main/application.h").read_text(encoding="utf-8")
-        self.assertIn("manual_listening_requested_.store(true)", application)
-        self.assertIn("manual_listening_requested_.store(false)", application)
+        self.assertIn("manual_listening_requested_.store(true,", application)
+        self.assertIn("manual_listening_requested_.store(false,", application)
         self.assertGreaterEqual(application.count("!manual_listening_requested_.load()"), 3)
         self.assertIn(
             "#if CONFIG_PROVISIONS_GATEWAY_REQUIRED\n"
@@ -167,11 +292,98 @@ class ProvisionsGatewayIntegrationTests(unittest.TestCase):
 
 class ProvisionsEndpointPolicyCompileTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("c++"), "host C++ compiler is unavailable")
+    def test_voice_upload_gate_rejects_stale_work_after_concurrent_release(self):
+        test_source = textwrap.dedent(
+            r"""
+            #include "audio/voice_upload_gate.h"
+            #include <atomic>
+            #include <cassert>
+            #include <thread>
+            #include <vector>
+
+            int main() {
+                VoiceUploadGate gate;
+                const uint32_t first_generation = gate.Open();
+                assert(gate.Allows(first_generation));
+
+                std::atomic<bool> send_started{false};
+                std::atomic<bool> finish_send{false};
+                std::atomic<bool> close_returned{false};
+                std::atomic<int> actions_after_close{0};
+
+                std::thread sender([&]() {
+                    const bool authorized = gate.WithSendLease(first_generation, [&]() {
+                        if (close_returned.load(std::memory_order_acquire)) {
+                            actions_after_close.fetch_add(1, std::memory_order_relaxed);
+                        }
+                        send_started.store(true, std::memory_order_release);
+                        while (!finish_send.load(std::memory_order_acquire)) {
+                            std::this_thread::yield();
+                        }
+                    });
+                    assert(authorized);
+                });
+                while (!send_started.load(std::memory_order_acquire)) {
+                    std::this_thread::yield();
+                }
+
+                std::thread closer([&]() {
+                    gate.Close();
+                    close_returned.store(true, std::memory_order_release);
+                });
+                for (int index = 0; index < 1000; ++index) {
+                    assert(!close_returned.load(std::memory_order_acquire));
+                    std::this_thread::yield();
+                }
+                finish_send.store(true, std::memory_order_release);
+                sender.join();
+                closer.join();
+                assert(close_returned.load());
+                assert(actions_after_close.load() == 0);
+                assert(!gate.WithSendLease(first_generation, [&]() {
+                    actions_after_close.fetch_add(1, std::memory_order_relaxed);
+                }));
+
+                const uint32_t second_generation = gate.Open();
+                assert(second_generation != first_generation);
+                assert(!gate.Allows(first_generation));
+                assert(gate.Allows(second_generation));
+                assert(!gate.WithSendLease(first_generation, [&]() {
+                    actions_after_close.fetch_add(1, std::memory_order_relaxed);
+                }));
+                assert(gate.WithSendLease(second_generation, []() {}));
+                assert(actions_after_close.load() == 0);
+            }
+            """
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary = Path(temporary_directory)
+            source = temporary / "voice_upload_gate_test.cc"
+            executable = temporary / "voice_upload_gate_test"
+            source.write_text(test_source, encoding="utf-8")
+            command = [
+                shutil.which("c++"),
+                "-std=c++17",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-pthread",
+                "-I",
+                str(ROOT / "main"),
+                str(source),
+                "-o",
+                str(executable),
+            ]
+            subprocess.run(command, check=True, cwd=ROOT)
+            subprocess.run([str(executable)], check=True, cwd=ROOT)
+
+    @unittest.skipUnless(shutil.which("c++"), "host C++ compiler is unavailable")
     def test_endpoint_credential_and_uuid_policy(self):
         test_source = textwrap.dedent(
             r"""
             #include "provisions_endpoint_policy.h"
             #include <cassert>
+#include <array>
             #include <string>
 
             int main() {
@@ -186,6 +398,38 @@ class ProvisionsEndpointPolicyCompileTests(unittest.TestCase):
                 assert(IsAllowedFirmwareUrl(
                     "https://app.provisions-app.com/kitchen-helper/preview/v1/firmware/"
                     "provisions-kitchen-helper-core-s3/1.0.0/" + hash + ".bin"));
+                assert(FirmwareUrlMatchesVersion(
+                    "https://app.provisions-app.com/kitchen-helper/preview/v1/firmware/"
+                    "provisions-kitchen-helper-core-s3/1.0.0/" + hash + ".bin", "1.0.0"));
+                assert(!FirmwareUrlMatchesVersion(
+                    "https://app.provisions-app.com/kitchen-helper/preview/v1/firmware/"
+                    "provisions-kitchen-helper-core-s3/1.0.0/" + hash + ".bin", "1.0.1"));
+                std::string extracted_version;
+                assert(ExtractFirmwareVersion(
+                    "https://app.provisions-app.com/kitchen-helper/preview/v1/firmware/"
+                    "provisions-kitchen-helper-core-s3/1.0.0/" + hash + ".bin",
+                    extracted_version));
+                assert(extracted_version == "1.0.0");
+                assert(IsNewerFirmwareVersion("1.0.0", "1.0.1"));
+                assert(!IsNewerFirmwareVersion("1.0.0", "1.0.0"));
+                assert(!IsNewerFirmwareVersion("1.0.0", "01.0.1"));
+                assert(IsApprovedFirmwareImageVersion(
+                    "https://app.provisions-app.com/kitchen-helper/preview/v1/firmware/"
+                    "provisions-kitchen-helper-core-s3/1.0.1/" + hash + ".bin",
+                    "1.0.0", "1.0.1"));
+                assert(!IsApprovedFirmwareImageVersion(
+                    "https://app.provisions-app.com/kitchen-helper/preview/v1/firmware/"
+                    "provisions-kitchen-helper-core-s3/1.0.1/" + hash + ".bin",
+                    "1.0.0", "1.0.0"));
+                assert(!IsApprovedFirmwareImageVersion(
+                    "https://app.provisions-app.com/kitchen-helper/preview/v1/firmware/"
+                    "provisions-kitchen-helper-core-s3/1.0.1/" + hash + ".bin",
+                    "1.0.1", "1.0.1"));
+                std::array<uint8_t, 32> digest{};
+                assert(ExtractFirmwareSha256(
+                    "https://app.provisions-app.com/kitchen-helper/preview/v1/firmware/"
+                    "provisions-kitchen-helper-core-s3/1.0.0/" + hash + ".bin", digest));
+                for (auto byte : digest) assert(byte == 0xaa);
 
                 assert(!IsAllowedWebsocketUrl(
                     "wss://app.provisions-app.com/kitchen-helper/preview/v1/audio"));
@@ -203,6 +447,21 @@ class ProvisionsEndpointPolicyCompileTests(unittest.TestCase):
                 assert(!IsAllowedFirmwareUrl(
                     "https://app.provisions-app.com/kitchen-helper/preview/v1/firmware/"
                     "provisions-kitchen-helper-core-s3/1.0.0/not-a-sha.bin"));
+                assert(!IsAllowedFirmwareUrl(
+                    "https://app.provisions-app.com/kitchen-helper/preview/v1/firmware/"
+                    "provisions-kitchen-helper-core-s3/not-semver/" + hash + ".bin"));
+                assert(!IsAllowedFirmwareUrl(
+                    "https://app.provisions-app.com/kitchen-helper/preview/v1/firmware/"
+                    "provisions-kitchen-helper-core-s3/1.70000/" + hash + ".bin"));
+                assert(!IsAllowedFirmwareUrl(
+                    "https://app.provisions-app.com/kitchen-helper/preview/v1/firmware/"
+                    "provisions-kitchen-helper-core-s3/1.0/" + hash + ".bin"));
+                assert(!IsAllowedFirmwareUrl(
+                    "https://app.provisions-app.com/kitchen-helper/preview/v1/firmware/"
+                    "provisions-kitchen-helper-core-s3/1.0.0.0/" + hash + ".bin"));
+                assert(!IsAllowedFirmwareUrl(
+                    "https://app.provisions-app.com/kitchen-helper/preview/v1/firmware/"
+                    "provisions-kitchen-helper-core-s3/01.0.0/" + hash + ".bin"));
 
                 const std::string token =
                     "pvd1_123e4567-e89b-42d3-a456-426614174000." + std::string(43, 'A');

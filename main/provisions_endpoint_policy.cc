@@ -1,6 +1,7 @@
 #include "provisions_endpoint_policy.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdint>
 #include <iterator>
@@ -179,11 +180,59 @@ std::vector<std::string_view> SplitPath(std::string_view path) {
 }
 
 bool IsSafeVersionSegment(std::string_view version) {
-    return !version.empty() &&
-           std::all_of(version.begin(), version.end(), [](unsigned char character) {
-               return std::isalnum(character) || character == '.' || character == '-' ||
-                      character == '_';
-           });
+    if (version.empty() || version.size() > 31 || version.front() == '.' ||
+        version.back() == '.') {
+        return false;
+    }
+
+    size_t component_start = 0;
+    size_t component_count = 0;
+    while (component_start < version.size()) {
+        const size_t component_end = version.find('.', component_start);
+        const auto component = version.substr(
+            component_start,
+            component_end == std::string_view::npos ? version.size() - component_start
+                                                    : component_end - component_start);
+        if (component.empty() || component.size() > 5 ||
+            (component.size() > 1 && component.front() == '0') ||
+            !std::all_of(component.begin(), component.end(), [](unsigned char character) {
+                return std::isdigit(character);
+            })) {
+            return false;
+        }
+        uint32_t value = 0;
+        for (char character : component) {
+            value = value * 10 + static_cast<uint32_t>(character - '0');
+        }
+        if (value > UINT16_MAX || ++component_count > 3) {
+            return false;
+        }
+        if (component_end == std::string_view::npos) {
+            break;
+        }
+        component_start = component_end + 1;
+    }
+    return component_count == 3;
+}
+
+bool ParseVersionComponents(std::string_view version,
+                            std::array<uint16_t, 3>& components) {
+    if (!IsSafeVersionSegment(version)) {
+        return false;
+    }
+    size_t start = 0;
+    for (size_t index = 0; index < components.size(); ++index) {
+        const size_t end = version.find('.', start);
+        const auto component = version.substr(
+            start, end == std::string_view::npos ? version.size() - start : end - start);
+        uint32_t value = 0;
+        for (char character : component) {
+            value = value * 10 + static_cast<uint32_t>(character - '0');
+        }
+        components[index] = static_cast<uint16_t>(value);
+        start = end == std::string_view::npos ? version.size() : end + 1;
+    }
+    return true;
 }
 
 bool IsSha256BinaryName(std::string_view filename) {
@@ -199,6 +248,38 @@ bool IsSha256BinaryName(std::string_view filename) {
 
 bool IsHexCharacter(char character) {
     return std::isxdigit(static_cast<unsigned char>(character));
+}
+
+uint8_t HexValue(char character) {
+    if (character >= '0' && character <= '9') {
+        return static_cast<uint8_t>(character - '0');
+    }
+    return static_cast<uint8_t>(std::tolower(static_cast<unsigned char>(character)) - 'a' + 10);
+}
+
+bool ParseFirmwareUrl(const std::string& url, std::string& version, std::string& filename) {
+    ParsedUrl parsed;
+    if (!ParseUrl(url, parsed) || !HasApprovedOrigin(parsed, "https") || parsed.has_query) {
+        return false;
+    }
+
+    const auto segments = SplitPath(parsed.path);
+    constexpr std::string_view kExpectedSegments[] = {
+        "kitchen-helper", "preview", "v1", "firmware", "provisions-kitchen-helper-core-s3"};
+    if (segments.size() != 7) {
+        return false;
+    }
+    for (size_t index = 0; index < std::size(kExpectedSegments); ++index) {
+        if (segments[index] != kExpectedSegments[index]) {
+            return false;
+        }
+    }
+    if (!IsSafeVersionSegment(segments[5]) || !IsSha256BinaryName(segments[6])) {
+        return false;
+    }
+    version.assign(segments[5]);
+    filename.assign(segments[6]);
+    return true;
 }
 
 }  // namespace
@@ -226,23 +307,53 @@ bool IsAllowedOtaManifestUrl(const std::string& url) {
 }
 
 bool IsAllowedFirmwareUrl(const std::string& url) {
-    ParsedUrl parsed;
-    if (!ParseUrl(url, parsed) || !HasApprovedOrigin(parsed, "https") || parsed.has_query) {
-        return false;
-    }
+    std::string version;
+    std::string filename;
+    return ParseFirmwareUrl(url, version, filename);
+}
 
-    const auto segments = SplitPath(parsed.path);
-    constexpr std::string_view kExpectedSegments[] = {
-        "kitchen-helper", "preview", "v1", "firmware", "provisions-kitchen-helper-core-s3"};
-    if (segments.size() != 7) {
+bool FirmwareUrlMatchesVersion(const std::string& url, const std::string& version) {
+    std::string url_version;
+    std::string filename;
+    return ParseFirmwareUrl(url, url_version, filename) && url_version == version;
+}
+
+bool ExtractFirmwareVersion(const std::string& url, std::string& version) {
+    std::string filename;
+    return ParseFirmwareUrl(url, version, filename);
+}
+
+bool ExtractFirmwareSha256(const std::string& url, std::array<uint8_t, 32>& digest) {
+    std::string version;
+    std::string filename;
+    if (!ParseFirmwareUrl(url, version, filename)) {
         return false;
     }
-    for (size_t index = 0; index < std::size(kExpectedSegments); ++index) {
-        if (segments[index] != kExpectedSegments[index]) {
-            return false;
-        }
+    for (size_t index = 0; index < digest.size(); ++index) {
+        digest[index] = static_cast<uint8_t>((HexValue(filename[index * 2]) << 4) |
+                                             HexValue(filename[index * 2 + 1]));
     }
-    return IsSafeVersionSegment(segments[5]) && IsSha256BinaryName(segments[6]);
+    return true;
+}
+
+bool IsNewerFirmwareVersion(const std::string& current_version,
+                            const std::string& candidate_version) {
+    std::array<uint16_t, 3> current{};
+    std::array<uint16_t, 3> candidate{};
+    if (!ParseVersionComponents(current_version, current) ||
+        !ParseVersionComponents(candidate_version, candidate)) {
+        return false;
+    }
+    return candidate > current;
+}
+
+bool IsApprovedFirmwareImageVersion(const std::string& url,
+                                    const std::string& current_version,
+                                    const std::string& embedded_version) {
+    std::string advertised_version;
+    return ExtractFirmwareVersion(url, advertised_version) &&
+           advertised_version == embedded_version &&
+           IsNewerFirmwareVersion(current_version, embedded_version);
 }
 
 bool IsAllowedHealthUrl(const std::string& url) {

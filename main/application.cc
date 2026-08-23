@@ -71,7 +71,10 @@ bool IsApprovedShortText(const char* text) {
 
 bool IsApprovedReceiptText(std::string_view text) {
     return text == "Found" || text == "No match" || text == "Draft only" ||
-           text == "Cancelled" || text == "Check app";
+           text == "Cancelled" || text == "Check app" || text == "Delivered" ||
+           text == "On the way" || text == "Recorded" || text == "Choose one" ||
+           text == "Need unit" || text == "Ready to add" || text == "Added" ||
+           text == "Undone" || text == "Not changed";
 }
 
 bool IsBoundedTtsText(const char* text) {
@@ -190,9 +193,13 @@ void Application::Initialize() {
             }
             case NetworkEvent::Connected: {
                 network_connected_.store(true);
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+                display->SetStatus("Connecting");
+#else
                 std::string msg = Lang::Strings::CONNECTED_TO;
                 msg += data;
                 display->ShowNotification(msg.c_str(), 30000);
+#endif
                 xEventGroupSetBits(event_group_, MAIN_EVENT_NETWORK_CONNECTED);
                 break;
             }
@@ -311,8 +318,35 @@ void Application::Run() {
         }
 
         if (bits & MAIN_EVENT_SEND_AUDIO) {
-            while (auto packet = audio_service_.PopPacketFromSendQueue()) {
+            while (true) {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+                if (!manual_listening_requested_.load(std::memory_order_acquire)) {
+                    audio_service_.CloseVoiceUploadGate();
+                    break;
+                }
+#endif
+                auto packet = audio_service_.PopPacketFromSendQueue();
+                if (!packet) {
+                    break;
+                }
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+                if (!manual_listening_requested_.load(std::memory_order_acquire)) {
+                    audio_service_.CloseVoiceUploadGate();
+                    break;
+                }
+                bool send_succeeded = false;
+                const bool send_authorized = audio_service_.WithVoiceUploadLease(*packet, [&]() {
+                    if (manual_listening_requested_.load(std::memory_order_acquire) && protocol_) {
+                        send_succeeded = protocol_->SendAudio(std::move(packet));
+                    }
+                });
+                if (!send_authorized) {
+                    break;
+                }
+                if (!send_succeeded) {
+#else
                 if (protocol_ && !protocol_->SendAudio(std::move(packet))) {
+#endif
                     // Drop the remaining packets. Leaving them in the queue would
                     // stall the Opus codec task (it waits for queue space), which in
                     // turn deadlocks the whole audio input pipeline, as no new
@@ -1203,14 +1237,17 @@ void Application::ToggleChatState() { xEventGroupSetBits(event_group_, MAIN_EVEN
 
 void Application::StartListening() {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-    manual_listening_requested_.store(true);
+    manual_listening_requested_.store(true, std::memory_order_release);
 #endif
     xEventGroupSetBits(event_group_, MAIN_EVENT_START_LISTENING);
 }
 
 void Application::StopListening() {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-    manual_listening_requested_.store(false);
+    // The physical button callback is the upload boundary. Do not wait for the
+    // main task to process MAIN_EVENT_STOP_LISTENING before closing it.
+    manual_listening_requested_.store(false, std::memory_order_release);
+    audio_service_.CloseVoiceUploadGate();
 #endif
     xEventGroupSetBits(event_group_, MAIN_EVENT_STOP_LISTENING);
 }
@@ -1354,6 +1391,10 @@ void Application::HandleStopListeningEvent() {
     } else if (state == kDeviceStateListening) {
         if (protocol_) {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+            // Button release is the privacy boundary: stop production and
+            // invalidate/drain queued microphone frames before the JSON stop
+            // marker can be followed by MAIN_EVENT_SEND_AUDIO in this loop.
+            audio_service_.EnableVoiceProcessing(false);
             SetProvisionsResponsePending(true);
 #endif
             protocol_->SendStopListening();

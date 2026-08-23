@@ -22,6 +22,7 @@
 #include "audio_codec.h"
 #include "audio_debugger.h"
 #include "audio_engine.h"
+#include "audio/voice_upload_gate.h"
 #include "protocol.h"
 #include "ogg_demuxer.h"
 
@@ -95,6 +96,7 @@ enum AudioTaskType {
 struct AudioTask {
     AudioTaskType type;
     std::vector<int16_t> pcm;
+    uint32_t voice_upload_generation = 0;
     uint32_t timestamp = 0;
     uint32_t playback_id = 0;
     uint32_t media_position_ms = 0;
@@ -129,6 +131,12 @@ public:
     void EnableWakeWordDetection(bool enable);
     void ReleaseWakeWordResources();
     void EnableVoiceProcessing(bool enable);
+    void CloseVoiceUploadGate();
+    template <typename Action>
+    bool WithVoiceUploadLease(const AudioStreamPacket& packet, Action&& action) {
+        return voice_upload_gate_.WithSendLease(
+            packet.voice_upload_generation, std::forward<Action>(action));
+    }
     void EnableAudioTesting(bool enable);
     void EnableDeviceAec(bool enable);
 
@@ -194,6 +202,7 @@ private:
 #endif
     std::atomic<bool> service_stopped_{true};
     std::atomic<bool> audio_input_need_warmup_{false};
+    VoiceUploadGate voice_upload_gate_;
 
     esp_timer_handle_t audio_power_timer_ = nullptr;
     std::chrono::steady_clock::time_point last_input_time_;

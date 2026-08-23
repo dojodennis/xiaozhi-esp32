@@ -166,6 +166,7 @@ void AudioService::Start() {
 
 void AudioService::Stop() {
     esp_timer_stop(audio_power_timer_);
+    CloseVoiceUploadGate();
     service_stopped_.store(true);
     xEventGroupSetBits(event_group_, AS_EVENT_AUDIO_TESTING_RUNNING |
         AS_EVENT_WAKE_WORD_RUNNING |
@@ -176,6 +177,7 @@ void AudioService::Stop() {
         std::lock_guard<std::mutex> lock(audio_queue_mutex_);
         ++playback_generation_;
         audio_encode_queue_.clear();
+        audio_send_queue_.clear();
         audio_decode_queue_.clear();
         audio_playback_queue_.clear();
         audio_testing_queue_.clear();
@@ -470,18 +472,27 @@ void AudioService::OpusCodecTask() {
                 auto ret = esp_opus_enc_process(opus_encoder_, &in, &out);
                 if (ret == ESP_AUDIO_ERR_OK) {
                     packet->payload.assign(buf.data(), buf.data() + out.encoded_bytes);
+                    packet->voice_upload_generation = task->voice_upload_generation;
 
                     if (task->type == kAudioTaskTypeEncodeToSendQueue) {
+                        bool queued = false;
                         {
                             std::lock_guard<std::mutex> lock2(audio_queue_mutex_);
-                            /* Never let a full send queue stall encoding: stale realtime
-                             * audio is useless to the server, so drop the oldest packet. */
-                            if (audio_send_queue_.size() >= MAX_SEND_PACKETS_IN_QUEUE) {
-                                audio_send_queue_.pop_front();
+                            /* A Talk release increments the generation before it drains
+                             * queues. This second check prevents an encoder that was
+                             * already in flight from publishing after release, including
+                             * if a new Talk turn has since started. */
+                            if (voice_upload_gate_.Allows(task->voice_upload_generation)) {
+                                /* Never let a full send queue stall encoding: stale realtime
+                                 * audio is useless to the server, so drop the oldest packet. */
+                                if (audio_send_queue_.size() >= MAX_SEND_PACKETS_IN_QUEUE) {
+                                    audio_send_queue_.pop_front();
+                                }
+                                audio_send_queue_.push_back(std::move(packet));
+                                queued = true;
                             }
-                            audio_send_queue_.push_back(std::move(packet));
                         }
-                        if (callbacks_.on_send_queue_available) {
+                        if (queued && callbacks_.on_send_queue_available) {
                             callbacks_.on_send_queue_available();
                         }
                     } else if (task->type == kAudioTaskTypeEncodeToTestingQueue) {
@@ -540,6 +551,10 @@ void AudioService::SetDecodeSampleRate(int sample_rate, int frame_duration) {
 }
 
 void AudioService::PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t>&& pcm) {
+    if (type == kAudioTaskTypeEncodeToSendQueue &&
+        !voice_upload_gate_.IsOpen()) {
+        return;
+    }
     auto task = std::make_unique<AudioTask>();
     task->type = type;
     task->pcm = std::move(pcm);
@@ -548,6 +563,14 @@ void AudioService::PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t
     {
         /* Push the task to the encode queue */
         std::unique_lock<std::mutex> lock(audio_queue_mutex_);
+
+        if (type == kAudioTaskTypeEncodeToSendQueue) {
+            const uint32_t generation = voice_upload_gate_.CurrentGeneration();
+            if (!voice_upload_gate_.Allows(generation)) {
+                return;
+            }
+            task->voice_upload_generation = generation;
+        }
 
         /* If the task is to send queue, we need to set the timestamp */
         if (type == kAudioTaskTypeEncodeToSendQueue && !timestamp_queue_.empty()) {
@@ -608,11 +631,19 @@ bool AudioService::PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> pa
 
 std::unique_ptr<AudioStreamPacket> AudioService::PopPacketFromSendQueue() {
     std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+    if (!voice_upload_gate_.IsOpen()) {
+        audio_send_queue_.clear();
+        return nullptr;
+    }
     if (audio_send_queue_.empty()) {
         return nullptr;
     }
     auto packet = std::move(audio_send_queue_.front());
     audio_send_queue_.pop_front();
+    if (!voice_upload_gate_.Allows(packet->voice_upload_generation)) {
+        audio_send_queue_.clear();
+        return nullptr;
+    }
     audio_queue_cv_.notify_all();
     return packet;
 }
@@ -699,14 +730,33 @@ void AudioService::EnableVoiceProcessing(bool enable) {
                 esp_ae_rate_cvt_reset(input_resampler_);
             }
         }
+        voice_upload_gate_.Open();
         audio_engine_->EnableVoiceProcessing(true);
         xEventGroupSetBits(event_group_, AS_EVENT_AUDIO_PROCESSOR_RUNNING);
     } else {
+        CloseVoiceUploadGate();
         if (audio_engine_initialized_) {
             audio_engine_->EnableVoiceProcessing(false);
         }
         xEventGroupClearBits(event_group_, AS_EVENT_AUDIO_PROCESSOR_RUNNING);
     }
+}
+
+void AudioService::CloseVoiceUploadGate() {
+    // Physical Talk release calls this before queuing work on the main task.
+    // Invalidate in-flight encoders first, then drain queued PCM and Opus while
+    // holding the mutex shared by the encoder and sender stages.
+    voice_upload_gate_.Close();
+    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+    for (auto it = audio_encode_queue_.begin(); it != audio_encode_queue_.end();) {
+        if ((*it)->type == kAudioTaskTypeEncodeToSendQueue) {
+            it = audio_encode_queue_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    audio_send_queue_.clear();
+    audio_queue_cv_.notify_all();
 }
 
 void AudioService::EnableAudioTesting(bool enable) {

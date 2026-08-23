@@ -54,10 +54,20 @@ void WifiBoard::StartNetwork() {
 
     // Initialize WiFi manager
     WifiManagerConfig config;
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    // The pilot is factory-provisioned. Do not expose stock Xiaozhi naming or
+    // advanced OTA/sleep controls, and keep saved network names out of logs.
+    config.ssid_prefix = "Provisions";
+    config.show_ota_config = false;
+    config.show_sleep_config = false;
+    esp_log_level_set("WifiStation", ESP_LOG_WARN);
+    esp_log_level_set("SsidManager", ESP_LOG_WARN);
+#else
     config.ssid_prefix = "Xiaozhi";
     config.language = Lang::CODE;
     config.show_ota_config = true;
     config.show_sleep_config = true;
+#endif
 
     // Set a DHCP hostname so the router shows a friendly name instead of "espressif".
     // Uses the same "<prefix>-<last 2 MAC bytes>" scheme as the config AP SSID.
@@ -107,10 +117,19 @@ void WifiBoard::TryWifiConnect() {
         esp_timer_start_once(connect_timer_, CONNECT_TIMEOUT_SEC * 1000000ULL);
         WifiManager::GetInstance().StartStation();
     } else {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        // Normal chef use has no setup UI. Missing factory data fails closed
+        // until a technician rewrites the per-device NVS partition.
+        ESP_LOGE(TAG, "Factory WiFi profile is missing");
+        in_config_mode_ = false;
+        Application::GetInstance().SetDeviceState(kDeviceStateIdle);
+        GetDisplay()->SetStatus("Unavailable");
+#else
         // No SSID configured, enter config mode
         // Wait for the board version to be shown
         vTaskDelay(pdMS_TO_TICKS(1500));
         StartWifiConfigMode();
+#endif
     }
 }
 
@@ -124,13 +143,21 @@ void WifiBoard::OnNetworkEvent(NetworkEvent event, const std::string& data) {
             Blufi::GetInstance().deinit();
 #endif
             in_config_mode_ = false;
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+            ESP_LOGI(TAG, "Connected to the configured WiFi profile");
+#else
             ESP_LOGI(TAG, "Connected to WiFi: %s", data.c_str());
+#endif
             break;
         case NetworkEvent::Scanning:
             ESP_LOGI(TAG, "WiFi scanning");
             break;
         case NetworkEvent::Connecting:
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+            ESP_LOGI(TAG, "Connecting to the configured WiFi profile");
+#else
             ESP_LOGI(TAG, "WiFi connecting to %s", data.c_str());
+#endif
             break;
         case NetworkEvent::Disconnected:
             ESP_LOGW(TAG, "WiFi disconnected");
@@ -161,10 +188,23 @@ void WifiBoard::SetNetworkEventCallback(NetworkEventCallback callback) {
 
 void WifiBoard::OnWifiConnectTimeout(void* arg) {
     auto* board = static_cast<WifiBoard*>(arg);
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    // WifiStation owns reconnect/backoff. Do not race a late Connected event by
+    // stopping it from the timer task; only update the UI on the application task.
+    ESP_LOGW(TAG, "Configured WiFi connection is still unavailable");
+    Application::GetInstance().Schedule([board]() {
+        if (WifiManager::GetInstance().IsConnected()) {
+            return;
+        }
+        board->in_config_mode_ = false;
+        board->GetDisplay()->SetStatus("Unavailable");
+    });
+#else
     ESP_LOGW(TAG, "WiFi connection timeout, entering config mode");
 
     WifiManager::GetInstance().StopStation();
     board->StartWifiConfigMode();
+#endif
 }
 
 void WifiBoard::StartWifiConfigMode() {
@@ -193,6 +233,11 @@ void WifiBoard::StartWifiConfigMode() {
 }
 
 void WifiBoard::EnterWifiConfigMode() {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    ESP_LOGW(TAG, "Interactive WiFi configuration is disabled on factory-provisioned builds");
+    GetDisplay()->SetStatus("Unavailable");
+    return;
+#endif
     ESP_LOGI(TAG, "EnterWifiConfigMode called");
     GetDisplay()->ShowNotification(Lang::Strings::ENTERING_WIFI_CONFIG_MODE);
 
