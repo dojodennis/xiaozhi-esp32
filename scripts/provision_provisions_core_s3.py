@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare a fail-closed Provisions CoreS3 factory provisioning bundle."""
+"""Prepare a fail-closed Provisions Kitchen Helper provisioning bundle."""
 
 from __future__ import annotations
 
@@ -25,16 +25,44 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BOARD_PROFILE = "provisions-kitchen-helper-core-s3"
 BOARD_PROFILE_LITE = "provisions-kitchen-helper-core-s3-lite"
-BOARD_PROFILES = frozenset((BOARD_PROFILE, BOARD_PROFILE_LITE))
+BOARD_PROFILE_STOPWATCH = "provisions-kitchen-helper-stopwatch"
+CORE_S3_BOARD_PROFILES = frozenset((BOARD_PROFILE, BOARD_PROFILE_LITE))
+BOARD_PROFILES = CORE_S3_BOARD_PROFILES | {BOARD_PROFILE_STOPWATCH}
 BOARD_PROFILE_CONFIG_DEFINES = {
     BOARD_PROFILE: "#define CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3 1",
     BOARD_PROFILE_LITE: (
         "#define CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE 1"
     ),
+    BOARD_PROFILE_STOPWATCH: (
+        "#define CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH 1"
+    ),
 }
 BOARD_PROFILE_SDKCONFIG_OPTIONS = {
     profile: define.removeprefix("#define ").removesuffix(" 1") + "=y"
     for profile, define in BOARD_PROFILE_CONFIG_DEFINES.items()
+}
+BOARD_PROFILE_REQUIRED_SDKCONFIG_DEFINES = {
+    BOARD_PROFILE: frozenset(("#define CONFIG_SPIRAM_MODE_QUAD 1",)),
+    BOARD_PROFILE_LITE: frozenset(("#define CONFIG_SPIRAM_MODE_QUAD 1",)),
+    BOARD_PROFILE_STOPWATCH: frozenset(
+        (
+            "#define CONFIG_SPIRAM 1",
+            "#define CONFIG_SPIRAM_MODE_OCT 1",
+            "#define CONFIG_SPIRAM_SPEED_80M 1",
+        )
+    ),
+}
+BOARD_PROFILE_FORBIDDEN_SDKCONFIG_DEFINES = {
+    BOARD_PROFILE: frozenset(("#define CONFIG_SPIRAM_MODE_OCT 1",)),
+    BOARD_PROFILE_LITE: frozenset(("#define CONFIG_SPIRAM_MODE_OCT 1",)),
+    BOARD_PROFILE_STOPWATCH: frozenset(
+        ("#define CONFIG_SPIRAM_MODE_QUAD 1",)
+    ),
+}
+BOARD_PROFILE_FORBIDDEN_SDKCONFIG_OPTIONS = {
+    BOARD_PROFILE: frozenset(("CONFIG_SPIRAM_MODE_OCT=y",)),
+    BOARD_PROFILE_LITE: frozenset(("CONFIG_SPIRAM_MODE_OCT=y",)),
+    BOARD_PROFILE_STOPWATCH: frozenset(("CONFIG_SPIRAM_MODE_QUAD=y",)),
 }
 SIGNED_HARDWARE_IDENTITY_MARKERS = {
     profile: f"PROVISIONS_SIGNED_HARDWARE_IDENTITY={profile}".encode("ascii")
@@ -56,7 +84,23 @@ NVS_GENERATOR = (
 )
 NVS_TOOL = "/opt/esp/idf/components/nvs_flash/nvs_partition_tool/nvs_tool.py"
 PARTITION_GENERATOR = "/opt/esp/idf/components/partition_table/gen_esp32part.py"
-PILOT_CONFIG = REPO_ROOT / "main/boards/m5stack/provisions-core-s3/pilot_profile.json"
+CORE_S3_PILOT_CONFIG = (
+    REPO_ROOT / "main/boards/m5stack/provisions-core-s3/pilot_profile.json"
+)
+STOPWATCH_PILOT_CONFIG = REPO_ROOT / "main/boards/m5stack/stopwatch/pilot_profile.json"
+PILOT_CONFIGS = {
+    BOARD_PROFILE: CORE_S3_PILOT_CONFIG,
+    BOARD_PROFILE_LITE: CORE_S3_PILOT_CONFIG,
+    BOARD_PROFILE_STOPWATCH: STOPWATCH_PILOT_CONFIG,
+}
+PILOT_CONFIG_TYPES = {
+    CORE_S3_PILOT_CONFIG: BOARD_PROFILE,
+    STOPWATCH_PILOT_CONFIG: "m5stack-stopwatch",
+}
+PILOT_CONFIG_PROFILE_SETS = {
+    CORE_S3_PILOT_CONFIG: CORE_S3_BOARD_PROFILES,
+    STOPWATCH_PILOT_CONFIG: frozenset((BOARD_PROFILE_STOPWATCH,)),
+}
 PILOT_PARTITION_TABLE = REPO_ROOT / "partitions/provisions/16m.csv"
 MAX_INPUT_BYTES = 16 * 1024
 MAX_METADATA_BYTES = 1024 * 1024
@@ -111,9 +155,11 @@ PILOT_SHARED_SDKCONFIG_DEFINES = {
     "#define CONFIG_PROVISIONS_GATEWAY_REQUIRED 1",
     "#define CONFIG_WAKE_WORD_DISABLED 1",
 }
-PILOT_SDKCONFIG_DEFINES = PILOT_SHARED_SDKCONFIG_DEFINES | {
-    BOARD_PROFILE_CONFIG_DEFINES[BOARD_PROFILE]
-}
+PILOT_SDKCONFIG_DEFINES = (
+    PILOT_SHARED_SDKCONFIG_DEFINES
+    | {BOARD_PROFILE_CONFIG_DEFINES[BOARD_PROFILE]}
+    | BOARD_PROFILE_REQUIRED_SDKCONFIG_DEFINES[BOARD_PROFILE]
+)
 FORBIDDEN_PILOT_SDKCONFIG_DEFINES = {
     "#define CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES 1",
     "#define CONFIG_SECURE_BOOT_INSECURE 1",
@@ -429,23 +475,33 @@ def load_private_input(path: Path) -> ProvisioningInput:
 
 def _validate_firmware_contract(board_profile: str = BOARD_PROFILE) -> None:
     if board_profile not in BOARD_PROFILES:
-        raise ProvisioningError("CoreS3 hardware profile is not approved")
+        raise ProvisioningError("Kitchen Helper hardware profile is not approved")
+    pilot_config = PILOT_CONFIGS[board_profile]
+    allowed_profiles = PILOT_CONFIG_PROFILE_SETS[pilot_config]
     try:
-        config = json.loads(PILOT_CONFIG.read_text(encoding="utf-8"))
+        config = json.loads(pilot_config.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        raise ProvisioningError("CoreS3 pilot configuration is unavailable") from None
-    if config.get("type") != BOARD_PROFILE or config.get("target") != CHIP:
         raise ProvisioningError(
-            "CoreS3 pilot configuration no longer matches this tool"
+            "Kitchen Helper pilot configuration is unavailable"
+        ) from None
+    if config.get("type") != PILOT_CONFIG_TYPES[pilot_config] or config.get(
+        "target"
+    ) != CHIP:
+        raise ProvisioningError(
+            "Kitchen Helper pilot configuration no longer matches this tool"
         )
     builds = config.get("builds")
-    if not isinstance(builds, list) or len(builds) != len(BOARD_PROFILES):
-        raise ProvisioningError("CoreS3 pilot configuration has an unsafe build set")
+    if not isinstance(builds, list) or len(builds) != len(allowed_profiles):
+        raise ProvisioningError(
+            "Kitchen Helper pilot configuration has an unsafe build set"
+        )
     builds_by_name = {
         build.get("name"): build for build in builds if isinstance(build, dict)
     }
-    if set(builds_by_name) != BOARD_PROFILES:
-        raise ProvisioningError("CoreS3 pilot build identities no longer match")
+    if set(builds_by_name) != allowed_profiles:
+        raise ProvisioningError(
+            "Kitchen Helper pilot build identities no longer match"
+        )
     for profile, profile_build in builds_by_name.items():
         profile_options = profile_build.get("sdkconfig_append")
         other_profile_options = {
@@ -458,12 +514,12 @@ def _validate_firmware_contract(board_profile: str = BOARD_PROFILE) -> None:
             or BOARD_PROFILE_SDKCONFIG_OPTIONS[profile] not in profile_options
             or other_profile_options.intersection(profile_options)
         ):
-            raise ProvisioningError("CoreS3 pilot build identity is not profile-bound")
+            raise ProvisioningError(
+                "Kitchen Helper pilot build identity is not profile-bound"
+            )
     build = builds_by_name[board_profile]
     sdkconfig_append = build.get("sdkconfig_append")
     required_options = {
-        "CONFIG_CAMERA_GC0308=n",
-        "CONFIG_ESP_VIDEO_ENABLE_DVP_VIDEO_DEVICE=n",
         "CONFIG_PARTITION_TABLE_CUSTOM=y",
         'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions/provisions/16m.csv"',
         "CONFIG_SECURE_BOOT=y",
@@ -475,10 +531,34 @@ def _validate_firmware_contract(board_profile: str = BOARD_PROFILE) -> None:
         "CONFIG_NVS_ENCRYPTION=y",
         "CONFIG_NVS_SEC_KEY_PROTECT_USING_FLASH_ENC=y",
     }
+    if board_profile in CORE_S3_BOARD_PROFILES:
+        required_options.update(
+            {
+                "CONFIG_SPIRAM_MODE_QUAD=y",
+                "CONFIG_CAMERA_GC0308=n",
+                "CONFIG_ESP_VIDEO_ENABLE_DVP_VIDEO_DEVICE=n",
+            }
+        )
+    else:
+        required_options.update(
+            {
+                "CONFIG_SPIRAM=y",
+                "CONFIG_SPIRAM_MODE_OCT=y",
+                "CONFIG_SPIRAM_SPEED_80M=y",
+            }
+        )
     if not isinstance(sdkconfig_append, list) or not required_options.issubset(
         set(sdkconfig_append)
     ):
-        raise ProvisioningError("CoreS3 pilot security options are incomplete")
+        raise ProvisioningError(
+            "Kitchen Helper pilot security options are incomplete"
+        )
+    if BOARD_PROFILE_FORBIDDEN_SDKCONFIG_OPTIONS[board_profile].intersection(
+        sdkconfig_append
+    ):
+        raise ProvisioningError(
+            "Kitchen Helper pilot PSRAM mode does not match the hardware profile"
+        )
 
     try:
         with PILOT_PARTITION_TABLE.open(encoding="utf-8", newline="") as table_file:
@@ -491,7 +571,9 @@ def _validate_firmware_contract(board_profile: str = BOARD_PROFILE) -> None:
                 )
             ]
     except OSError:
-        raise ProvisioningError("CoreS3 pilot partition table is unavailable") from None
+        raise ProvisioningError(
+            "Kitchen Helper pilot partition table is unavailable"
+        ) from None
     expected_rows = [
         ["nvs", "data", "nvs", "0x9000", "0x4000", ""],
         ["otadata", "data", "ota", "0xd000", "0x2000", ""],
@@ -503,7 +585,7 @@ def _validate_firmware_contract(board_profile: str = BOARD_PROFILE) -> None:
     ]
     if rows != expected_rows:
         raise ProvisioningError(
-            "CoreS3 pilot partition layout no longer matches this tool"
+            "Kitchen Helper pilot partition layout no longer matches this tool"
         )
 
 
@@ -577,7 +659,7 @@ def _validate_firmware_artifacts(
     board_profile: str = BOARD_PROFILE,
 ) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
     if board_profile not in BOARD_PROFILES:
-        raise ProvisioningError("CoreS3 hardware profile is not approved")
+        raise ProvisioningError("Kitchen Helper hardware profile is not approved")
     try:
         artifact_metadata = firmware.artifact_directory.lstat()
     except OSError:
@@ -608,9 +690,11 @@ def _validate_firmware_artifacts(
     sdkconfig_lines = set(
         _read_bounded_text(sdkconfig_path, "pilot sdkconfig").splitlines()
     )
-    expected_defines = PILOT_SHARED_SDKCONFIG_DEFINES | {
-        BOARD_PROFILE_CONFIG_DEFINES[board_profile]
-    }
+    expected_defines = (
+        PILOT_SHARED_SDKCONFIG_DEFINES
+        | {BOARD_PROFILE_CONFIG_DEFINES[board_profile]}
+        | BOARD_PROFILE_REQUIRED_SDKCONFIG_DEFINES[board_profile]
+    )
     if not expected_defines.issubset(sdkconfig_lines):
         raise ProvisioningError("build is not the approved secure pilot profile")
     other_profile_defines = {
@@ -620,6 +704,12 @@ def _validate_firmware_artifacts(
     }
     if other_profile_defines.intersection(sdkconfig_lines):
         raise ProvisioningError("build identity does not match the requested hardware profile")
+    if BOARD_PROFILE_FORBIDDEN_SDKCONFIG_DEFINES[board_profile].intersection(
+        sdkconfig_lines
+    ):
+        raise ProvisioningError(
+            "build PSRAM mode does not match the requested hardware profile"
+        )
     if FORBIDDEN_PILOT_SDKCONFIG_DEFINES.intersection(sdkconfig_lines):
         raise ProvisioningError("build enables a forbidden development security mode")
     if any(
@@ -758,7 +848,7 @@ def _pilot_artifact_verifier_command(
     firmware_directory: Path, expected_version: str, expected_profile: str
 ) -> list[str]:
     if expected_profile not in BOARD_PROFILES:
-        raise ProvisioningError("CoreS3 hardware profile is not approved")
+        raise ProvisioningError("Kitchen Helper hardware profile is not approved")
     identity_markers = tuple(
         SIGNED_HARDWARE_IDENTITY_MARKERS[profile]
         for profile in sorted(BOARD_PROFILES)
@@ -1038,7 +1128,7 @@ def _render_private_preflash_verifier(
     checksums_json = json.dumps(checksums, separators=(",", ":"))
     command_json = json.dumps(artifact_verifier_command, separators=(",", ":"))
     return f'''#!/usr/bin/env python3
-"""Private, fail-closed verifier generated for one Provisions CoreS3 bundle."""
+"""Private verifier generated for one Provisions Kitchen Helper bundle."""
 
 import hashlib
 import json
@@ -1219,16 +1309,17 @@ def generate_bundle(
             generated_image_path.chmod(0o600)
             generated_key_path.chmod(0o600)
 
-            image_name = f"provisions-core-s3-{request.device_uuid}-encrypted-nvs.bin"
-            key_name = f"provisions-core-s3-{request.device_uuid}-nvs-keys.bin"
-            manifest_name = f"provisions-core-s3-{request.device_uuid}-manifest.json"
+            artifact_prefix = f"{request.hardware_profile}-{request.device_uuid}"
+            image_name = f"{artifact_prefix}-encrypted-nvs.bin"
+            key_name = f"{artifact_prefix}-nvs-keys.bin"
+            manifest_name = f"{artifact_prefix}-manifest.json"
             private_manifest_name = (
-                f"provisions-core-s3-{request.device_uuid}-private-checksums.json"
+                f"{artifact_prefix}-private-checksums.json"
             )
             verifier_name = (
-                f"provisions-core-s3-{request.device_uuid}-verify-before-flash.py"
+                f"{artifact_prefix}-verify-before-flash.py"
             )
-            command_name = f"provisions-core-s3-{request.device_uuid}-flash.txt"
+            command_name = f"{artifact_prefix}-flash.txt"
             final_image_path = output_directory / image_name
             final_key_path = output_directory / key_name
             final_manifest_path = output_directory / manifest_name
@@ -1349,7 +1440,7 @@ def generate_bundle(
             )
             manifest: dict[str, Any] = {
                 "schema_version": 2,
-                "artifact": "provisions-core-s3-secure-factory-bundle",
+                "artifact": "provisions-kitchen-helper-secure-factory-bundle",
                 "created_at": created_at_text,
                 "device": {
                     "profile": request.hardware_profile,
@@ -1468,7 +1559,7 @@ def generate_bundle(
                 },
             }
             command_text = (
-                "PROVISIONS CORES3 SECURE FACTORY COMMANDS — NOTHING HAS BEEN EXECUTED\n\n"
+                "PROVISIONS KITCHEN HELPER SECURE FACTORY COMMANDS — NOTHING HAS BEEN EXECUTED\n\n"
                 f"Expected Wi-Fi STA MAC: {request.hardware_serial}\n"
                 "1. Keep the device isolated from live yacht data and in ROM download mode.\n"
                 "2. Run the read-only MAC check; STOP unless it matches exactly:\n"
@@ -1529,7 +1620,7 @@ def generate_bundle(
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Prepare an offline, per-device Provisions CoreS3 secure factory bundle. "
+            "Prepare an offline, per-device Provisions Kitchen Helper secure factory bundle. "
             "The tool verifies and emits commands but never touches hardware."
         )
     )

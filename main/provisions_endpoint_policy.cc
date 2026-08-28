@@ -38,15 +38,25 @@ constexpr std::string_view kExpectedHealthUrl =
     "https://app.provisions-app.com/kitchen-helper/preview/v1/health";
 constexpr std::string_view kExpectedFirmwareIdentity = BOARD_NAME;
 
-#if defined(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3) && \
-    defined(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE)
-#error "Select exactly one Provisions CoreS3 hardware profile"
+#if (defined(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3) + \
+     defined(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE) + \
+     defined(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH)) != 1
+#error "Select exactly one Provisions hardware profile"
 #elif defined(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3)
 constexpr std::string_view kSelectedHardwareIdentity = "provisions-kitchen-helper-core-s3";
 #elif defined(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE)
 constexpr std::string_view kSelectedHardwareIdentity = "provisions-kitchen-helper-core-s3-lite";
-#else
-#error "A Provisions CoreS3 hardware profile is required"
+#elif defined(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH)
+constexpr std::string_view kSelectedHardwareIdentity = "provisions-kitchen-helper-stopwatch";
+#endif
+
+#if (defined(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3) || \
+     defined(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE)) && \
+    (!defined(CONFIG_SPIRAM_MODE_QUAD) || defined(CONFIG_SPIRAM_MODE_OCT))
+#error "Provisions CoreS3 profiles require quad PSRAM only"
+#elif defined(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH) && \
+    (!defined(CONFIG_SPIRAM_MODE_OCT) || defined(CONFIG_SPIRAM_MODE_QUAD))
+#error "The Provisions StopWatch profile requires octal PSRAM only"
 #endif
 
 static_assert(std::string_view(CONFIG_PROVISIONS_PREVIEW_HOST) == kExpectedHost,
@@ -58,7 +68,7 @@ static_assert(std::string_view(CONFIG_PROVISIONS_PREVIEW_WEBSOCKET_URL) == kExpe
 static_assert(std::string_view(CONFIG_OTA_URL) == kExpectedBootstrapUrl,
               "Gate 1 must use the approved Provisions bootstrap URL");
 static_assert(kExpectedFirmwareIdentity == kSelectedHardwareIdentity,
-              "The CoreS3 hardware and OTA identities must match");
+              "The Provisions hardware and OTA identities must match");
 
 struct ParsedUrl {
     std::string scheme;

@@ -202,6 +202,13 @@ elseif(CONFIG_BOARD_TYPE_MAGICLICK_C3_V2)
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_16_4)
     set(BUILTIN_ICON_FONT font_material_symbols_16_4)
     set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_32)
+elseif(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH)
+    set(BOARD_DIR "m5stack/stopwatch")
+    set(PROVISIONS_STOPWATCH_PROFILE ON)
+    set(PROVISIONS_STOPWATCH_BOARD_NAME "provisions-kitchen-helper-stopwatch")
+    set(BUILTIN_TEXT_FONT font_noto_sans_basic_30_4)
+    set(BUILTIN_ICON_FONT font_material_symbols_30_4)
+    set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_64)
 elseif(CONFIG_BOARD_TYPE_M5STACK_STOPWATCH)
     set(BOARD_DIR "m5stack/stopwatch")
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_30_4)
@@ -868,6 +875,16 @@ if(PROVISIONS_CORE_S3_PROFILE)
     )
 endif()
 
+if(PROVISIONS_STOPWATCH_PROFILE)
+    if(BOARD_NAME AND NOT BOARD_NAME STREQUAL PROVISIONS_STOPWATCH_BOARD_NAME)
+        message(FATAL_ERROR
+            "The selected Provisions StopWatch Kconfig profile does not match BOARD_NAME '${BOARD_NAME}'"
+        )
+    endif()
+    set(BOARD_NAME "${PROVISIONS_STOPWATCH_BOARD_NAME}")
+    list(APPEND SOURCES "provisions_endpoint_policy.cc")
+endif()
+
 if(NOT BOARD_DIR AND NOT CMAKE_BUILD_EARLY_EXPANSION)
     message(FATAL_ERROR "The selected board does not define BOARD_DIR")
 endif()
@@ -1051,7 +1068,8 @@ endif()
 # the CoreS3 camera physically present but deliberately unavailable in firmware.
 if((CONFIG_IDF_TARGET_ESP32S3 OR CONFIG_IDF_TARGET_ESP32P4)
    AND NOT CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3
-   AND NOT CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE)
+   AND NOT CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE
+   AND NOT CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH)
     list(APPEND SOURCES "boards/common/esp_video.cc"
                         "boards/common/rndis_board.cc"
                         )
@@ -1065,7 +1083,8 @@ endif()
 # Include Esp32Camera if target is ESP32S3 and the board profile allows it.
 if(CONFIG_IDF_TARGET_ESP32S3
    AND NOT CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3
-   AND NOT CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE)
+   AND NOT CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE
+   AND NOT CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH)
     list(APPEND SOURCES "boards/common/esp32_camera.cc")
 endif()
 

@@ -568,6 +568,7 @@ class ProvisionsEndpointPolicyCompileTests(unittest.TestCase):
                 "-Werror",
                 f'-DBOARD_NAME="{FULL_PROFILE}"',
                 "-DCONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3=1",
+                "-DCONFIG_SPIRAM_MODE_QUAD=1",
                 f'-DCONFIG_PROVISIONS_PREVIEW_HOST="app.provisions-app.com"',
                 f'-DCONFIG_PROVISIONS_PREVIEW_PATH_PREFIX="/kitchen-helper/preview/v1/"',
                 "-DCONFIG_PROVISIONS_PREVIEW_WEBSOCKET_URL=\"wss://app.provisions-app.com/kitchen-helper/preview/v1/device\"",
@@ -617,6 +618,7 @@ class ProvisionsEndpointPolicyCompileTests(unittest.TestCase):
                 "-Werror",
                 f'-DBOARD_NAME="{LITE_PROFILE}"',
                 "-DCONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE=1",
+                "-DCONFIG_SPIRAM_MODE_QUAD=1",
                 '-DCONFIG_PROVISIONS_PREVIEW_HOST="app.provisions-app.com"',
                 '-DCONFIG_PROVISIONS_PREVIEW_PATH_PREFIX="/kitchen-helper/preview/v1/"',
                 '-DCONFIG_PROVISIONS_PREVIEW_WEBSOCKET_URL="wss://app.provisions-app.com/kitchen-helper/preview/v1/device"',
@@ -637,6 +639,14 @@ class ProvisionsEndpointPolicyCompileTests(unittest.TestCase):
         mismatches = (
             ("CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3", LITE_PROFILE),
             ("CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE", FULL_PROFILE),
+            (
+                "CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3",
+                "provisions-kitchen-helper-stopwatch",
+            ),
+            (
+                "CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH",
+                FULL_PROFILE,
+            ),
         )
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary = Path(temporary_directory)
@@ -652,6 +662,70 @@ class ProvisionsEndpointPolicyCompileTests(unittest.TestCase):
                     "-Werror",
                     f'-DBOARD_NAME="{board_name}"',
                     f"-D{board_symbol}=1",
+                    (
+                        "-DCONFIG_SPIRAM_MODE_OCT=1"
+                        if board_symbol
+                        == "CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH"
+                        else "-DCONFIG_SPIRAM_MODE_QUAD=1"
+                    ),
+                    '-DCONFIG_PROVISIONS_PREVIEW_HOST="app.provisions-app.com"',
+                    '-DCONFIG_PROVISIONS_PREVIEW_PATH_PREFIX="/kitchen-helper/preview/v1/"',
+                    '-DCONFIG_PROVISIONS_PREVIEW_WEBSOCKET_URL="wss://app.provisions-app.com/kitchen-helper/preview/v1/device"',
+                    '-DCONFIG_OTA_URL="https://app.provisions-app.com/kitchen-helper/preview/v1/bootstrap"',
+                    "-I",
+                    str(ROOT / "main"),
+                    str(ROOT / "main/provisions_endpoint_policy.cc"),
+                    str(source),
+                    "-o",
+                    str(executable),
+                ]
+                result = subprocess.run(
+                    command, cwd=ROOT, capture_output=True, text=True, check=False
+                )
+                self.assertNotEqual(result.returncode, 0)
+
+    @unittest.skipUnless(shutil.which("c++"), "host C++ compiler is unavailable")
+    def test_hardware_profile_and_psram_mode_must_match_at_compile_time(self):
+        test_source = "int main() { return 0; }\n"
+        invalid_profiles = (
+            (
+                "CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3",
+                FULL_PROFILE,
+                ("CONFIG_SPIRAM_MODE_OCT",),
+            ),
+            (
+                "CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE",
+                LITE_PROFILE,
+                ("CONFIG_SPIRAM_MODE_QUAD", "CONFIG_SPIRAM_MODE_OCT"),
+            ),
+            (
+                "CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH",
+                "provisions-kitchen-helper-stopwatch",
+                ("CONFIG_SPIRAM_MODE_QUAD",),
+            ),
+            (
+                "CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH",
+                "provisions-kitchen-helper-stopwatch",
+                ("CONFIG_SPIRAM_MODE_OCT", "CONFIG_SPIRAM_MODE_QUAD"),
+            ),
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary = Path(temporary_directory)
+            source = temporary / "psram_policy_test.cc"
+            source.write_text(test_source, encoding="utf-8")
+            for index, (board_symbol, board_name, memory_symbols) in enumerate(
+                invalid_profiles
+            ):
+                executable = temporary / f"psram_policy_test_{index}"
+                command = [
+                    shutil.which("c++"),
+                    "-std=c++17",
+                    "-Wall",
+                    "-Wextra",
+                    "-Werror",
+                    f'-DBOARD_NAME="{board_name}"',
+                    f"-D{board_symbol}=1",
+                    *(f"-D{symbol}=1" for symbol in memory_symbols),
                     '-DCONFIG_PROVISIONS_PREVIEW_HOST="app.provisions-app.com"',
                     '-DCONFIG_PROVISIONS_PREVIEW_PATH_PREFIX="/kitchen-helper/preview/v1/"',
                     '-DCONFIG_PROVISIONS_PREVIEW_WEBSOCKET_URL="wss://app.provisions-app.com/kitchen-helper/preview/v1/device"',

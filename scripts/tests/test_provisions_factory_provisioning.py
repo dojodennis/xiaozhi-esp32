@@ -66,6 +66,7 @@ def make_release_artifacts(parent, profile=provisioning.BOARD_PROFILE):
             sorted(
                 provisioning.PILOT_SHARED_SDKCONFIG_DEFINES
                 | {provisioning.BOARD_PROFILE_CONFIG_DEFINES[profile]}
+                | provisioning.BOARD_PROFILE_REQUIRED_SDKCONFIG_DEFINES[profile]
             )
         )
         + "\n",
@@ -232,10 +233,18 @@ class ProvisioningInputTests(unittest.TestCase):
             ],
         )
 
-    def test_schema_two_binds_the_lite_hardware_identity(self):
+    def test_schema_two_binds_each_non_default_hardware_identity(self):
         document = valid_document(hardware_profile=provisioning.BOARD_PROFILE_LITE)
         request = parse(document)
         self.assertEqual(request.hardware_profile, provisioning.BOARD_PROFILE_LITE)
+
+        document = valid_document(
+            hardware_profile=provisioning.BOARD_PROFILE_STOPWATCH
+        )
+        request = parse(document)
+        self.assertEqual(
+            request.hardware_profile, provisioning.BOARD_PROFILE_STOPWATCH
+        )
 
         document["hardware_profile"] = "unapproved-core-s3"
         with self.assertRaisesRegex(provisioning.ProvisioningError, "profile"):
@@ -414,22 +423,31 @@ class ProvisioningBundleTests(unittest.TestCase):
             required_runtime_defines.issubset(provisioning.PILOT_SDKCONFIG_DEFINES)
         )
 
-        profile = json.loads(
+        core_profile = json.loads(
             (
                 ROOT
                 / "main/boards/m5stack/provisions-core-s3/pilot_profile.json"
             ).read_text(encoding="utf-8")
         )
-        required_settings = {
-                "CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y",
-                "CONFIG_PROVISIONS_GATEWAY_REQUIRED=y",
-                "CONFIG_WAKE_WORD_DISABLED=y",
-            }
-        self.assertEqual(
-            {build["name"] for build in profile["builds"]},
-            set(provisioning.BOARD_PROFILES),
+        stopwatch_profile = json.loads(
+            (
+                ROOT / "main/boards/m5stack/stopwatch/pilot_profile.json"
+            ).read_text(encoding="utf-8")
         )
-        for build in profile["builds"]:
+        required_settings = {
+            "CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y",
+            "CONFIG_PROVISIONS_GATEWAY_REQUIRED=y",
+            "CONFIG_WAKE_WORD_DISABLED=y",
+        }
+        self.assertEqual(
+            {build["name"] for build in core_profile["builds"]},
+            set(provisioning.CORE_S3_BOARD_PROFILES),
+        )
+        self.assertEqual(
+            {build["name"] for build in stopwatch_profile["builds"]},
+            {provisioning.BOARD_PROFILE_STOPWATCH},
+        )
+        for build in core_profile["builds"] + stopwatch_profile["builds"]:
             profile_settings = set(build["sdkconfig_append"])
             self.assertTrue(required_settings.issubset(profile_settings))
             self.assertIn(
@@ -456,6 +474,57 @@ class ProvisioningBundleTests(unittest.TestCase):
                         provisioning.ProvisioningError, "profile"
                     ):
                         provisioning._validate_firmware_artifacts(request.firmware)
+
+    def test_pilot_contract_rejects_cross_hardware_psram_mode(self):
+        cases = (
+            (
+                provisioning.BOARD_PROFILE,
+                provisioning.CORE_S3_PILOT_CONFIG,
+                "CONFIG_SPIRAM_MODE_OCT=y",
+                provisioning.BOARD_PROFILE,
+                provisioning.CORE_S3_BOARD_PROFILES,
+            ),
+            (
+                provisioning.BOARD_PROFILE_STOPWATCH,
+                provisioning.STOPWATCH_PILOT_CONFIG,
+                "CONFIG_SPIRAM_MODE_QUAD=y",
+                "m5stack-stopwatch",
+                frozenset((provisioning.BOARD_PROFILE_STOPWATCH,)),
+            ),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary = Path(temporary)
+            for index, (
+                profile,
+                source_path,
+                forbidden_option,
+                config_type,
+                allowed_profiles,
+            ) in enumerate(cases):
+                with self.subTest(profile=profile):
+                    config = json.loads(source_path.read_text(encoding="utf-8"))
+                    selected = next(
+                        build for build in config["builds"]
+                        if build["name"] == profile
+                    )
+                    selected["sdkconfig_append"].append(forbidden_option)
+                    tampered_path = temporary / f"tampered-{index}.json"
+                    tampered_path.write_text(
+                        json.dumps(config), encoding="utf-8"
+                    )
+                    with mock.patch.dict(
+                        provisioning.PILOT_CONFIGS, {profile: tampered_path}
+                    ), mock.patch.dict(
+                        provisioning.PILOT_CONFIG_TYPES,
+                        {tampered_path: config_type},
+                    ), mock.patch.dict(
+                        provisioning.PILOT_CONFIG_PROFILE_SETS,
+                        {tampered_path: allowed_profiles},
+                    ):
+                        with self.assertRaisesRegex(
+                            provisioning.ProvisioningError, "PSRAM"
+                        ):
+                            provisioning._validate_firmware_contract(profile)
 
     def test_one_network_bundle_is_private_encrypted_redacted_and_no_reset(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -603,11 +672,102 @@ class ProvisioningBundleTests(unittest.TestCase):
                     provisioning.BOARD_PROFILE_LITE
                 ],
                 "#define CONFIG_CAMERA_GC0308 1",
-            }
+            } | provisioning.BOARD_PROFILE_REQUIRED_SDKCONFIG_DEFINES[
+                provisioning.BOARD_PROFILE_LITE
+            ]
             sdkconfig_path.write_text(
                 "\n".join(sorted(lite_defines)) + "\n", encoding="utf-8"
             )
             with self.assertRaisesRegex(provisioning.ProvisioningError, "forbidden"):
+                provisioning._validate_firmware_artifacts(
+                    request.firmware, request.hardware_profile
+                )
+
+            wrong_memory = (
+                provisioning.PILOT_SHARED_SDKCONFIG_DEFINES
+                | {
+                    provisioning.BOARD_PROFILE_CONFIG_DEFINES[
+                        provisioning.BOARD_PROFILE_LITE
+                    ],
+                    "#define CONFIG_SPIRAM_MODE_OCT 1",
+                }
+                | provisioning.BOARD_PROFILE_REQUIRED_SDKCONFIG_DEFINES[
+                    provisioning.BOARD_PROFILE_LITE
+                ]
+            )
+            sdkconfig_path.write_text(
+                "\n".join(sorted(wrong_memory)) + "\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(provisioning.ProvisioningError, "PSRAM"):
+                provisioning._validate_firmware_artifacts(
+                    request.firmware, request.hardware_profile
+                )
+
+    def test_stopwatch_bundle_requires_and_records_the_stopwatch_signed_build(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            request, artifact_directory, _public_key = self.make_request(
+                temporary,
+                hardware_profile=provisioning.BOARD_PROFILE_STOPWATCH,
+            )
+            output_directory = Path(temporary) / "stopwatch-bundle"
+            manifest = self.generate(request, output_directory)
+            self.assertEqual(
+                manifest["device"]["profile"],
+                provisioning.BOARD_PROFILE_STOPWATCH,
+            )
+            self.assertEqual(
+                manifest["firmware"]["profile"],
+                provisioning.BOARD_PROFILE_STOPWATCH,
+            )
+
+            sdkconfig_path = artifact_directory / "config/sdkconfig.h"
+            lite_defines = provisioning.PILOT_SHARED_SDKCONFIG_DEFINES | {
+                provisioning.BOARD_PROFILE_CONFIG_DEFINES[
+                    provisioning.BOARD_PROFILE_LITE
+                ]
+            } | provisioning.BOARD_PROFILE_REQUIRED_SDKCONFIG_DEFINES[
+                provisioning.BOARD_PROFILE_LITE
+            ]
+            sdkconfig_path.write_text(
+                "\n".join(sorted(lite_defines)) + "\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(provisioning.ProvisioningError, "profile"):
+                provisioning._validate_firmware_artifacts(
+                    request.firmware, request.hardware_profile
+                )
+
+            stopwatch_defines = provisioning.PILOT_SHARED_SDKCONFIG_DEFINES | {
+                provisioning.BOARD_PROFILE_CONFIG_DEFINES[
+                    provisioning.BOARD_PROFILE_STOPWATCH
+                ],
+                "#define CONFIG_CAMERA_GC0308 1",
+            } | provisioning.BOARD_PROFILE_REQUIRED_SDKCONFIG_DEFINES[
+                provisioning.BOARD_PROFILE_STOPWATCH
+            ]
+            sdkconfig_path.write_text(
+                "\n".join(sorted(stopwatch_defines)) + "\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(provisioning.ProvisioningError, "forbidden"):
+                provisioning._validate_firmware_artifacts(
+                    request.firmware, request.hardware_profile
+                )
+
+            wrong_memory = (
+                provisioning.PILOT_SHARED_SDKCONFIG_DEFINES
+                | {
+                    provisioning.BOARD_PROFILE_CONFIG_DEFINES[
+                        provisioning.BOARD_PROFILE_STOPWATCH
+                    ],
+                    "#define CONFIG_SPIRAM_MODE_QUAD 1",
+                }
+                | provisioning.BOARD_PROFILE_REQUIRED_SDKCONFIG_DEFINES[
+                    provisioning.BOARD_PROFILE_STOPWATCH
+                ]
+            )
+            sdkconfig_path.write_text(
+                "\n".join(sorted(wrong_memory)) + "\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(provisioning.ProvisioningError, "PSRAM"):
                 provisioning._validate_firmware_artifacts(
                     request.firmware, request.hardware_profile
                 )
@@ -622,7 +782,9 @@ class ProvisioningBundleTests(unittest.TestCase):
                 provisioning.BOARD_PROFILE_CONFIG_DEFINES[
                     provisioning.BOARD_PROFILE_LITE
                 ]
-            }
+            } | provisioning.BOARD_PROFILE_REQUIRED_SDKCONFIG_DEFINES[
+                provisioning.BOARD_PROFILE_LITE
+            ]
             sdkconfig_path.write_text(
                 "\n".join(sorted(lite_defines)) + "\n", encoding="utf-8"
             )

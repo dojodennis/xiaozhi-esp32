@@ -8,14 +8,29 @@
 #include "M5IOE1.h"
 #include "M5PM1.h"
 #include "config.h"
+#include "utf8_ellipsis.h"
 #include "assets/lang_config.h"
+#include <atomic>
+#include <cstring>
 #include <esp_log.h>
+#include <esp_system.h>
+#include <esp_timer.h>
 #include <driver/i2c_master.h>
 #include <driver/spi_master.h>
 #include <wifi_manager.h>
 
 #define TAG "M5StackStopwatch"
 #define LCD_OPCODE_WRITE_CMD (0x02ULL)
+
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+namespace {
+
+constexpr char kSignedHardwareIdentity[] = "PROVISIONS_SIGNED_HARDWARE_IDENTITY=" BOARD_NAME;
+constexpr size_t kMaximumResultBytes = 48;
+constexpr int64_t kDisplayIdleTimeoutUs = 45LL * 1000 * 1000;
+
+}  // namespace
+#endif
 
 // CO5300 AMOLED: initialize at full brightness, then restore the saved setting.
 static const co5300_lcd_init_cmd_t vendor_specific_init[] = {
@@ -84,7 +99,36 @@ public:
         }
 
         lv_display_add_event_cb(display_, rounder_event_cb, LV_EVENT_INVALIDATE_AREA, NULL);
+
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        SetHideSubtitle(true);
+        SetStatus("Boot");
+#endif
     }
+
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    void SetEmotion(const char* emotion) override { (void)emotion; }
+
+    void SetChatMessage(const char* role, const char* content) override {
+        if (role == nullptr || content == nullptr || content[0] == '\0' ||
+            std::strcmp(role, "assistant") != 0) {
+            return;
+        }
+
+        std::string result = ProvisionsStopWatch::EllipsizeUtf8(content, kMaximumResultBytes);
+        ShowNotification(result, 3000);
+    }
+
+    void ClearChatMessages() override {}
+
+    void SetPreviewImage(std::unique_ptr<LvglImage> image) override { (void)image; }
+
+    bool AddTextGlyphs(const std::vector<TextGlyph>& glyphs, uint8_t bpp) override {
+        (void)glyphs;
+        (void)bpp;
+        return false;
+    }
+#endif
 };
 
 class StopwatchBacklight : public Backlight {
@@ -121,6 +165,11 @@ private:
     Button button2_;
     RoundLcdDisplay* display_;
     StopwatchBacklight* backlight_;
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    esp_timer_handle_t display_idle_timer_ = nullptr;
+    std::atomic<int64_t> display_idle_deadline_us_{0};
+    bool display_dimmed_ = false;
+#endif
 
     void InitializeI2c() {
         i2c_master_bus_config_t i2c_bus_cfg = {
@@ -137,11 +186,19 @@ private:
 
         if (ioe_.begin(i2c_bus_, M5IOE1_I2C_ADDR, M5IOE1_I2C_FREQ_100K, M5IOE1_INT_MODE_POLLING) != M5IOE1_OK) {
             ESP_LOGE(TAG, "M5IOE1 begin failed");
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            esp_restart();
+#endif
             return;
         }
 
         if (pmic_.begin(i2c_bus_, M5PM1_DEFAULT_ADDR, M5PM1_I2C_FREQ_100K) != M5PM1_OK) {
             ESP_LOGE(TAG, "M5PM1 begin failed");
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            esp_restart();
+#endif
             return;
         }
 
@@ -234,6 +291,13 @@ private:
     }
 
     void InitializeButtons() {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        button1_.OnPressDown([this]() {
+            ResetDisplayIdleTimer();
+            Application::GetInstance().StartListening();
+        });
+        button1_.OnPressUp([]() { Application::GetInstance().StopListening(); });
+#else
         // Button1: wake / toggle conversation
         button1_.OnClick([this]() {
             auto& app = Application::GetInstance();
@@ -254,7 +318,72 @@ private:
             codec->SetOutputVolume(volume);
             GetDisplay()->ShowNotification(std::string(Lang::Strings::VOLUME) + ":" + std::to_string(volume) + "%");
         });
+#endif
     }
+
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    void InitializeDisplayIdleTimer() {
+        esp_timer_create_args_t timer_args = {
+            .callback = [](void* arg) {
+                auto self = static_cast<M5StackStopwatchBoard*>(arg);
+                const int64_t deadline = self->display_idle_deadline_us_.load();
+                if (deadline <= 0 || esp_timer_get_time() < deadline) {
+                    return;
+                }
+                Application::GetInstance().Schedule([self, deadline]() {
+                    if (self->display_idle_deadline_us_.load() != deadline ||
+                        esp_timer_get_time() < deadline) {
+                        return;
+                    }
+                    self->display_dimmed_ = true;
+                    self->GetDisplay()->SetPowerSaveMode(true);
+                    self->GetBacklight()->SetBrightness(5);
+                });
+            },
+            .arg = this,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "stopwatch_display_idle",
+            .skip_unhandled_events = true,
+        };
+        ESP_ERROR_CHECK(esp_timer_create(&timer_args, &display_idle_timer_));
+        display_idle_deadline_us_.store(
+            esp_timer_get_time() + kDisplayIdleTimeoutUs);
+        ESP_ERROR_CHECK(
+            esp_timer_start_once(display_idle_timer_, kDisplayIdleTimeoutUs));
+    }
+
+    void ResetDisplayIdleTimer() {
+        if (display_idle_timer_ == nullptr) {
+            return;
+        }
+        const int64_t deadline = esp_timer_get_time() + kDisplayIdleTimeoutUs;
+        display_idle_deadline_us_.store(deadline);
+        Application::GetInstance().Schedule([this, deadline]() {
+            if (display_idle_deadline_us_.load() != deadline) {
+                return;
+            }
+            const esp_err_t stop_result = esp_timer_stop(display_idle_timer_);
+            if (stop_result != ESP_OK && stop_result != ESP_ERR_INVALID_STATE) {
+                ESP_LOGE(TAG, "Display idle timer stop failed: %s",
+                         esp_err_to_name(stop_result));
+                return;
+            }
+            const esp_err_t start_result =
+                esp_timer_start_once(display_idle_timer_, kDisplayIdleTimeoutUs);
+            if (start_result != ESP_OK) {
+                ESP_LOGE(TAG, "Display idle timer restart failed: %s",
+                         esp_err_to_name(start_result));
+                return;
+            }
+            if (!display_dimmed_) {
+                return;
+            }
+            display_dimmed_ = false;
+            GetDisplay()->SetPowerSaveMode(false);
+            GetBacklight()->RestoreBrightness();
+        });
+    }
+#endif
 
 public:
     M5StackStopwatchBoard()
@@ -263,9 +392,17 @@ public:
           button2_(BUTTON2_GPIO),
           display_(nullptr),
           backlight_(nullptr) {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        ESP_LOGI(TAG, "%s hardware_profile=%s nominal_battery=%dmAh talk_gpio=%d",
+                 kSignedHardwareIdentity, PROVISIONS_HARDWARE_PROFILE,
+                 PROVISIONS_NOMINAL_BATTERY_MAH, BUTTON1_GPIO);
+#endif
         InitializeI2c();
         InitializeSpi();
         InitializeDisplay();
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        InitializeDisplayIdleTimer();
+#endif
         InitializeButtons();
     }
 
@@ -308,7 +445,16 @@ public:
         } else {
             // M5PM1 charge status is active low: 0 means charging, 1 means not charging
             charging = (charge_state_level == 0);
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+            m5pm1_pwr_src_t power_source = M5PM1_PWR_SRC_UNKNOWN;
+            if (pmic_.getPowerSource(&power_source) == M5PM1_OK) {
+                discharging = (power_source == M5PM1_PWR_SRC_BAT);
+            } else {
+                discharging = false;
+            }
+#else
             discharging = !charging;
+#endif
         }
 
         const int BATTERY_MIN_VOLTAGE = 3400;
@@ -322,6 +468,13 @@ public:
         }
         return true;
     }
+
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    void SetPowerSaveLevel(PowerSaveLevel level) override {
+        ResetDisplayIdleTimer();
+        WifiBoard::SetPowerSaveLevel(level);
+    }
+#endif
 };
 
 DECLARE_BOARD(M5StackStopwatchBoard);

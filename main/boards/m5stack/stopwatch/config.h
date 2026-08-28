@@ -49,6 +49,11 @@
 #define BUTTON1_GPIO                GPIO_NUM_2
 #define BUTTON2_GPIO                GPIO_NUM_1
 
+#if defined(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH)
+#define PROVISIONS_HARDWARE_PROFILE "stopwatch-client"
+#define PROVISIONS_NOMINAL_BATTERY_MAH 450
+#endif
+
 // M5IOE1 @ 0x4F
 #define M5IOE1_I2C_ADDR             0x4F
 #define IOE_PIN_LCD_POWER           M5IOE1_PIN_8

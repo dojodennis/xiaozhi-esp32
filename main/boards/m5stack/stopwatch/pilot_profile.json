@@ -1,0 +1,33 @@
+{
+    "manufacturer": "m5stack",
+    "type": "m5stack-stopwatch",
+    "target": "esp32s3",
+    "builds": [
+        {
+            "name": "provisions-kitchen-helper-stopwatch",
+            "sdkconfig_append": [
+                "CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH=y",
+                "CONFIG_SPIRAM=y",
+                "CONFIG_SPIRAM_MODE_OCT=y",
+                "CONFIG_SPIRAM_SPEED_80M=y",
+                "CONFIG_LOG_DEFAULT_LEVEL_INFO=y",
+                "CONFIG_LOG_MAXIMUM_LEVEL_INFO=y",
+                "CONFIG_OTA_URL=\"https://app.provisions-app.com/kitchen-helper/preview/v1/bootstrap\"",
+                "CONFIG_PARTITION_TABLE_CUSTOM=y",
+                "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=\"partitions/provisions/16m.csv\"",
+                "CONFIG_BOOTLOADER_SKIP_VALIDATE_ALWAYS=n",
+                "CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y",
+                "CONFIG_PROVISIONS_GATEWAY_REQUIRED=y",
+                "CONFIG_WAKE_WORD_DISABLED=y",
+                "CONFIG_SECURE_BOOT=y",
+                "CONFIG_SECURE_BOOT_V2_ENABLED=y",
+                "CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y",
+                "CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=n",
+                "CONFIG_SECURE_FLASH_ENC_ENABLED=y",
+                "CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=y",
+                "CONFIG_NVS_ENCRYPTION=y",
+                "CONFIG_NVS_SEC_KEY_PROTECT_USING_FLASH_ENC=y"
+            ]
+        }
+    ]
+}
