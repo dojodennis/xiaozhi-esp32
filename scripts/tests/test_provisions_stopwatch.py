@@ -56,7 +56,9 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("button1_.OnPressUp", source)
         self.assertIn("StopListening", source)
         self.assertIn("hide_subtitle_ = true", source)
-        self.assertIn("Spoken detail stays in audio", source)
+        self.assertIn("lv_label_set_text(reply_label_, content)", source)
+        self.assertIn("No transcript text is retained", source)
+        self.assertNotIn("last_reply_text_", source)
         self.assertNotIn("ProvisionsStopWatch::EllipsizeUtf8", source)
         self.assertIn("kDisplayIdleTimeoutUs = 45LL * 1000 * 1000", source)
         self.assertIn('.name = "stopwatch_display_idle"', source)
@@ -100,7 +102,7 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn('#define PROVISIONS_HARDWARE_PROFILE "stopwatch-client"', config)
         self.assertIn("#define PROVISIONS_NOMINAL_BATTERY_MAH 450", config)
 
-    def test_provisions_screen_is_branded_and_state_only(self):
+    def test_provisions_screen_is_branded_and_reply_capable(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
         provisions_ui = source.split("#if CONFIG_PROVISIONS_GATEWAY_REQUIRED", 2)[2]
 
@@ -171,6 +173,21 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("Lang::Strings::CHECKING_NEW_VERSION", source)
         self.assertIn("Lang::Strings::LOADING_PROTOCOL", source)
         self.assertIn("lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN)", provisions_ui)
+        self.assertIn('lv_label_set_text(reply_header_label_, "ASSISTANT REPLY")', source)
+        self.assertIn("lv_label_set_long_mode(reply_label_, LV_LABEL_LONG_WRAP)", source)
+        self.assertIn('.name = "stopwatch_reply_scroll"', source)
+        self.assertIn("lv_obj_get_scroll_bottom", source)
+        self.assertIn("lv_obj_scroll_to_y", source)
+        self.assertIn("void RestartReplyFromTop()", source)
+        self.assertIn("lv_obj_get_scroll_y(self->reply_panel_) > 0", source)
+        self.assertIn("self->CancelReplyScroll();", source)
+        self.assertIn("reply_generation_.load() != generation", source)
+        self.assertIn("kReplyPlaybackMaximumMs = 35 * 1000", source)
+        self.assertIn("kReplyHoldAfterSpeechMs = 12 * 1000", source)
+        self.assertIn('lv_label_set_text(reply_label_, "")', source)
+        self.assertIn("resting_state_.store(VisualState::kUnavailable)", source)
+        self.assertIn("if (!ScheduleVisualReset(kReplyPlaybackMaximumMs))", source)
+        self.assertIn("if (!ScheduleVisualReset(kReplyHoldAfterSpeechMs))", source)
 
     def test_provisions_stopwatch_clears_amoled_to_black_without_changing_defaults(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
@@ -200,10 +217,18 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
             "hero_halo_",
             "status_bar_",
             "hint_panel_",
+            "reply_header_label_",
+            "reply_panel_",
         ):
             self.assertIn(object_name, power_save)
         self.assertIn("lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN)", power_save)
-        self.assertIn("lv_obj_remove_flag(object, LV_OBJ_FLAG_HIDDEN)", power_save)
+        self.assertIn("power_save_active_.store(on)", power_save)
+        self.assertIn("SetReplyLayoutLocked(reply_visible_.load())", power_save)
+        reply_layout = source.split("void SetReplyLayoutLocked", 1)[1].split(
+            "void CancelReplyScroll", 1
+        )[0]
+        self.assertIn("display_awake && !visible", reply_layout)
+        self.assertIn("display_awake && visible", reply_layout)
         self.assertNotIn("LV_ANIM_REPEAT_INFINITE", source)
 
     def test_provisions_blue_button_toggles_only_high_and_max_volume(self):
@@ -274,6 +299,18 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
                 center,
                 center + constant("kRoundHintOffset"),
             ),
+            "reply header": (
+                constant("kReplyHeaderWidth"),
+                22,
+                center,
+                constant("kReplyHeaderTopOffset") + 11,
+            ),
+            "reply panel": (
+                constant("kReplyPanelWidth"),
+                constant("kReplyPanelHeight"),
+                center,
+                center + constant("kReplyPanelOffset"),
+            ),
         }
 
         for name, (width, height, x, y) in rectangles.items():
@@ -343,6 +380,175 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
                     "-Werror",
                     "-I",
                     str(BOARD_DIR),
+                    str(source),
+                    "-o",
+                    str(executable),
+                ],
+                check=True,
+                cwd=ROOT,
+            )
+            subprocess.run([str(executable)], check=True, cwd=ROOT)
+
+    @unittest.skipUnless(shutil.which("c++"), "host C++ compiler is unavailable")
+    def test_tts_text_policy_rejects_unsafe_unicode_and_malformed_utf8(self):
+        test_source = textwrap.dedent(
+            r"""
+            #include "provisions_tts_text.h"
+            #include <cassert>
+            #include <string>
+
+            int main() {
+                using ProvisionsTtsText::IsValid;
+                assert(IsValid("Soy sauce is in your draft."));
+                assert(IsValid(u8"Crème fraîche, 醤油, and ✅"));
+                assert(!IsValid(""));
+                assert(IsValid(std::string(500, 'a')));
+                assert(!IsValid(std::string(501, 'a')));
+
+                std::string maximum_bytes;
+                for (int i = 0; i < 500; ++i) maximum_bytes += u8"😀";
+                assert(maximum_bytes.size() == 2000);
+                assert(IsValid(maximum_bytes));
+                assert(!IsValid(maximum_bytes + "a"));
+
+                assert(!IsValid(std::string("safe\0hidden", 11)));
+                assert(!IsValid(std::string("\x80", 1)));
+                assert(!IsValid(std::string("\xc0\xaf", 2)));
+                assert(!IsValid(std::string("\xe2\x82", 2)));
+                assert(!IsValid(std::string("\xe2\x28\xa1", 3)));
+                assert(!IsValid(std::string("\xed\xa0\x80", 3)));
+                assert(!IsValid(std::string("\xf0\x80\x80\x80", 4)));
+                assert(!IsValid(std::string("\xf4\x90\x80\x80", 4)));
+                assert(!IsValid(std::string("\xf5\x80\x80\x80", 4)));
+
+                assert(!IsValid("line\nbreak"));
+                assert(!IsValid(std::string("\xc2\x80", 2)));
+                assert(!IsValid(std::string("\xc2\xad", 2)));
+                assert(!IsValid(std::string("\xe2\x80\xae", 3)));
+                assert(!IsValid(std::string("\xee\x80\x80", 3)));
+                assert(!IsValid(std::string("\xef\xb7\x90", 3)));
+                assert(!IsValid(std::string("\xf3\xbf\xbf\xbe", 4)));
+                return 0;
+            }
+            """
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary = Path(temporary_directory)
+            source = temporary / "tts_text_policy_test.cc"
+            executable = temporary / "tts_text_policy_test"
+            source.write_text(test_source, encoding="utf-8")
+            subprocess.run(
+                [
+                    shutil.which("c++"),
+                    "-std=c++17",
+                    "-Wall",
+                    "-Wextra",
+                    "-Werror",
+                    "-I",
+                    str(ROOT / "main"),
+                    str(source),
+                    "-o",
+                    str(executable),
+                ],
+                check=True,
+                cwd=ROOT,
+            )
+            subprocess.run([str(executable)], check=True, cwd=ROOT)
+
+    @unittest.skipUnless(shutil.which("c++"), "host C++ compiler is unavailable")
+    def test_tts_turn_deduplicates_orders_and_serializes_invalidation(self):
+        test_source = textwrap.dedent(
+            r"""
+            #include "provisions_tts_turn.h"
+            #include <atomic>
+            #include <cassert>
+            #include <thread>
+
+            int main() {
+                using Outcome = ProvisionsTtsTurn::Outcome;
+                using Phase = ProvisionsTtsTurn::Phase;
+
+                ProvisionsTtsTurn turn;
+                assert(turn.Sentence().outcome == Outcome::kInvalidOrder);
+                assert(turn.Stop().outcome == Outcome::kDuplicate);
+
+                const auto first = turn.Start();
+                assert(first.outcome == Outcome::kAccepted);
+                assert(first.token != ProvisionsTtsTurn::kInvalidToken);
+                assert(turn.Start().outcome == Outcome::kDuplicate);
+                assert(turn.Sentence().outcome == Outcome::kAccepted);
+                assert(turn.Sentence().outcome == Outcome::kDuplicate);
+                assert(turn.Stop().outcome == Outcome::kAccepted);
+                assert(turn.Stop().outcome == Outcome::kDuplicate);
+                assert(turn.phase() == Phase::kIdle);
+
+                const auto second = turn.Start();
+                assert(second.outcome == Outcome::kAccepted);
+                assert(second.token != first.token);
+                bool stale_ran = false;
+                assert(!turn.WithCurrent(first.token, [&]() { stale_ran = true; }));
+                assert(!stale_ran);
+                bool identical_reply_ran = false;
+                assert(turn.WithCurrent(second.token, [&]() { identical_reply_ran = true; }));
+                assert(identical_reply_ran);
+
+                ProvisionsTtsTurn concurrent;
+                const auto active = concurrent.Start();
+                std::atomic<bool> action_started{false};
+                std::atomic<bool> allow_action_finish{false};
+                std::atomic<bool> invalidation_started{false};
+                std::atomic<bool> invalidation_returned{false};
+                std::thread action([&]() {
+                    assert(concurrent.WithCurrent(active.token, [&]() {
+                        action_started.store(true, std::memory_order_release);
+                        while (!allow_action_finish.load(std::memory_order_acquire)) {
+                            std::this_thread::yield();
+                        }
+                    }));
+                });
+                while (!action_started.load(std::memory_order_acquire)) {
+                    std::this_thread::yield();
+                }
+                std::thread invalidator([&]() {
+                    invalidation_started.store(true, std::memory_order_release);
+                    concurrent.Invalidate();
+                    invalidation_returned.store(true, std::memory_order_release);
+                });
+                while (!invalidation_started.load(std::memory_order_acquire)) {
+                    std::this_thread::yield();
+                }
+                for (int i = 0; i < 1000; ++i) {
+                    assert(!invalidation_returned.load(std::memory_order_acquire));
+                    std::this_thread::yield();
+                }
+                allow_action_finish.store(true, std::memory_order_release);
+                action.join();
+                invalidator.join();
+                assert(invalidation_returned.load(std::memory_order_acquire));
+                bool post_invalidation_ran = false;
+                assert(!concurrent.WithCurrent(active.token, [&]() {
+                    post_invalidation_ran = true;
+                }));
+                assert(!post_invalidation_ran);
+                return 0;
+            }
+            """
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary = Path(temporary_directory)
+            source = temporary / "tts_turn_test.cc"
+            executable = temporary / "tts_turn_test"
+            source.write_text(test_source, encoding="utf-8")
+            subprocess.run(
+                [
+                    shutil.which("c++"),
+                    "-std=c++17",
+                    "-Wall",
+                    "-Wextra",
+                    "-Werror",
+                    "-pthread",
+                    "-I",
+                    str(ROOT / "main"),
                     str(source),
                     "-o",
                     str(executable),

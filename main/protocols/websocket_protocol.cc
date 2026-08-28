@@ -15,6 +15,7 @@
 #include <arpa/inet.h>
 #include <cJSON.h>
 #include <cstring>
+#include <string_view>
 #include "assets/lang_config.h"
 
 #define TAG "WS"
@@ -229,10 +230,44 @@ bool WebsocketProtocol::OpenAudioChannel() {
                 }
             }
         } else {
-            // Parse JSON data
-            auto root = cJSON_ParseWithLength(data, len);
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+            // cJSON exposes decoded strings as NUL-terminated buffers. Reject
+            // embedded NUL representations before parsing so a sentence such
+            // as `safe\u0000hidden` cannot be validated as only its prefix.
+            const std::string_view raw_frame(data, len);
+            if (raw_frame.find('\0') != std::string_view::npos ||
+                raw_frame.find("\\u0000") != std::string_view::npos) {
+                gateway_authenticated_.store(false);
+                ESP_LOGE(TAG, "Rejecting gateway JSON containing an embedded NUL");
+                SetError("Invalid gateway message");
+                return;
+            }
+#endif
+            // Parse exactly one JSON value. cJSON_ParseWithLength() accepts a
+            // valid prefix followed by garbage, so retain the parse end and
+            // permit only JSON whitespace after the root value.
+            const char* parse_end = nullptr;
+            auto root = cJSON_ParseWithLengthOpts(data, len, &parse_end, false);
+            if (root != nullptr) {
+                const char* const frame_end = data + len;
+                while (parse_end < frame_end &&
+                       (*parse_end == ' ' || *parse_end == '\t' ||
+                        *parse_end == '\r' || *parse_end == '\n')) {
+                    ++parse_end;
+                }
+                if (parse_end != frame_end) {
+                    cJSON_Delete(root);
+                    root = nullptr;
+                }
+            }
             if (root == nullptr) {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+                gateway_authenticated_.store(false);
+                ESP_LOGE(TAG, "Rejecting malformed gateway JSON");
+                SetError("Invalid gateway message");
+#else
                 ESP_LOGE(TAG, "Invalid JSON message");
+#endif
                 return;
             }
             auto type = cJSON_GetObjectItem(root, "type");

@@ -51,6 +51,15 @@ constexpr int kRoundStatusOffset = 82;
 constexpr int kRoundHintWidth = 304;
 constexpr int kRoundHintHeight = 38;
 constexpr int kRoundHintOffset = 132;
+constexpr int kReplyHeaderWidth = 280;
+constexpr int kReplyHeaderTopOffset = 106;
+constexpr int kReplyPanelWidth = 348;
+constexpr int kReplyPanelHeight = 230;
+constexpr int kReplyPanelOffset = 25;
+constexpr int kReplyPlaybackMaximumMs = 35 * 1000;
+constexpr int kReplyHoldAfterSpeechMs = 12 * 1000;
+constexpr int kReplyScrollIntervalMs = 4 * 1000;
+constexpr int kReplyScrollStep = 176;
 
 constexpr uint32_t kColorGold = 0xD4B67A;
 constexpr uint32_t kColorCream = 0xF5F2EB;
@@ -131,10 +140,17 @@ private:
     lv_obj_t* hint_panel_ = nullptr;
     lv_obj_t* hint_label_ = nullptr;
     lv_obj_t* talk_button_dot_ = nullptr;
+    lv_obj_t* reply_header_label_ = nullptr;
+    lv_obj_t* reply_panel_ = nullptr;
+    lv_obj_t* reply_label_ = nullptr;
     esp_timer_handle_t visual_reset_timer_ = nullptr;
+    esp_timer_handle_t reply_scroll_timer_ = nullptr;
     std::atomic<int64_t> visual_reset_deadline_us_{0};
     std::atomic<VisualState> resting_state_{VisualState::kBoot};
     std::atomic<bool> receipt_visible_{false};
+    std::atomic<bool> reply_visible_{false};
+    std::atomic<bool> power_save_active_{false};
+    std::atomic<uint32_t> reply_generation_{0};
 
     static bool IsClockStatus(const char* status) {
         return status != nullptr && std::strlen(status) == 5 && status[2] == ':' &&
@@ -180,6 +196,83 @@ private:
                 return {"Notice", "Listen for details", MATERIAL_SYMBOLS_INFO, kColorAmber};
         }
         return {"Unavailable", "Please try again", MATERIAL_SYMBOLS_CLOUD_OFF, kColorRed};
+    }
+
+    void SetReplyLayoutLocked(bool visible) {
+        const bool display_awake = !power_save_active_.load();
+        lv_obj_t* normal[] = {
+            title_label_, brand_rule_, hero_halo_, status_bar_, hint_panel_
+        };
+        for (auto* object : normal) {
+            if (object == nullptr) {
+                continue;
+            }
+            if (display_awake && !visible) {
+                lv_obj_remove_flag(object, LV_OBJ_FLAG_HIDDEN);
+            } else {
+                lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+
+        lv_obj_t* reply[] = {reply_header_label_, reply_panel_};
+        for (auto* object : reply) {
+            if (object == nullptr) {
+                continue;
+            }
+            if (display_awake && visible) {
+                lv_obj_remove_flag(object, LV_OBJ_FLAG_HIDDEN);
+            } else {
+                lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+    }
+
+    void CancelReplyScroll() {
+        if (reply_scroll_timer_ == nullptr) {
+            return;
+        }
+        const esp_err_t result = esp_timer_stop(reply_scroll_timer_);
+        if (result != ESP_OK && result != ESP_ERR_INVALID_STATE) {
+            ESP_LOGW(TAG, "Failed to stop reply scroll timer: %s", esp_err_to_name(result));
+        }
+    }
+
+    void StartReplyScroll() {
+        if (reply_scroll_timer_ == nullptr) {
+            return;
+        }
+        CancelReplyScroll();
+        const esp_err_t result = esp_timer_start_periodic(
+            reply_scroll_timer_, static_cast<uint64_t>(kReplyScrollIntervalMs) * 1000);
+        if (result != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to start reply scroll timer: %s", esp_err_to_name(result));
+        }
+    }
+
+    void RestartReplyFromTop() {
+        CancelReplyScroll();
+        {
+            DisplayLockGuard lock(this);
+            if (!reply_visible_.load() || reply_panel_ == nullptr) {
+                return;
+            }
+            reply_generation_.fetch_add(1);
+            lv_obj_scroll_to_y(reply_panel_, 0, LV_ANIM_OFF);
+        }
+        StartReplyScroll();
+    }
+
+    void ClearReplyLocked() {
+        reply_visible_.store(false);
+        reply_generation_.fetch_add(1);
+        CancelReplyScroll();
+        if (reply_label_ != nullptr) {
+            lv_label_set_text(reply_label_, "");
+        }
+        if (reply_panel_ != nullptr) {
+            lv_obj_scroll_to_y(reply_panel_, 0, LV_ANIM_OFF);
+        }
+        SetReplyLayoutLocked(false);
     }
 
     void ApplyChromeLocked(VisualState state, const StatePresentation& presentation) {
@@ -303,9 +396,11 @@ private:
     void ApplyVisualStateLocked(VisualState state) {
         if (status_label_ == nullptr || notification_label_ == nullptr || emoji_label_ == nullptr ||
             emoji_box_ == nullptr || hint_label_ == nullptr || hero_halo_ == nullptr ||
-            hint_panel_ == nullptr) {
+            hint_panel_ == nullptr || reply_header_label_ == nullptr ||
+            reply_panel_ == nullptr || reply_label_ == nullptr) {
             return;
         }
+        ClearReplyLocked();
         const auto presentation = PresentationFor(state);
         const lv_color_t color = lv_color_hex(presentation.color);
 
@@ -345,9 +440,9 @@ private:
         }
     }
 
-    void ScheduleVisualReset(int duration_ms) {
+    bool ScheduleVisualReset(int duration_ms) {
         if (visual_reset_timer_ == nullptr) {
-            return;
+            return false;
         }
         const int64_t deadline =
             esp_timer_get_time() + static_cast<int64_t>(duration_ms) * 1000;
@@ -356,14 +451,16 @@ private:
         if (stop_result != ESP_OK && stop_result != ESP_ERR_INVALID_STATE) {
             visual_reset_deadline_us_.store(0);
             ESP_LOGE(TAG, "Failed to stop screen reset timer: %s", esp_err_to_name(stop_result));
-            return;
+            return false;
         }
         const esp_err_t result =
             esp_timer_start_once(visual_reset_timer_, static_cast<uint64_t>(duration_ms) * 1000);
         if (result != ESP_OK) {
             visual_reset_deadline_us_.store(0);
             ESP_LOGE(TAG, "Failed to start screen reset timer: %s", esp_err_to_name(result));
+            return false;
         }
+        return true;
     }
 
 #endif
@@ -403,6 +500,13 @@ public:
                     }
                     self->visual_reset_deadline_us_.store(0);
                     self->receipt_visible_.store(false);
+                    if (self->resting_state_.load() == VisualState::kSpeaking) {
+                        // A reply timer expiring while still Speaking means the
+                        // gateway stop frame was lost. Never restore a stuck
+                        // "Replying" screen; the application watchdog closes
+                        // the channel and reconnects independently.
+                        self->resting_state_.store(VisualState::kUnavailable);
+                    }
                     self->ApplyRestingVisualState();
                 });
             },
@@ -412,6 +516,50 @@ public:
             .skip_unhandled_events = true,
         };
         ESP_ERROR_CHECK(esp_timer_create(&timer_args, &visual_reset_timer_));
+
+        esp_timer_create_args_t scroll_timer_args = {
+            .callback = [](void* arg) {
+                auto* self = static_cast<RoundLcdDisplay*>(arg);
+                const uint32_t generation = self->reply_generation_.load();
+                if (!self->reply_visible_.load() || self->power_save_active_.load()) {
+                    return;
+                }
+                Application::GetInstance().Schedule([self, generation]() {
+                    if (!self->reply_visible_.load() || self->power_save_active_.load() ||
+                        self->reply_generation_.load() != generation) {
+                        return;
+                    }
+                    DisplayLockGuard lock(self);
+                    if (!self->reply_visible_.load() || self->power_save_active_.load() ||
+                        self->reply_generation_.load() != generation ||
+                        self->reply_panel_ == nullptr) {
+                        return;
+                    }
+                    lv_obj_update_layout(self->reply_panel_);
+                    const int32_t remaining = lv_obj_get_scroll_bottom(self->reply_panel_);
+                    if (remaining <= 0) {
+                        if (lv_obj_get_scroll_y(self->reply_panel_) > 0) {
+                            lv_obj_scroll_to_y(self->reply_panel_, 0, LV_ANIM_ON);
+                        } else {
+                            // The whole reply fits on one page. Stop periodic
+                            // wakeups until another reply is shown.
+                            self->CancelReplyScroll();
+                        }
+                        return;
+                    }
+                    const int32_t step =
+                        remaining < kReplyScrollStep ? remaining : kReplyScrollStep;
+                    lv_obj_scroll_to_y(self->reply_panel_,
+                                       lv_obj_get_scroll_y(self->reply_panel_) + step,
+                                       LV_ANIM_ON);
+                });
+            },
+            .arg = this,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "stopwatch_reply_scroll",
+            .skip_unhandled_events = true,
+        };
+        ESP_ERROR_CHECK(esp_timer_create(&scroll_timer_args, &reply_scroll_timer_));
 #endif
     }
 
@@ -420,6 +568,10 @@ public:
         if (visual_reset_timer_ != nullptr) {
             esp_timer_stop(visual_reset_timer_);
             esp_timer_delete(visual_reset_timer_);
+        }
+        if (reply_scroll_timer_ != nullptr) {
+            esp_timer_stop(reply_scroll_timer_);
+            esp_timer_delete(reply_scroll_timer_);
         }
 #endif
     }
@@ -550,6 +702,45 @@ public:
         lv_label_set_long_mode(hint_label_, LV_LABEL_LONG_CLIP);
         lv_obj_align(hint_label_, LV_ALIGN_CENTER, 5, 0);
 
+        // Assistant replies arrive in the authenticated TTS sentence frame.
+        // Give the full text a dedicated, readable surface instead of trying
+        // to squeeze private order detail into the one-line receipt capsule.
+        reply_header_label_ = lv_label_create(screen);
+        lv_obj_set_width(reply_header_label_, kReplyHeaderWidth);
+        lv_obj_set_style_text_font(reply_header_label_, &font_noto_sans_basic_16_4, 0);
+        lv_obj_set_style_text_color(reply_header_label_, lv_color_hex(kColorGold), 0);
+        lv_obj_set_style_text_letter_space(reply_header_label_, 3, 0);
+        lv_obj_set_style_text_align(reply_header_label_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_label_set_long_mode(reply_header_label_, LV_LABEL_LONG_CLIP);
+        lv_label_set_text(reply_header_label_, "ASSISTANT REPLY");
+        lv_obj_align(reply_header_label_, LV_ALIGN_TOP_MID, 0, kReplyHeaderTopOffset);
+        lv_obj_add_flag(reply_header_label_, LV_OBJ_FLAG_HIDDEN);
+
+        reply_panel_ = lv_obj_create(screen);
+        lv_obj_set_size(reply_panel_, kReplyPanelWidth, kReplyPanelHeight);
+        lv_obj_set_style_radius(reply_panel_, 28, 0);
+        lv_obj_set_style_pad_all(reply_panel_, 16, 0);
+        lv_obj_set_style_bg_color(reply_panel_, lv_color_hex(kColorBlue), 0);
+        lv_obj_set_style_bg_opa(reply_panel_, LV_OPA_10, 0);
+        lv_obj_set_style_border_color(reply_panel_, lv_color_hex(kColorBlue), 0);
+        lv_obj_set_style_border_width(reply_panel_, 1, 0);
+        lv_obj_set_style_border_opa(reply_panel_, LV_OPA_30, 0);
+        lv_obj_set_scroll_dir(reply_panel_, LV_DIR_VER);
+        lv_obj_set_scrollbar_mode(reply_panel_, LV_SCROLLBAR_MODE_AUTO);
+        lv_obj_align(reply_panel_, LV_ALIGN_CENTER, 0, kReplyPanelOffset);
+        lv_obj_add_flag(reply_panel_, LV_OBJ_FLAG_HIDDEN);
+
+        reply_label_ = lv_label_create(reply_panel_);
+        lv_obj_set_width(reply_label_, kReplyPanelWidth - 32);
+        lv_obj_set_height(reply_label_, LV_SIZE_CONTENT);
+        lv_obj_set_style_text_font(reply_label_, &font_noto_sans_basic_16_4, 0);
+        lv_obj_set_style_text_color(reply_label_, lv_color_hex(kColorCream), 0);
+        lv_obj_set_style_text_align(reply_label_, LV_TEXT_ALIGN_LEFT, 0);
+        lv_obj_set_style_text_line_space(reply_label_, 4, 0);
+        lv_label_set_long_mode(reply_label_, LV_LABEL_LONG_WRAP);
+        lv_label_set_text(reply_label_, "");
+        lv_obj_align(reply_label_, LV_ALIGN_TOP_MID, 0, 0);
+
         hide_subtitle_ = true;
         if (bottom_bar_ != nullptr) {
             lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
@@ -577,25 +768,62 @@ public:
     void SetEmotion(const char* emotion) override { (void)emotion; }
 
     void SetChatMessage(const char* role, const char* content) override {
-        // Spoken detail stays in audio. The screen is intentionally limited to
-        // authenticated short state/receipt frames from the Provisions gateway.
-        (void)role;
-        (void)content;
+        if (role == nullptr || content == nullptr || content[0] == '\0' ||
+            std::strcmp(role, "assistant") != 0) {
+            return;
+        }
+
+        CancelVisualReset();
+        if (notification_timer_ != nullptr) {
+            esp_timer_stop(notification_timer_);
+        }
+        receipt_visible_.store(true);
+        reply_visible_.store(true);
+        {
+            DisplayLockGuard lock(this);
+            if (reply_header_label_ == nullptr || reply_panel_ == nullptr ||
+                reply_label_ == nullptr) {
+                receipt_visible_.store(false);
+                reply_visible_.store(false);
+                return;
+            }
+            reply_generation_.fetch_add(1);
+            // LVGL copies the string. No transcript text is retained in board
+            // state, logs, preferences, or flash.
+            lv_label_set_text(reply_label_, content);
+            lv_obj_scroll_to_y(reply_panel_, 0, LV_ANIM_OFF);
+            SetReplyLayoutLocked(true);
+        }
+        StartReplyScroll();
+        // The gateway caps audio at 30 seconds. This safety timeout covers the
+        // whole playback if a terminal frame is lost; normal completion resets
+        // the timer to the shorter post-speech reading window in SetStatus().
+        if (!ScheduleVisualReset(kReplyPlaybackMaximumMs)) {
+            receipt_visible_.store(false);
+            ApplyRestingVisualState();
+        }
     }
 
     void SetPowerSaveMode(bool on) override {
+        power_save_active_.store(on);
         DisplayLockGuard lock(this);
-        lv_obj_t* chrome[] = {top_bar_,   brand_label_, title_label_, brand_rule_,
-                              hero_halo_, status_bar_,  hint_panel_};
+        lv_obj_t* chrome[] = {
+            top_bar_, brand_label_, title_label_, brand_rule_, hero_halo_,
+            status_bar_, hint_panel_, reply_header_label_, reply_panel_
+        };
         for (auto* object : chrome) {
-            if (object == nullptr) {
-                continue;
-            }
-            if (on) {
+            if (object != nullptr) {
                 lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
-            } else {
-                lv_obj_remove_flag(object, LV_OBJ_FLAG_HIDDEN);
             }
+        }
+        if (!on) {
+            if (top_bar_ != nullptr) {
+                lv_obj_remove_flag(top_bar_, LV_OBJ_FLAG_HIDDEN);
+            }
+            if (brand_label_ != nullptr) {
+                lv_obj_remove_flag(brand_label_, LV_OBJ_FLAG_HIDDEN);
+            }
+            SetReplyLayoutLocked(reply_visible_.load());
         }
     }
 
@@ -607,6 +835,13 @@ public:
         resting_state_.store(state);
         if (receipt_visible_.load() && state != VisualState::kListening &&
             state != VisualState::kConnecting && state != VisualState::kUnavailable) {
+            if (reply_visible_.load() && state == VisualState::kReady) {
+                RestartReplyFromTop();
+                if (!ScheduleVisualReset(kReplyHoldAfterSpeechMs)) {
+                    receipt_visible_.store(false);
+                    ApplyRestingVisualState();
+                }
+            }
             return;
         }
         receipt_visible_.store(false);
@@ -629,6 +864,7 @@ public:
                 receipt_visible_.store(false);
                 return;
             }
+            ClearReplyLocked();
             lv_label_set_text(notification_label_, title);
             lv_obj_remove_flag(notification_label_, LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(status_label_, LV_OBJ_FLAG_HIDDEN);
@@ -641,7 +877,10 @@ public:
             lv_obj_set_style_text_color(hint_label_, color, 0);
             ApplyChromeLocked(state, presentation);
         }
-        ScheduleVisualReset(duration_ms);
+        if (!ScheduleVisualReset(duration_ms)) {
+            receipt_visible_.store(false);
+            ApplyRestingVisualState();
+        }
     }
 
     void ShowNotification(const std::string& notification, int duration_ms = 3000) override {

@@ -102,6 +102,33 @@ class ProvisionsCoreS3ProfileTests(unittest.TestCase):
         self.assertNotIn("Touch", source)
         self.assertNotIn("WakeWord", source)
 
+    def test_reply_text_uses_a_utf8_safe_expiring_surface(self):
+        source = (BOARD_DIR / "kitchen_helper_display.cc").read_text(
+            encoding="utf-8"
+        )
+        header = (BOARD_DIR / "kitchen_helper_display.h").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("SetHideSubtitle(false)", source)
+        self.assertIn("lv_label_set_text(chat_message_label_, content)", source)
+        self.assertNotIn("result.resize", source)
+        self.assertNotIn("ShowNotification(result", source)
+        self.assertIn('lv_label_set_text(chat_message_label_, "")', source)
+        self.assertIn('lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN)', source)
+        self.assertIn('name = "cores3_reply_clear"', source)
+        self.assertIn("reply_clear_deadline_us_.load() != deadline", source)
+        self.assertIn("preserve_next_clear_.exchange(false)", source)
+        self.assertIn("kReplyPlaybackMaximumMs = 35 * 1000", source)
+        self.assertIn("kReplyHoldAfterSpeechMs = 12 * 1000", source)
+        self.assertIn("IsReplyClearingStatus(status)", source)
+        clearing_status = source.split("bool IsReplyClearingStatus", 1)[1].split(
+            "}\n", 1
+        )[0]
+        self.assertNotIn('std::strcmp(status, "Speaking")', clearing_status)
+        self.assertIn("std::atomic<int64_t> reply_clear_deadline_us_", header)
+        self.assertIn("void ClearReplyNow()", header)
+
     def test_profile_uses_local_assets_and_exact_preview_bootstrap(self):
         config = json.loads((BOARD_DIR / "config.json").read_text(encoding="utf-8"))
         for profile in config["builds"]:
@@ -248,6 +275,10 @@ class ProvisionsGatewayIntegrationTests(unittest.TestCase):
 
     def test_provisions_application_frames_are_strict_and_private(self):
         application = (ROOT / "main/application.cc").read_text(encoding="utf-8")
+        header = (ROOT / "main/application.h").read_text(encoding="utf-8")
+        websocket = (ROOT / "main/protocols/websocket_protocol.cc").read_text(
+            encoding="utf-8"
+        )
         self.assertIn('strcmp(type->valuestring, "provisions") != 0', application)
         self.assertIn('strcmp(type->valuestring, "tts") != 0', application)
         self.assertIn("Rejecting unsupported Provisions gateway frame type", application)
@@ -271,7 +302,43 @@ class ProvisionsGatewayIntegrationTests(unittest.TestCase):
             self.assertIn(f'text == "{receipt_text}"', application)
         self.assertIn('protocol_->session_id() == session->valuestring', application)
         self.assertIn('HasExactKeys(root, {"session_id", "type", "state"})', application)
-        self.assertIn("IsBoundedTtsText", application)
+        self.assertIn("ProvisionsTtsText::IsValid", application)
+        self.assertIn("ProvisionsTtsTurn provisions_tts_turn_", header)
+        self.assertGreaterEqual(application.count("provisions_tts_turn_.WithCurrent"), 3)
+        self.assertIn("GetDeviceState() != kDeviceStateSpeaking", application)
+        self.assertIn("InvalidateProvisionsTtsTurn()", application)
+        self.assertIn("Do not log the text because it can contain private yacht data", application)
+        self.assertIn("raw_frame.find('\\0')", websocket)
+        self.assertIn('raw_frame.find("\\\\u0000")', websocket)
+        self.assertIn("Rejecting gateway JSON containing an embedded NUL", websocket)
+        self.assertIn("cJSON_ParseWithLengthOpts", websocket)
+        self.assertIn("const char* parse_end = nullptr", websocket)
+        self.assertIn("parse_end != frame_end", websocket)
+        malformed = websocket.split('ESP_LOGE(TAG, "Rejecting malformed gateway JSON")', 1)[1]
+        self.assertIn('SetError("Invalid gateway message")', malformed)
+        self.assertIn("gateway_authenticated_.store(false)", websocket)
+
+        self.assertIn("kProvisionsTtsTimeoutUs = 35LL * 1000 * 1000", application)
+        self.assertIn("provisions_tts_deadline_us_.store", application)
+        self.assertIn("Provisions TTS turn timed out", application)
+        self.assertIn("GetDeviceState() == kDeviceStateSpeaking", application)
+        self.assertIn("Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE)", application)
+        self.assertIn("Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER)", application)
+        self.assertIn("std::atomic<int64_t> provisions_tts_deadline_us_", header)
+
+        abort = application.split("void Application::AbortSpeaking", 1)[1].split(
+            "void Application::SetListeningMode", 1
+        )[0]
+        self.assertIn("InvalidateProvisionsTtsTurn();", abort)
+        self.assertIn("audio_service_.ResetDecoder();", abort)
+        self.assertIn("SetPowerSaveLevel(PowerSaveLevel::LOW_POWER)", abort)
+        self.assertIn("SetDeviceState(kDeviceStateIdle);", abort)
+
+        network_error = application.split("protocol_->OnNetworkError", 1)[1].split(
+            "protocol_->OnIncomingAudio", 1
+        )[0]
+        self.assertIn("InvalidateProvisionsTtsTurn();", network_error)
+        self.assertIn("SetPowerSaveLevel(PowerSaveLevel::LOW_POWER)", network_error)
 
     def test_talk_release_is_a_hard_audio_upload_boundary(self):
         application = (ROOT / "main/application.cc").read_text(encoding="utf-8")

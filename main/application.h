@@ -21,6 +21,9 @@
 #include "device_state.h"
 #include "device_state_machine.h"
 #include "notify/notify_player.h"
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+#include "provisions_tts_turn.h"
+#endif
 
 // Main event bits
 #define MAIN_EVENT_SCHEDULE             (1 << 0)
@@ -156,6 +159,8 @@ private:
     std::atomic<bool> network_connected_{false};
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     std::atomic<bool> provisions_response_pending_{false};
+    std::atomic<int64_t> provisions_tts_deadline_us_{0};
+    ProvisionsTtsTurn provisions_tts_turn_;
     int provisions_heartbeat_ticks_ = 0;
     int provisions_response_ticks_ = 0;
     int provisions_reconnect_wait_ticks_ = 0;
@@ -179,6 +184,7 @@ private:
     void HandleProvisionsGatewayMaintenance();
     void SetProvisionsResponsePending(bool pending);
     const char* GetProvisionsIdleStatus() const;
+    void InvalidateProvisionsTtsTurn();
 #endif
     void BeginWakeWordInvoke(const std::string& wake_word);
     void ContinueWakeWordInvoke(const std::string& wake_word);

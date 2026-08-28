@@ -12,6 +12,7 @@
 #include "websocket_protocol.h"
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
 #include "provisions_endpoint_policy.h"
+#include "provisions_tts_text.h"
 #endif
 
 #include <driver/gpio.h>
@@ -31,6 +32,7 @@
 namespace {
 constexpr int kProvisionsHeartbeatIntervalSeconds = 15;
 constexpr int kProvisionsResponseTimeoutSeconds = 30;
+constexpr int64_t kProvisionsTtsTimeoutUs = 35LL * 1000 * 1000;
 constexpr int kProvisionsMaximumReconnectAttempts = 5;
 
 bool HasExactKeys(const cJSON* object, std::initializer_list<std::string_view> expected_keys) {
@@ -77,9 +79,6 @@ bool IsApprovedReceiptText(std::string_view text) {
            text == "Undone" || text == "Not changed";
 }
 
-bool IsBoundedTtsText(const char* text) {
-    return text != nullptr && std::strlen(text) <= 2048;
-}
 }
 #endif
 
@@ -434,6 +433,9 @@ void Application::HandleNetworkConnectedEvent() {
 
 void Application::HandleNetworkDisconnectedEvent() {
     network_connected_.store(false);
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    InvalidateProvisionsTtsTurn();
+#endif
     // Close current conversation when network disconnected
     auto state = GetDeviceState();
     if (state == kDeviceStateNotifying) {
@@ -751,7 +753,9 @@ void Application::InitializeProtocol() {
 
     protocol_->OnNetworkError([this](const std::string& message) {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        InvalidateProvisionsTtsTurn();
         provisions_response_pending_.store(false);
+        Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
 #endif
         last_error_message_ = message;
         xEventGroupSetBits(event_group_, MAIN_EVENT_ERROR);
@@ -764,6 +768,9 @@ void Application::InitializeProtocol() {
     });
 
     protocol_->OnAudioChannelOpened([this, codec, &board]() {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        InvalidateProvisionsTtsTurn();
+#endif
         board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
         if (protocol_->server_sample_rate() != codec->output_sample_rate()) {
             ESP_LOGW(TAG,
@@ -774,6 +781,9 @@ void Application::InitializeProtocol() {
     });
 
     protocol_->OnAudioChannelClosed([this, &board]() {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        InvalidateProvisionsTtsTurn();
+#endif
         board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
         Schedule([this]() {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
@@ -801,6 +811,7 @@ void Application::InitializeProtocol() {
         }
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
         auto reject_gateway_frame = [this]() {
+            InvalidateProvisionsTtsTurn();
             Schedule([this]() {
                 SetProvisionsResponsePending(false);
                 if (protocol_) {
@@ -870,10 +881,12 @@ void Application::InitializeProtocol() {
                 return;
             }
             if (working) {
+                InvalidateProvisionsTtsTurn();
                 Schedule([this]() { SetProvisionsResponsePending(true); });
                 return;
             }
             if (terminal) {
+                InvalidateProvisionsTtsTurn();
                 Schedule([this, display, message = std::move(display_text)]() {
                     SetProvisionsResponsePending(false);
                     display->ShowNotification(message.c_str(), 3000);
@@ -926,6 +939,7 @@ void Application::InitializeProtocol() {
                 reject_gateway_frame();
                 return;
             }
+            const std::string gateway_session(session->valuestring);
 #endif
             if (!cJSON_IsString(state)) {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
@@ -941,14 +955,30 @@ void Application::InitializeProtocol() {
                     reject_gateway_frame();
                     return;
                 }
-#endif
+                const auto transition = provisions_tts_turn_.Start();
+                if (transition.outcome == ProvisionsTtsTurn::Outcome::kDuplicate) {
+                    return;
+                }
+                provisions_tts_deadline_us_.store(esp_timer_get_time() +
+                                                  kProvisionsTtsTimeoutUs);
+                Schedule([this, gateway_session, token = transition.token]() {
+                    provisions_tts_turn_.WithCurrent(token, [this, &gateway_session]() {
+                        if (!protocol_ || !protocol_->IsAudioChannelOpened() ||
+                            protocol_->session_id() != gateway_session) {
+                            return;
+                        }
+                        SetProvisionsResponsePending(false);
+                        aborted_ = false;
+                        Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+                        SetDeviceState(kDeviceStateSpeaking);
+                    });
+                });
+#else
                 Schedule([this]() {
-#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-                    SetProvisionsResponsePending(false);
-#endif
                     aborted_ = false;
                     SetDeviceState(kDeviceStateSpeaking);
                 });
+#endif
             } else if (strcmp(state->valuestring, "stop") == 0) {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
                 if (!HasExactKeys(root, {"session_id", "type", "state"})) {
@@ -956,11 +986,30 @@ void Application::InitializeProtocol() {
                     reject_gateway_frame();
                     return;
                 }
-#endif
+                const auto transition = provisions_tts_turn_.Stop();
+                if (transition.outcome == ProvisionsTtsTurn::Outcome::kDuplicate) {
+                    return;
+                }
+                provisions_tts_deadline_us_.store(0);
+                Schedule([this, gateway_session, token = transition.token]() {
+                    provisions_tts_turn_.WithCurrent(token, [this, &gateway_session]() {
+                        if (!protocol_ || !protocol_->IsAudioChannelOpened() ||
+                            protocol_->session_id() != gateway_session) {
+                            return;
+                        }
+                        SetProvisionsResponsePending(false);
+                        Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+                        if (GetDeviceState() == kDeviceStateSpeaking) {
+                            if (listening_mode_ == kListeningModeManualStop) {
+                                SetDeviceState(kDeviceStateIdle);
+                            } else {
+                                SetDeviceState(kDeviceStateListening);
+                            }
+                        }
+                    });
+                });
+#else
                 Schedule([this]() {
-#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-                    SetProvisionsResponsePending(false);
-#endif
                     if (GetDeviceState() == kDeviceStateSpeaking) {
                         if (listening_mode_ == kListeningModeManualStop) {
                             SetDeviceState(kDeviceStateIdle);
@@ -969,6 +1018,7 @@ void Application::InitializeProtocol() {
                         }
                     }
                 });
+#endif
             } else if (strcmp(state->valuestring, "sentence_start") == 0) {
 #if !CONFIG_PROVISIONS_GATEWAY_REQUIRED
                 auto text = cJSON_GetObjectItem(root, "text");
@@ -989,11 +1039,37 @@ void Application::InitializeProtocol() {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
                 auto text = cJSON_GetObjectItem(root, "text");
                 if (!HasExactKeys(root, {"session_id", "type", "state", "text"}) ||
-                    !cJSON_IsString(text) || !IsBoundedTtsText(text->valuestring)) {
+                    !cJSON_IsString(text) ||
+                    !ProvisionsTtsText::IsValid(text->valuestring)) {
                     ESP_LOGE(TAG, "Rejecting malformed TTS sentence frame");
                     reject_gateway_frame();
                     return;
                 }
+                const auto transition = provisions_tts_turn_.Sentence();
+                if (transition.outcome == ProvisionsTtsTurn::Outcome::kDuplicate) {
+                    return;
+                }
+                if (transition.outcome == ProvisionsTtsTurn::Outcome::kInvalidOrder) {
+                    ESP_LOGE(TAG, "Rejecting out-of-order TTS sentence frame");
+                    reject_gateway_frame();
+                    return;
+                }
+                // The authenticated gateway already sends the exact words that
+                // are about to play. Keep the standalone device path direct:
+                // copy the cJSON-owned value, then render it on the main task.
+                // Do not log the text because it can contain private yacht data.
+                Schedule([this, display, gateway_session, token = transition.token,
+                          message = std::string(text->valuestring)]() {
+                    provisions_tts_turn_.WithCurrent(
+                        token, [this, display, &gateway_session, &message]() {
+                            if (!protocol_ || !protocol_->IsAudioChannelOpened() ||
+                                protocol_->session_id() != gateway_session ||
+                                GetDeviceState() != kDeviceStateSpeaking) {
+                                return;
+                            }
+                            display->SetChatMessage("assistant", message.c_str());
+                        });
+                });
             } else {
                 ESP_LOGE(TAG, "Rejecting unsupported TTS state");
                 reject_gateway_frame();
@@ -1142,7 +1218,32 @@ void Application::SetProvisionsResponsePending(bool pending) {
     }
 }
 
+void Application::InvalidateProvisionsTtsTurn() {
+    provisions_tts_deadline_us_.store(0);
+    provisions_tts_turn_.Invalidate();
+}
+
 void Application::HandleProvisionsGatewayMaintenance() {
+    const int64_t tts_deadline = provisions_tts_deadline_us_.load();
+    if (tts_deadline > 0 && esp_timer_get_time() >= tts_deadline) {
+        ESP_LOGE(TAG, "Provisions TTS turn timed out");
+        InvalidateProvisionsTtsTurn();
+        SetProvisionsResponsePending(false);
+        aborted_ = true;
+        audio_service_.ResetDecoder();
+        if (protocol_) {
+            protocol_->CloseAudioChannel();
+        }
+        provisions_reconnect_attempts_ = 0;
+        provisions_reconnect_wait_ticks_ = 1;
+        Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+        Board::GetInstance().GetDisplay()->SetStatus("Unavailable");
+        if (GetDeviceState() == kDeviceStateSpeaking) {
+            SetDeviceState(kDeviceStateIdle);
+        }
+        return;
+    }
+
     if (!protocol_ || activation_task_handle_ != nullptr ||
         GetDeviceState() != kDeviceStateIdle) {
         return;
@@ -1156,6 +1257,7 @@ void Application::HandleProvisionsGatewayMaintenance() {
         if (provisions_response_ticks_ >= kProvisionsResponseTimeoutSeconds) {
             ESP_LOGE(TAG, "Provisions gateway response timed out");
             SetProvisionsResponsePending(false);
+            InvalidateProvisionsTtsTurn();
             protocol_->CloseAudioChannel();
             provisions_reconnect_attempts_ = 0;
             provisions_reconnect_wait_ticks_ = 1;
@@ -1173,6 +1275,7 @@ void Application::HandleProvisionsGatewayMaintenance() {
     if (websocket->IsGatewayHeartbeatExpired()) {
         ESP_LOGW(TAG, "Provisions gateway heartbeat expired");
         SetProvisionsResponsePending(false);
+        InvalidateProvisionsTtsTurn();
         protocol_->CloseAudioChannel();
         provisions_heartbeat_ticks_ = 0;
         provisions_reconnect_attempts_ = 0;
@@ -1190,6 +1293,7 @@ void Application::HandleProvisionsGatewayMaintenance() {
             if (!websocket->SendGatewayHeartbeat()) {
                 ESP_LOGW(TAG, "Failed to send Provisions gateway heartbeat");
                 SetProvisionsResponsePending(false);
+                InvalidateProvisionsTtsTurn();
                 protocol_->CloseAudioChannel();
                 provisions_reconnect_wait_ticks_ = 1;
                 display->SetStatus("Unavailable");
@@ -1290,6 +1394,9 @@ void Application::HandleToggleChatEvent() {
     } else if (state == kDeviceStateSpeaking) {
         AbortSpeaking(kAbortReasonNone);
     } else if (state == kDeviceStateListening) {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        InvalidateProvisionsTtsTurn();
+#endif
         protocol_->CloseAudioChannel();
     }
 }
@@ -1361,6 +1468,9 @@ void Application::HandleStartListeningEvent() {
     }
 
     if (state == kDeviceStateIdle) {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        InvalidateProvisionsTtsTurn();
+#endif
         if (!protocol_->IsAudioChannelOpened()) {
             SetDeviceState(kDeviceStateConnecting);
             // Schedule to let the state change be processed first (UI update)
@@ -1369,6 +1479,9 @@ void Application::HandleStartListeningEvent() {
         }
         SetListeningMode(kListeningModeManualStop);
     } else if (state == kDeviceStateSpeaking) {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        InvalidateProvisionsTtsTurn();
+#endif
         AbortSpeaking(kAbortReasonNone);
         SetListeningMode(kListeningModeManualStop);
     }
@@ -1687,10 +1800,22 @@ void Application::Schedule(std::function<void()>&& callback) {
 
 void Application::AbortSpeaking(AbortReason reason) {
     ESP_LOGI(TAG, "Abort speaking");
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    InvalidateProvisionsTtsTurn();
+    SetProvisionsResponsePending(false);
+    Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+    Board::GetInstance().GetDisplay()->SetStatus("Listening");
+    audio_service_.ResetDecoder();
+#endif
     aborted_ = true;
     if (protocol_) {
         protocol_->SendAbortSpeaking(reason);
     }
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    if (GetDeviceState() == kDeviceStateSpeaking) {
+        SetDeviceState(kDeviceStateIdle);
+    }
+#endif
 }
 
 void Application::SetListeningMode(ListeningMode mode) {
@@ -1709,6 +1834,9 @@ void Application::Reboot() {
     }
     // Disconnect the audio channel
     if (protocol_ && protocol_->IsAudioChannelOpened()) {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        InvalidateProvisionsTtsTurn();
+#endif
         protocol_->CloseAudioChannel();
     }
     protocol_.reset();
@@ -1732,6 +1860,9 @@ bool Application::UpgradeFirmware(const std::string& url, const std::string& ver
     // Close audio channel if it's open
     if (protocol_ && protocol_->IsAudioChannelOpened()) {
         ESP_LOGI(TAG, "Closing audio channel before firmware upgrade");
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        InvalidateProvisionsTtsTurn();
+#endif
         protocol_->CloseAudioChannel();
     }
     ESP_LOGI(TAG, "Starting firmware upgrade from URL: %s", upgrade_url.c_str());
@@ -1804,6 +1935,9 @@ void Application::WakeWordInvoke(const std::string& wake_word) {
     } else if (state == kDeviceStateListening) {
         Schedule([this]() {
             if (protocol_) {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+                InvalidateProvisionsTtsTurn();
+#endif
                 protocol_->CloseAudioChannel();
             }
         });
@@ -1865,6 +1999,9 @@ void Application::SetAecMode(AecMode mode) {
 
         // If the AEC mode is changed, close the audio channel
         if (protocol_ && protocol_->IsAudioChannelOpened()) {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+            InvalidateProvisionsTtsTurn();
+#endif
             protocol_->CloseAudioChannel();
         }
     });
@@ -1879,9 +2016,15 @@ void Application::ResetProtocol() {
         }
         // Close audio channel if opened
         if (protocol_ && protocol_->IsAudioChannelOpened()) {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+            InvalidateProvisionsTtsTurn();
+#endif
             protocol_->CloseAudioChannel();
         }
         // Reset protocol
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        InvalidateProvisionsTtsTurn();
+#endif
         protocol_.reset();
     });
 }
