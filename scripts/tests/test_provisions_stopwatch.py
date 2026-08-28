@@ -143,10 +143,17 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
             'return {"Recorded", "Not physically verified", MATERIAL_SYMBOLS_INFO, kColorAmber}',
             source,
         )
+        self.assertIn(
+            'return {"Draft only", "Unsent - not submitted", MATERIAL_SYMBOLS_INFO, kColorAmber}',
+            source,
+        )
+        draft_mapping = source.split(
+            'if (std::strcmp(notification, "Draft only") == 0)', 1
+        )[1].split("}", 1)[0]
+        self.assertIn("VisualState::kDraft", draft_mapping)
         self.assertIn('std::strcmp(status, Lang::Strings::LISTENING)', source)
         self.assertIn("IsClockStatus(status)", source)
         self.assertIn('.name = "stopwatch_visual_reset"', source)
-        self.assertIn("ApplyNotificationDecorations(state)", source)
         self.assertIn("receipt_visible_.store(true)", source)
         self.assertIn("receipt_visible_.load() && state != VisualState::kListening", source)
         self.assertIn("ApplyVisualStateLocked(resting_state_.load())", source)
@@ -154,6 +161,26 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("Lang::Strings::CHECKING_NEW_VERSION", source)
         self.assertIn("Lang::Strings::LOADING_PROTOCOL", source)
         self.assertIn("lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN)", provisions_ui)
+
+    def test_provisions_blue_button_toggles_only_high_and_max_volume(self):
+        source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
+        provisions_buttons = source.split("void InitializeButtons()", 1)[1].split("#else", 1)[0]
+
+        self.assertIn("button2_.OnClick", provisions_buttons)
+        self.assertIn("Application::GetInstance().Schedule", provisions_buttons)
+        self.assertIn("kDefaultOutputVolume", provisions_buttons)
+        self.assertIn("kMaximumOutputVolume", provisions_buttons)
+        self.assertNotIn("volume = 0", provisions_buttons)
+        self.assertNotIn("SetOutputVolume(0)", provisions_buttons)
+        self.assertNotIn("ShowNotification", provisions_buttons)
+
+    def test_receipt_reset_rejects_stale_timer_callbacks(self):
+        source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
+
+        self.assertIn("visual_reset_deadline_us_", source)
+        self.assertIn("visual_reset_deadline_us_.load() != deadline", source)
+        self.assertIn("visual_reset_deadline_us_.store(0)", source)
+        self.assertNotIn("LvglDisplay::ShowNotification(title, duration_ms)", source)
 
     def test_provisions_screen_geometry_stays_inside_round_safe_area(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")

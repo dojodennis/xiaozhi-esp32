@@ -28,6 +28,7 @@ namespace {
 constexpr char kSignedHardwareIdentity[] = "PROVISIONS_SIGNED_HARDWARE_IDENTITY=" BOARD_NAME;
 constexpr int64_t kDisplayIdleTimeoutUs = 45LL * 1000 * 1000;
 constexpr int kDefaultOutputVolume = 90;
+constexpr int kMaximumOutputVolume = 100;
 constexpr int kRoundTopBarWidth = 260;
 constexpr int kRoundTopBarOffset = 46;
 constexpr int kRoundContentWidth = 330;
@@ -95,6 +96,7 @@ private:
         kUnavailable,
         kAdded,
         kSuccess,
+        kDraft,
         kRecorded,
         kQuestion,
         kWarning,
@@ -113,6 +115,7 @@ private:
     lv_obj_t* brand_rule_ = nullptr;
     lv_obj_t* hint_label_ = nullptr;
     esp_timer_handle_t visual_reset_timer_ = nullptr;
+    std::atomic<int64_t> visual_reset_deadline_us_{0};
     std::atomic<VisualState> resting_state_{VisualState::kBoot};
     std::atomic<bool> receipt_visible_{false};
 
@@ -146,6 +149,8 @@ private:
             case VisualState::kSuccess:
                 return {"Done", "Listen for the result", MATERIAL_SYMBOLS_CHECK_CIRCLE,
                         kColorGreen};
+            case VisualState::kDraft:
+                return {"Draft only", "Unsent - not submitted", MATERIAL_SYMBOLS_INFO, kColorAmber};
             case VisualState::kRecorded:
                 return {"Recorded", "Not physically verified", MATERIAL_SYMBOLS_INFO, kColorAmber};
             case VisualState::kQuestion:
@@ -215,10 +220,13 @@ private:
         }
         if (std::strcmp(notification, "Found") == 0 ||
             std::strcmp(notification, "Delivered") == 0 ||
-            std::strcmp(notification, "On the way") == 0 ||
-            std::strcmp(notification, "Draft only") == 0) {
+            std::strcmp(notification, "On the way") == 0) {
             *title = notification;
             return VisualState::kSuccess;
+        }
+        if (std::strcmp(notification, "Draft only") == 0) {
+            *title = notification;
+            return VisualState::kDraft;
         }
         if (std::strcmp(notification, "Recorded") == 0) {
             *title = notification;
@@ -277,6 +285,7 @@ private:
     }
 
     void CancelVisualReset() {
+        visual_reset_deadline_us_.store(0);
         if (visual_reset_timer_ != nullptr) {
             const esp_err_t result = esp_timer_stop(visual_reset_timer_);
             if (result != ESP_OK && result != ESP_ERR_INVALID_STATE) {
@@ -286,31 +295,26 @@ private:
     }
 
     void ScheduleVisualReset(int duration_ms) {
-        CancelVisualReset();
         if (visual_reset_timer_ == nullptr) {
+            return;
+        }
+        const int64_t deadline =
+            esp_timer_get_time() + static_cast<int64_t>(duration_ms) * 1000;
+        visual_reset_deadline_us_.store(deadline);
+        const esp_err_t stop_result = esp_timer_stop(visual_reset_timer_);
+        if (stop_result != ESP_OK && stop_result != ESP_ERR_INVALID_STATE) {
+            visual_reset_deadline_us_.store(0);
+            ESP_LOGE(TAG, "Failed to stop screen reset timer: %s", esp_err_to_name(stop_result));
             return;
         }
         const esp_err_t result =
             esp_timer_start_once(visual_reset_timer_, static_cast<uint64_t>(duration_ms) * 1000);
         if (result != ESP_OK) {
+            visual_reset_deadline_us_.store(0);
             ESP_LOGE(TAG, "Failed to start screen reset timer: %s", esp_err_to_name(result));
         }
     }
 
-    void ApplyNotificationDecorations(VisualState state) {
-        DisplayLockGuard lock(this);
-        if (emoji_label_ == nullptr || emoji_box_ == nullptr || hint_label_ == nullptr) {
-            return;
-        }
-        const auto presentation = PresentationFor(state);
-        const lv_color_t color = lv_color_hex(presentation.color);
-        lv_label_set_text(emoji_label_, presentation.icon);
-        lv_obj_set_style_text_color(emoji_label_, color, 0);
-        lv_obj_set_style_bg_color(emoji_box_, color, 0);
-        lv_obj_set_style_border_color(emoji_box_, color, 0);
-        lv_label_set_text(hint_label_, presentation.hint);
-        lv_obj_set_style_text_color(hint_label_, color, 0);
-    }
 #endif
 
 public:
@@ -336,8 +340,19 @@ public:
         esp_timer_create_args_t timer_args = {
             .callback = [](void* arg) {
                 auto* self = static_cast<RoundLcdDisplay*>(arg);
-                self->receipt_visible_.store(false);
-                self->ApplyRestingVisualState();
+                const int64_t deadline = self->visual_reset_deadline_us_.load();
+                if (deadline <= 0 || esp_timer_get_time() < deadline) {
+                    return;
+                }
+                Application::GetInstance().Schedule([self, deadline]() {
+                    if (self->visual_reset_deadline_us_.load() != deadline ||
+                        esp_timer_get_time() < deadline) {
+                        return;
+                    }
+                    self->visual_reset_deadline_us_.store(0);
+                    self->receipt_visible_.store(false);
+                    self->ApplyRestingVisualState();
+                });
             },
             .arg = this,
             .dispatch_method = ESP_TIMER_TASK,
@@ -490,8 +505,26 @@ public:
         const char* title = nullptr;
         const VisualState state = StateForNotification(notification, &title);
         receipt_visible_.store(true);
-        LvglDisplay::ShowNotification(title, duration_ms);
-        ApplyNotificationDecorations(state);
+        {
+            DisplayLockGuard lock(this);
+            if (status_label_ == nullptr || notification_label_ == nullptr ||
+                emoji_label_ == nullptr || emoji_box_ == nullptr || hint_label_ == nullptr) {
+                receipt_visible_.store(false);
+                return;
+            }
+            lv_label_set_text(notification_label_, title);
+            lv_obj_remove_flag(notification_label_, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(status_label_, LV_OBJ_FLAG_HIDDEN);
+
+            const auto presentation = PresentationFor(state);
+            const lv_color_t color = lv_color_hex(presentation.color);
+            lv_label_set_text(emoji_label_, presentation.icon);
+            lv_obj_set_style_text_color(emoji_label_, color, 0);
+            lv_obj_set_style_bg_color(emoji_box_, color, 0);
+            lv_obj_set_style_border_color(emoji_box_, color, 0);
+            lv_label_set_text(hint_label_, presentation.hint);
+            lv_obj_set_style_text_color(hint_label_, color, 0);
+        }
         ScheduleVisualReset(duration_ms);
     }
 
@@ -677,6 +710,17 @@ private:
             Application::GetInstance().StartListening();
         });
         button1_.OnPressUp([]() { Application::GetInstance().StopListening(); });
+
+        // Keep the second button useful without adding a menu or allowing an
+        // accidental mute. It toggles only between the pilot floor and max.
+        button2_.OnClick([this]() {
+            ResetDisplayIdleTimer();
+            Application::GetInstance().Schedule([this]() {
+                auto* codec = GetAudioCodec();
+                const bool maximum = codec->output_volume() >= kMaximumOutputVolume;
+                codec->SetOutputVolume(maximum ? kDefaultOutputVolume : kMaximumOutputVolume);
+            });
+        });
 #else
         // Button1: wake / toggle conversation
         button1_.OnClick([this]() {
