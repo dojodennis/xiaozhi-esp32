@@ -115,10 +115,18 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
             source,
         )
         self.assertIn("lv_obj_set_style_text_letter_space(brand_label_, 4", source)
-        self.assertIn("lv_obj_set_size(brand_rule_, 52, 2)", source)
+        self.assertIn("lv_obj_set_size(brand_rule_, 68, 3)", source)
+        self.assertIn('lv_label_set_text(brand_mark_label_, "P")', source)
+        self.assertIn("lv_obj_set_parent(emoji_box_, hero_halo_)", source)
+        self.assertIn("lv_obj_set_style_bg_opa(hero_halo_, LV_OPA_10", source)
+        self.assertIn("lv_obj_set_style_border_opa(hero_halo_, LV_OPA_20", source)
+        self.assertIn("lv_obj_set_style_bg_opa(status_bar_, LV_OPA_10", source)
+        self.assertIn("lv_obj_set_style_bg_opa(hint_panel_, LV_OPA_10", source)
+        self.assertIn("lv_obj_set_style_bg_color(talk_button_dot_", source)
+        self.assertIn("kColorTalkButton = 0xF2C84B", source)
         self.assertIn('return {"Ready", "Hold yellow button to talk"', source)
         self.assertIn('return {"Listening", "Release when finished"', source)
-        self.assertIn('return {"Working", "Checking Provisions"', source)
+        self.assertIn('return {"Working", "Checking your Provisions"', source)
         self.assertIn('return {"Added to draft", "Draft only - not sent"', source)
         self.assertIn('return {"Unavailable", "Please try again"', source)
         self.assertIn("MATERIAL_SYMBOLS_CHECK_CIRCLE", source)
@@ -126,12 +134,14 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("kRoundTopBarWidth = 260", source)
         self.assertIn("kRoundTopBarOffset = 46", source)
         self.assertIn("kRoundContentWidth = 330", source)
-        self.assertIn("kRoundBrandTopOffset = 84", source)
-        self.assertIn("kRoundTitleTopOffset = 108", source)
-        self.assertIn("kRoundRuleTopOffset = 151", source)
-        self.assertIn("kRoundIconOffset = -2", source)
-        self.assertIn("kRoundStatusOffset = 76", source)
-        self.assertIn("kRoundHintOffset = 123", source)
+        self.assertIn("kRoundBrandTopOffset = 78", source)
+        self.assertIn("kRoundTitleTopOffset = 103", source)
+        self.assertIn("kRoundRuleTopOffset = 146", source)
+        self.assertIn("kRoundHeroSize = 124", source)
+        self.assertIn("kRoundHeroOffset = -10", source)
+        self.assertIn("kRoundStatusWidth = 320", source)
+        self.assertIn("kRoundStatusOffset = 82", source)
+        self.assertIn("kRoundHintOffset = 132", source)
         self.assertIn("lv_color_hex(0x000000)", provisions_ui)
         self.assertIn('std::strcmp(notification, "Added")', source)
         self.assertIn('std::strcmp(notification, "Undone")', source)
@@ -161,6 +171,26 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("Lang::Strings::CHECKING_NEW_VERSION", source)
         self.assertIn("Lang::Strings::LOADING_PROTOCOL", source)
         self.assertIn("lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN)", provisions_ui)
+
+    def test_provisions_amoled_idles_to_black_and_restores_all_chrome(self):
+        source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
+        power_save = source.split(
+            "void SetPowerSaveMode(bool on) override", 1
+        )[1].split("void SetStatus", 1)[0]
+
+        for object_name in (
+            "top_bar_",
+            "brand_label_",
+            "title_label_",
+            "brand_rule_",
+            "hero_halo_",
+            "status_bar_",
+            "hint_panel_",
+        ):
+            self.assertIn(object_name, power_save)
+        self.assertIn("lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN)", power_save)
+        self.assertIn("lv_obj_remove_flag(object, LV_OBJ_FLAG_HIDDEN)", power_save)
+        self.assertNotIn("LV_ANIM_REPEAT_INFINITE", source)
 
     def test_provisions_blue_button_toggles_only_high_and_max_volume(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
@@ -212,21 +242,21 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
                 center,
                 constant("kRoundTitleTopOffset") + 19,
             ),
-            "icon": (
-                92,
-                92,
+            "hero": (
+                constant("kRoundHeroSize"),
+                constant("kRoundHeroSize"),
                 center,
-                center + constant("kRoundIconOffset"),
+                center + constant("kRoundHeroOffset"),
             ),
             "status": (
-                content_width,
-                48,
+                constant("kRoundStatusWidth"),
+                constant("kRoundStatusHeight"),
                 center,
                 center + constant("kRoundStatusOffset"),
             ),
             "hint": (
-                content_width,
-                22,
+                constant("kRoundHintWidth"),
+                constant("kRoundHintHeight"),
                 center,
                 center + constant("kRoundHintOffset"),
             ),
@@ -239,6 +269,29 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
                     abs(y - center) + height / 2,
                 )
                 self.assertLessEqual(farthest_corner, safe_radius)
+
+        hero_bottom = (
+            center
+            + constant("kRoundHeroOffset")
+            + constant("kRoundHeroSize") / 2
+        )
+        status_top = (
+            center
+            + constant("kRoundStatusOffset")
+            - constant("kRoundStatusHeight") / 2
+        )
+        status_bottom = (
+            center
+            + constant("kRoundStatusOffset")
+            + constant("kRoundStatusHeight") / 2
+        )
+        hint_top = (
+            center
+            + constant("kRoundHintOffset")
+            - constant("kRoundHintHeight") / 2
+        )
+        self.assertLess(hero_bottom, status_top)
+        self.assertLess(status_bottom, hint_top)
 
     @unittest.skipUnless(shutil.which("c++"), "host C++ compiler is unavailable")
     def test_display_ellipsis_keeps_utf8_code_points_intact(self):

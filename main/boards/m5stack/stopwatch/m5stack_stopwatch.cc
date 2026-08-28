@@ -33,12 +33,18 @@ constexpr int kRoundTopBarWidth = 260;
 constexpr int kRoundTopBarOffset = 46;
 constexpr int kRoundContentWidth = 330;
 constexpr int kRoundBrandWidth = 280;
-constexpr int kRoundBrandTopOffset = 84;
-constexpr int kRoundTitleTopOffset = 108;
-constexpr int kRoundRuleTopOffset = 151;
-constexpr int kRoundIconOffset = -2;
-constexpr int kRoundStatusOffset = 76;
-constexpr int kRoundHintOffset = 123;
+constexpr int kRoundBrandTopOffset = 78;
+constexpr int kRoundTitleTopOffset = 103;
+constexpr int kRoundRuleTopOffset = 146;
+constexpr int kRoundHeroSize = 124;
+constexpr int kRoundHeroOffset = -10;
+constexpr int kRoundIconSize = 82;
+constexpr int kRoundStatusWidth = 320;
+constexpr int kRoundStatusHeight = 54;
+constexpr int kRoundStatusOffset = 82;
+constexpr int kRoundHintWidth = 304;
+constexpr int kRoundHintHeight = 38;
+constexpr int kRoundHintOffset = 132;
 
 constexpr uint32_t kColorGold = 0xD4B67A;
 constexpr uint32_t kColorCream = 0xF5F2EB;
@@ -46,6 +52,7 @@ constexpr uint32_t kColorGreen = 0x7FBF8F;
 constexpr uint32_t kColorBlue = 0x9FB8D8;
 constexpr uint32_t kColorAmber = 0xE0A256;
 constexpr uint32_t kColorRed = 0xE07566;
+constexpr uint32_t kColorTalkButton = 0xF2C84B;
 
 class ProvisionsStopwatchAudioCodec final : public Es8311AudioCodec {
 public:
@@ -113,7 +120,11 @@ private:
     lv_obj_t* brand_label_ = nullptr;
     lv_obj_t* title_label_ = nullptr;
     lv_obj_t* brand_rule_ = nullptr;
+    lv_obj_t* hero_halo_ = nullptr;
+    lv_obj_t* brand_mark_label_ = nullptr;
+    lv_obj_t* hint_panel_ = nullptr;
     lv_obj_t* hint_label_ = nullptr;
+    lv_obj_t* talk_button_dot_ = nullptr;
     esp_timer_handle_t visual_reset_timer_ = nullptr;
     std::atomic<int64_t> visual_reset_deadline_us_{0};
     std::atomic<VisualState> resting_state_{VisualState::kBoot};
@@ -128,18 +139,20 @@ private:
     static StatePresentation PresentationFor(VisualState state) {
         switch (state) {
             case VisualState::kBoot:
-                return {"Starting", "Please wait", MATERIAL_SYMBOLS_PROGRESS_ACTIVITY, kColorGold};
+                return {"Starting", "Preparing your helper", MATERIAL_SYMBOLS_PROGRESS_ACTIVITY,
+                        kColorGold};
             case VisualState::kConnecting:
-                return {"Connecting", "Securing connection", MATERIAL_SYMBOLS_WIFI, kColorBlue};
+                return {"Connecting", "Joining Provisions securely", MATERIAL_SYMBOLS_WIFI,
+                        kColorBlue};
             case VisualState::kReady:
                 return {"Ready", "Hold yellow button to talk", MATERIAL_SYMBOLS_MIC, kColorGreen};
             case VisualState::kListening:
                 return {"Listening", "Release when finished", MATERIAL_SYMBOLS_MIC, kColorGold};
             case VisualState::kWorking:
-                return {"Working", "Checking Provisions", MATERIAL_SYMBOLS_PROGRESS_ACTIVITY,
+                return {"Working", "Checking your Provisions", MATERIAL_SYMBOLS_PROGRESS_ACTIVITY,
                         kColorBlue};
             case VisualState::kSpeaking:
-                return {"Replying", "Playing spoken answer", MATERIAL_SYMBOLS_VOLUME_UP,
+                return {"Replying", "Listen for your answer", MATERIAL_SYMBOLS_VOLUME_UP,
                         kColorBlue};
             case VisualState::kUnavailable:
                 return {"Unavailable", "Please try again", MATERIAL_SYMBOLS_CLOUD_OFF, kColorRed};
@@ -161,6 +174,38 @@ private:
                 return {"Notice", "Listen for details", MATERIAL_SYMBOLS_INFO, kColorAmber};
         }
         return {"Unavailable", "Please try again", MATERIAL_SYMBOLS_CLOUD_OFF, kColorRed};
+    }
+
+    void ApplyChromeLocked(VisualState state, const StatePresentation& presentation) {
+        if (hero_halo_ == nullptr || brand_mark_label_ == nullptr || emoji_label_ == nullptr ||
+            emoji_box_ == nullptr || status_bar_ == nullptr || hint_panel_ == nullptr ||
+            talk_button_dot_ == nullptr) {
+            return;
+        }
+
+        const lv_color_t color = lv_color_hex(presentation.color);
+        lv_obj_set_style_bg_color(hero_halo_, color, 0);
+        lv_obj_set_style_border_color(hero_halo_, color, 0);
+        lv_obj_set_style_bg_color(emoji_box_, color, 0);
+        lv_obj_set_style_border_color(emoji_box_, color, 0);
+        lv_obj_set_style_bg_color(status_bar_, color, 0);
+        lv_obj_set_style_border_color(status_bar_, color, 0);
+        lv_obj_set_style_bg_color(hint_panel_, color, 0);
+        lv_obj_set_style_border_color(hint_panel_, color, 0);
+
+        if (state == VisualState::kBoot) {
+            lv_obj_add_flag(emoji_label_, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(brand_mark_label_, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_remove_flag(emoji_label_, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(brand_mark_label_, LV_OBJ_FLAG_HIDDEN);
+        }
+
+        if (state == VisualState::kReady || state == VisualState::kListening) {
+            lv_obj_remove_flag(talk_button_dot_, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(talk_button_dot_, LV_OBJ_FLAG_HIDDEN);
+        }
     }
 
     static VisualState StateForStatus(const char* status) {
@@ -251,7 +296,8 @@ private:
 
     void ApplyVisualStateLocked(VisualState state) {
         if (status_label_ == nullptr || notification_label_ == nullptr || emoji_label_ == nullptr ||
-            emoji_box_ == nullptr || hint_label_ == nullptr) {
+            emoji_box_ == nullptr || hint_label_ == nullptr || hero_halo_ == nullptr ||
+            hint_panel_ == nullptr) {
             return;
         }
         const auto presentation = PresentationFor(state);
@@ -264,11 +310,10 @@ private:
 
         lv_label_set_text(emoji_label_, presentation.icon);
         lv_obj_set_style_text_color(emoji_label_, color, 0);
-        lv_obj_set_style_bg_color(emoji_box_, color, 0);
-        lv_obj_set_style_border_color(emoji_box_, color, 0);
 
         lv_label_set_text(hint_label_, presentation.hint);
         lv_obj_set_style_text_color(hint_label_, color, 0);
+        ApplyChromeLocked(state, presentation);
         last_status_update_time_ = std::chrono::system_clock::now();
     }
 
@@ -415,27 +460,55 @@ public:
         lv_obj_align(title_label_, LV_ALIGN_TOP_MID, 0, kRoundTitleTopOffset);
 
         brand_rule_ = lv_obj_create(screen);
-        lv_obj_set_size(brand_rule_, 52, 2);
-        lv_obj_set_style_radius(brand_rule_, 1, 0);
+        lv_obj_set_size(brand_rule_, 68, 3);
+        lv_obj_set_style_radius(brand_rule_, 2, 0);
         lv_obj_set_style_pad_all(brand_rule_, 0, 0);
         lv_obj_set_style_border_width(brand_rule_, 0, 0);
         lv_obj_set_style_bg_color(brand_rule_, lv_color_hex(kColorGold), 0);
-        lv_obj_set_style_bg_opa(brand_rule_, LV_OPA_50, 0);
+        lv_obj_set_style_bg_opa(brand_rule_, LV_OPA_40, 0);
         lv_obj_clear_flag(brand_rule_, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_align(brand_rule_, LV_ALIGN_TOP_MID, 0, kRoundRuleTopOffset);
 
-        lv_obj_set_size(emoji_box_, 92, 92);
-        lv_obj_set_style_radius(emoji_box_, 46, 0);
+        // A restrained two-ring hero gives every state a clear focal point while
+        // keeping most AMOLED pixels black. The inner box remains the shared
+        // state-icon owner used by the existing display implementation.
+        hero_halo_ = lv_obj_create(screen);
+        lv_obj_set_size(hero_halo_, kRoundHeroSize, kRoundHeroSize);
+        lv_obj_set_style_radius(hero_halo_, kRoundHeroSize / 2, 0);
+        lv_obj_set_style_pad_all(hero_halo_, 0, 0);
+        lv_obj_set_style_bg_opa(hero_halo_, LV_OPA_10, 0);
+        lv_obj_set_style_border_width(hero_halo_, 2, 0);
+        lv_obj_set_style_border_opa(hero_halo_, LV_OPA_20, 0);
+        lv_obj_clear_flag(hero_halo_, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_align(hero_halo_, LV_ALIGN_CENTER, 0, kRoundHeroOffset);
+
+        lv_obj_set_parent(emoji_box_, hero_halo_);
+        lv_obj_set_size(emoji_box_, kRoundIconSize, kRoundIconSize);
+        lv_obj_set_style_radius(emoji_box_, kRoundIconSize / 2, 0);
         lv_obj_set_style_bg_opa(emoji_box_, LV_OPA_20, 0);
         lv_obj_set_style_border_width(emoji_box_, 2, 0);
-        lv_obj_align(emoji_box_, LV_ALIGN_CENTER, 0, kRoundIconOffset);
+        lv_obj_set_style_border_opa(emoji_box_, LV_OPA_40, 0);
+        lv_obj_align(emoji_box_, LV_ALIGN_CENTER, 0, 0);
         lv_obj_center(emoji_label_);
 
-        lv_obj_set_size(status_bar_, kRoundContentWidth, 48);
+        brand_mark_label_ = lv_label_create(emoji_box_);
+        lv_obj_set_style_text_font(brand_mark_label_, &font_noto_sans_basic_30_4, 0);
+        lv_obj_set_style_text_color(brand_mark_label_, lv_color_hex(kColorGold), 0);
+        lv_obj_set_style_text_letter_space(brand_mark_label_, 1, 0);
+        lv_label_set_text(brand_mark_label_, "P");
+        lv_obj_center(brand_mark_label_);
+
+        // The status and instruction capsules separate live state from action.
+        // Their low-opacity fills are state-colored but OLED/power conservative.
+        lv_obj_set_size(status_bar_, kRoundStatusWidth, kRoundStatusHeight);
+        lv_obj_set_style_radius(status_bar_, kRoundStatusHeight / 2, 0);
         lv_obj_set_style_pad_all(status_bar_, 0, 0);
+        lv_obj_set_style_bg_opa(status_bar_, LV_OPA_10, 0);
+        lv_obj_set_style_border_width(status_bar_, 1, 0);
+        lv_obj_set_style_border_opa(status_bar_, LV_OPA_20, 0);
         lv_obj_align(status_bar_, LV_ALIGN_CENTER, 0, kRoundStatusOffset);
-        lv_obj_set_width(status_label_, kRoundContentWidth);
-        lv_obj_set_width(notification_label_, kRoundContentWidth);
+        lv_obj_set_width(status_label_, kRoundStatusWidth - 24);
+        lv_obj_set_width(notification_label_, kRoundStatusWidth - 24);
         lv_obj_set_style_text_font(status_label_, &font_noto_sans_basic_30_4, 0);
         lv_obj_set_style_text_font(notification_label_, &font_noto_sans_basic_30_4, 0);
         lv_label_set_long_mode(status_label_, LV_LABEL_LONG_CLIP);
@@ -443,12 +516,32 @@ public:
         lv_obj_align(status_label_, LV_ALIGN_CENTER, 0, 0);
         lv_obj_align(notification_label_, LV_ALIGN_CENTER, 0, 0);
 
-        hint_label_ = lv_label_create(screen);
-        lv_obj_set_width(hint_label_, kRoundContentWidth);
+        hint_panel_ = lv_obj_create(screen);
+        lv_obj_set_size(hint_panel_, kRoundHintWidth, kRoundHintHeight);
+        lv_obj_set_style_radius(hint_panel_, kRoundHintHeight / 2, 0);
+        lv_obj_set_style_pad_all(hint_panel_, 0, 0);
+        lv_obj_set_style_bg_opa(hint_panel_, LV_OPA_10, 0);
+        lv_obj_set_style_border_width(hint_panel_, 1, 0);
+        lv_obj_set_style_border_opa(hint_panel_, LV_OPA_20, 0);
+        lv_obj_clear_flag(hint_panel_, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_align(hint_panel_, LV_ALIGN_CENTER, 0, kRoundHintOffset);
+
+        talk_button_dot_ = lv_obj_create(hint_panel_);
+        lv_obj_set_size(talk_button_dot_, 8, 8);
+        lv_obj_set_style_radius(talk_button_dot_, 4, 0);
+        lv_obj_set_style_pad_all(talk_button_dot_, 0, 0);
+        lv_obj_set_style_border_width(talk_button_dot_, 0, 0);
+        lv_obj_set_style_bg_color(talk_button_dot_, lv_color_hex(kColorTalkButton), 0);
+        lv_obj_set_style_bg_opa(talk_button_dot_, LV_OPA_COVER, 0);
+        lv_obj_clear_flag(talk_button_dot_, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_align(talk_button_dot_, LV_ALIGN_LEFT_MID, 16, 0);
+
+        hint_label_ = lv_label_create(hint_panel_);
+        lv_obj_set_width(hint_label_, kRoundHintWidth - 32);
         lv_obj_set_style_text_font(hint_label_, &font_noto_sans_basic_16_4, 0);
         lv_obj_set_style_text_align(hint_label_, LV_TEXT_ALIGN_CENTER, 0);
         lv_label_set_long_mode(hint_label_, LV_LABEL_LONG_CLIP);
-        lv_obj_align(hint_label_, LV_ALIGN_CENTER, 0, kRoundHintOffset);
+        lv_obj_align(hint_label_, LV_ALIGN_CENTER, 5, 0);
 
         hide_subtitle_ = true;
         if (bottom_bar_ != nullptr) {
@@ -483,6 +576,22 @@ public:
         (void)content;
     }
 
+    void SetPowerSaveMode(bool on) override {
+        DisplayLockGuard lock(this);
+        lv_obj_t* chrome[] = {top_bar_,   brand_label_, title_label_, brand_rule_,
+                              hero_halo_, status_bar_,  hint_panel_};
+        for (auto* object : chrome) {
+            if (object == nullptr) {
+                continue;
+            }
+            if (on) {
+                lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
+            } else {
+                lv_obj_remove_flag(object, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+    }
+
     void SetStatus(const char* status) override {
         if (IsClockStatus(status)) {
             return;
@@ -508,7 +617,8 @@ public:
         {
             DisplayLockGuard lock(this);
             if (status_label_ == nullptr || notification_label_ == nullptr ||
-                emoji_label_ == nullptr || emoji_box_ == nullptr || hint_label_ == nullptr) {
+                emoji_label_ == nullptr || emoji_box_ == nullptr || hint_label_ == nullptr ||
+                hero_halo_ == nullptr || hint_panel_ == nullptr) {
                 receipt_visible_.store(false);
                 return;
             }
@@ -520,10 +630,9 @@ public:
             const lv_color_t color = lv_color_hex(presentation.color);
             lv_label_set_text(emoji_label_, presentation.icon);
             lv_obj_set_style_text_color(emoji_label_, color, 0);
-            lv_obj_set_style_bg_color(emoji_box_, color, 0);
-            lv_obj_set_style_border_color(emoji_box_, color, 0);
             lv_label_set_text(hint_label_, presentation.hint);
             lv_obj_set_style_text_color(hint_label_, color, 0);
+            ApplyChromeLocked(state, presentation);
         }
         ScheduleVisualReset(duration_ms);
     }
