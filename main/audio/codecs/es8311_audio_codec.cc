@@ -178,6 +178,15 @@ void Es8311AudioCodec::SetOutputVolume(int volume) {
     AudioCodec::SetOutputVolume(volume);
 }
 
+void Es8311AudioCodec::SetOutputVolumeForSession(int volume) {
+    std::lock_guard<std::mutex> lock(data_if_mutex_);
+    output_volume_ = volume;
+    ESP_LOGI(TAG, "Set session output volume to %d", output_volume_);
+    if (dev_ != nullptr) {
+        ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(dev_, output_volume_));
+    }
+}
+
 void Es8311AudioCodec::EnableInput(bool enable) {
     std::lock_guard<std::mutex> lock(data_if_mutex_);
     if (codec_if_ == nullptr) {

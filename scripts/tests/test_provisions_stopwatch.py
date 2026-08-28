@@ -53,10 +53,9 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("StartListening", source)
         self.assertIn("button1_.OnPressUp", source)
         self.assertIn("StopListening", source)
-        self.assertIn("SetHideSubtitle(true)", source)
-        self.assertIn("kMaximumResultBytes = 48", source)
-        self.assertIn("ProvisionsStopWatch::EllipsizeUtf8", source)
-        self.assertIn('std::strcmp(role, "assistant")', source)
+        self.assertIn("hide_subtitle_ = true", source)
+        self.assertIn("Spoken detail stays in audio", source)
+        self.assertNotIn("ProvisionsStopWatch::EllipsizeUtf8", source)
         self.assertIn("kDisplayIdleTimeoutUs = 45LL * 1000 * 1000", source)
         self.assertIn('.name = "stopwatch_display_idle"', source)
         self.assertIn("esp_timer_start_once", source)
@@ -67,9 +66,26 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("ResetDisplayIdleTimer()", source)
         self.assertIn("GetBacklight()->SetBrightness(5)", source)
         self.assertIn("kDefaultOutputVolume = 90", source)
-        self.assertIn('Settings settings("audio", false)', source)
-        self.assertIn('settings.GetInt("output_volume", -1)', source)
-        self.assertIn("audio_codec.SetOutputVolume(kDefaultOutputVolume)", source)
+        self.assertIn("class ProvisionsStopwatchAudioCodec", source)
+        self.assertIn("Es8311AudioCodec::Start();", source)
+        self.assertIn(
+            "output_volume() < kDefaultOutputVolume || output_volume() > 100",
+            source,
+        )
+        self.assertIn(
+            "SetOutputVolumeForSession(kDefaultOutputVolume)", source
+        )
+        self.assertIn("it never writes NVS", source)
+        self.assertNotIn("Settings settings", source)
+        codec_source = (
+            ROOT / "main/audio/codecs/es8311_audio_codec.cc"
+        ).read_text()
+        transient_setter = codec_source.split(
+            "void Es8311AudioCodec::SetOutputVolumeForSession", 1
+        )[1].split("void Es8311AudioCodec::EnableInput", 1)[0]
+        self.assertIn("output_volume_ = volume", transient_setter)
+        self.assertIn("esp_codec_dev_set_out_vol", transient_setter)
+        self.assertNotIn("Settings", transient_setter)
         power_level = source.split(
             "void SetPowerSaveLevel(PowerSaveLevel level) override", 1
         )[1].split("#endif", 1)[0]
@@ -81,6 +97,35 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("M5PM1_PWR_SRC_BAT", source)
         self.assertIn('#define PROVISIONS_HARDWARE_PROFILE "stopwatch-client"', config)
         self.assertIn("#define PROVISIONS_NOMINAL_BATTERY_MAH 450", config)
+
+    def test_provisions_screen_is_branded_and_state_only(self):
+        source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
+        provisions_ui = source.split("#if CONFIG_PROVISIONS_GATEWAY_REQUIRED", 2)[2]
+
+        self.assertIn('"#d4b67a PROVISIONS#\\n#f5f2eb KITCHEN HELPER#"', source)
+        self.assertIn('return {"Ready", "HOLD YELLOW BUTTON TO TALK"', source)
+        self.assertIn('return {"Listening", "RELEASE WHEN FINISHED"', source)
+        self.assertIn('return {"Working", "CHECKING PROVISIONS"', source)
+        self.assertIn('return {"Added to draft", "NOT SENT"', source)
+        self.assertIn('return {"Unavailable", "TRY AGAIN"', source)
+        self.assertIn("MATERIAL_SYMBOLS_CHECK_CIRCLE", source)
+        self.assertIn("MATERIAL_SYMBOLS_CLOUD_OFF", source)
+        self.assertIn("kRoundTopBarWidth = 260", source)
+        self.assertIn("kRoundTopBarOffset = 46", source)
+        self.assertIn("kRoundContentWidth = 350", source)
+        self.assertIn('std::strcmp(notification, "Added")', source)
+        self.assertIn('std::strcmp(notification, "Undone")', source)
+        self.assertIn('std::strcmp(status, Lang::Strings::LISTENING)', source)
+        self.assertIn("IsClockStatus(status)", source)
+        self.assertIn('.name = "stopwatch_visual_reset"', source)
+        self.assertIn("ApplyNotificationDecorations(state)", source)
+        self.assertIn("receipt_visible_.store(true)", source)
+        self.assertIn("receipt_visible_.load() && state != VisualState::kListening", source)
+        self.assertIn("ApplyVisualStateLocked(resting_state_.load())", source)
+        self.assertNotIn("ApplyVisualState(self->resting_state_.load())", source)
+        self.assertIn("Lang::Strings::CHECKING_NEW_VERSION", source)
+        self.assertIn("Lang::Strings::LOADING_PROTOCOL", source)
+        self.assertIn("lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN)", provisions_ui)
 
     @unittest.skipUnless(shutil.which("c++"), "host C++ compiler is unavailable")
     def test_display_ellipsis_keeps_utf8_code_points_intact(self):

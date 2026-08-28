@@ -8,8 +8,6 @@
 #include "M5IOE1.h"
 #include "M5PM1.h"
 #include "config.h"
-#include "settings.h"
-#include "utf8_ellipsis.h"
 #include "assets/lang_config.h"
 #include <atomic>
 #include <cstring>
@@ -18,6 +16,7 @@
 #include <esp_timer.h>
 #include <driver/i2c_master.h>
 #include <driver/spi_master.h>
+#include <material_symbols.h>
 #include <wifi_manager.h>
 
 #define TAG "M5StackStopwatch"
@@ -27,11 +26,36 @@
 namespace {
 
 constexpr char kSignedHardwareIdentity[] = "PROVISIONS_SIGNED_HARDWARE_IDENTITY=" BOARD_NAME;
-constexpr size_t kMaximumResultBytes = 48;
 constexpr int64_t kDisplayIdleTimeoutUs = 45LL * 1000 * 1000;
 constexpr int kDefaultOutputVolume = 90;
+constexpr int kRoundTopBarWidth = 260;
+constexpr int kRoundTopBarOffset = 46;
+constexpr int kRoundContentWidth = 350;
+
+constexpr uint32_t kColorGold = 0xD4B67A;
+constexpr uint32_t kColorCream = 0xF5F2EB;
+constexpr uint32_t kColorGreen = 0x7FBF8F;
+constexpr uint32_t kColorBlue = 0x9FB8D8;
+constexpr uint32_t kColorAmber = 0xE0A256;
+constexpr uint32_t kColorRed = 0xE07566;
+
+class ProvisionsStopwatchAudioCodec final : public Es8311AudioCodec {
+public:
+    using Es8311AudioCodec::Es8311AudioCodec;
+
+    void Start() override {
+        Es8311AudioCodec::Start();
+        if (output_volume() < kDefaultOutputVolume || output_volume() > 100) {
+            // Apply the pilot floor after Start() reloads the saved preference.
+            // This setter updates codec state only; it never writes NVS.
+            SetOutputVolumeForSession(kDefaultOutputVolume);
+        }
+    }
+};
 
 }  // namespace
+
+LV_FONT_DECLARE(font_noto_sans_basic_16_4);
 #endif
 
 // CO5300 AMOLED: initialize at full brightness, then restore the saved setting.
@@ -51,6 +75,224 @@ static const co5300_lcd_init_cmd_t vendor_specific_init[] = {
 };
 
 class RoundLcdDisplay : public SpiLcdDisplay {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+private:
+    enum class VisualState : uint8_t {
+        kBoot,
+        kConnecting,
+        kReady,
+        kListening,
+        kWorking,
+        kSpeaking,
+        kUnavailable,
+        kAdded,
+        kSuccess,
+        kQuestion,
+        kWarning,
+        kNotice,
+    };
+
+    struct StatePresentation {
+        const char* title;
+        const char* hint;
+        const char* icon;
+        uint32_t color;
+    };
+
+    lv_obj_t* brand_label_ = nullptr;
+    lv_obj_t* hint_label_ = nullptr;
+    esp_timer_handle_t visual_reset_timer_ = nullptr;
+    std::atomic<VisualState> resting_state_{VisualState::kBoot};
+    std::atomic<bool> receipt_visible_{false};
+
+    static bool IsClockStatus(const char* status) {
+        return status != nullptr && std::strlen(status) == 5 && status[2] == ':' &&
+               status[0] >= '0' && status[0] <= '9' && status[1] >= '0' && status[1] <= '9' &&
+               status[3] >= '0' && status[3] <= '9' && status[4] >= '0' && status[4] <= '9';
+    }
+
+    static StatePresentation PresentationFor(VisualState state) {
+        switch (state) {
+            case VisualState::kBoot:
+                return {"Starting", "PLEASE WAIT", MATERIAL_SYMBOLS_PROGRESS_ACTIVITY, kColorGold};
+            case VisualState::kConnecting:
+                return {"Connecting", "CONNECTING SECURELY", MATERIAL_SYMBOLS_WIFI, kColorBlue};
+            case VisualState::kReady:
+                return {"Ready", "HOLD YELLOW BUTTON TO TALK", MATERIAL_SYMBOLS_MIC, kColorGreen};
+            case VisualState::kListening:
+                return {"Listening", "RELEASE WHEN FINISHED", MATERIAL_SYMBOLS_MIC, kColorGold};
+            case VisualState::kWorking:
+                return {"Working", "CHECKING PROVISIONS", MATERIAL_SYMBOLS_PROGRESS_ACTIVITY, kColorBlue};
+            case VisualState::kSpeaking:
+                return {"Replying", "PLAYING SPOKEN ANSWER", MATERIAL_SYMBOLS_VOLUME_UP, kColorBlue};
+            case VisualState::kUnavailable:
+                return {"Unavailable", "TRY AGAIN", MATERIAL_SYMBOLS_CLOUD_OFF, kColorRed};
+            case VisualState::kAdded:
+                return {"Added to draft", "NOT SENT", MATERIAL_SYMBOLS_CHECK_CIRCLE, kColorGreen};
+            case VisualState::kSuccess:
+                return {"Done", "SPOKEN RESULT", MATERIAL_SYMBOLS_CHECK_CIRCLE, kColorGreen};
+            case VisualState::kQuestion:
+                return {"One question", "LISTEN AND ANSWER", MATERIAL_SYMBOLS_HELP, kColorGold};
+            case VisualState::kWarning:
+                return {"Not changed", "NO CHANGE MADE", MATERIAL_SYMBOLS_WARNING, kColorAmber};
+            case VisualState::kNotice:
+                return {"Notice", "LISTEN FOR DETAILS", MATERIAL_SYMBOLS_INFO, kColorAmber};
+        }
+        return {"Unavailable", "TRY AGAIN", MATERIAL_SYMBOLS_CLOUD_OFF, kColorRed};
+    }
+
+    static VisualState StateForStatus(const char* status) {
+        if (status == nullptr || status[0] == '\0' || std::strcmp(status, "Boot") == 0 ||
+            std::strcmp(status, Lang::Strings::INITIALIZING) == 0 ||
+            std::strcmp(status, Lang::Strings::DETECTING_MODULE) == 0 ||
+            std::strcmp(status, Lang::Strings::CHECKING_NEW_VERSION) == 0 ||
+            std::strcmp(status, Lang::Strings::ACTIVATION) == 0 ||
+            std::strcmp(status, Lang::Strings::LOADING_ASSETS) == 0 ||
+            std::strcmp(status, Lang::Strings::OTA_UPGRADE) == 0 ||
+            std::strcmp(status, Lang::Strings::UPGRADING) == 0) {
+            return VisualState::kBoot;
+        }
+        if (std::strcmp(status, "Connecting") == 0 ||
+            std::strcmp(status, Lang::Strings::CONNECTING) == 0 ||
+            std::strcmp(status, Lang::Strings::REGISTERING_NETWORK) == 0 ||
+            std::strcmp(status, Lang::Strings::LOADING_PROTOCOL) == 0 ||
+            std::strcmp(status, Lang::Strings::SERVER_NOT_FOUND) == 0) {
+            return VisualState::kConnecting;
+        }
+        if (std::strcmp(status, "Ready") == 0) {
+            return VisualState::kReady;
+        }
+        if (std::strcmp(status, "Working") == 0) {
+            return VisualState::kWorking;
+        }
+        if (std::strcmp(status, "Listening") == 0 ||
+            std::strcmp(status, Lang::Strings::LISTENING) == 0) {
+            return VisualState::kListening;
+        }
+        if (std::strcmp(status, "Speaking") == 0 ||
+            std::strcmp(status, Lang::Strings::SPEAKING) == 0) {
+            return VisualState::kSpeaking;
+        }
+        if (std::strcmp(status, "Unavailable") == 0 ||
+            std::strcmp(status, Lang::Strings::ERROR) == 0 ||
+            std::strcmp(status, Lang::Strings::SERVER_ERROR) == 0 ||
+            std::strcmp(status, Lang::Strings::SERVER_NOT_CONNECTED) == 0 ||
+            std::strcmp(status, Lang::Strings::SERVER_TIMEOUT) == 0) {
+            return VisualState::kUnavailable;
+        }
+        return VisualState::kBoot;
+    }
+
+    static VisualState StateForNotification(const char* notification, const char** title) {
+        if (notification == nullptr) {
+            *title = "Notice";
+            return VisualState::kNotice;
+        }
+        if (std::strcmp(notification, "Added") == 0) {
+            *title = "Added to draft";
+            return VisualState::kAdded;
+        }
+        if (std::strcmp(notification, "Undone") == 0) {
+            *title = "Removed from draft";
+            return VisualState::kAdded;
+        }
+        if (std::strcmp(notification, "Found") == 0 ||
+            std::strcmp(notification, "Delivered") == 0 ||
+            std::strcmp(notification, "On the way") == 0 ||
+            std::strcmp(notification, "Recorded") == 0 ||
+            std::strcmp(notification, "Draft only") == 0) {
+            *title = notification;
+            return VisualState::kSuccess;
+        }
+        if (std::strcmp(notification, "Choose one") == 0 ||
+            std::strcmp(notification, "Need unit") == 0 ||
+            std::strcmp(notification, "Ready to add") == 0) {
+            *title = notification;
+            return VisualState::kQuestion;
+        }
+        if (std::strcmp(notification, "No match") == 0 ||
+            std::strcmp(notification, "Cancelled") == 0 ||
+            std::strcmp(notification, "Check app") == 0 ||
+            std::strcmp(notification, "Not changed") == 0) {
+            *title = notification;
+            return VisualState::kWarning;
+        }
+        *title = notification;
+        return VisualState::kNotice;
+    }
+
+    void ApplyVisualStateLocked(VisualState state) {
+        if (status_label_ == nullptr || notification_label_ == nullptr || emoji_label_ == nullptr ||
+            emoji_box_ == nullptr || hint_label_ == nullptr) {
+            return;
+        }
+        const auto presentation = PresentationFor(state);
+        const lv_color_t color = lv_color_hex(presentation.color);
+
+        lv_label_set_text(status_label_, presentation.title);
+        lv_obj_set_style_text_color(status_label_, lv_color_hex(kColorCream), 0);
+        lv_obj_remove_flag(status_label_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(notification_label_, LV_OBJ_FLAG_HIDDEN);
+
+        lv_label_set_text(emoji_label_, presentation.icon);
+        lv_obj_set_style_text_color(emoji_label_, color, 0);
+        lv_obj_set_style_bg_color(emoji_box_, color, 0);
+        lv_obj_set_style_border_color(emoji_box_, color, 0);
+
+        lv_label_set_text(hint_label_, presentation.hint);
+        lv_obj_set_style_text_color(hint_label_, color, 0);
+        last_status_update_time_ = std::chrono::system_clock::now();
+    }
+
+    void ApplyVisualState(VisualState state) {
+        DisplayLockGuard lock(this);
+        ApplyVisualStateLocked(state);
+    }
+
+    void ApplyRestingVisualState() {
+        // Load the state only after taking the LVGL lock so an expiring receipt
+        // cannot overwrite a newer Ready/Listening transition with a stale snapshot.
+        DisplayLockGuard lock(this);
+        ApplyVisualStateLocked(resting_state_.load());
+    }
+
+    void CancelVisualReset() {
+        if (visual_reset_timer_ != nullptr) {
+            const esp_err_t result = esp_timer_stop(visual_reset_timer_);
+            if (result != ESP_OK && result != ESP_ERR_INVALID_STATE) {
+                ESP_LOGW(TAG, "Failed to stop screen reset timer: %s", esp_err_to_name(result));
+            }
+        }
+    }
+
+    void ScheduleVisualReset(int duration_ms) {
+        CancelVisualReset();
+        if (visual_reset_timer_ == nullptr) {
+            return;
+        }
+        const esp_err_t result =
+            esp_timer_start_once(visual_reset_timer_, static_cast<uint64_t>(duration_ms) * 1000);
+        if (result != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to start screen reset timer: %s", esp_err_to_name(result));
+        }
+    }
+
+    void ApplyNotificationDecorations(VisualState state) {
+        DisplayLockGuard lock(this);
+        if (emoji_label_ == nullptr || emoji_box_ == nullptr || hint_label_ == nullptr) {
+            return;
+        }
+        const auto presentation = PresentationFor(state);
+        const lv_color_t color = lv_color_hex(presentation.color);
+        lv_label_set_text(emoji_label_, presentation.icon);
+        lv_obj_set_style_text_color(emoji_label_, color, 0);
+        lv_obj_set_style_bg_color(emoji_box_, color, 0);
+        lv_obj_set_style_border_color(emoji_box_, color, 0);
+        lv_label_set_text(hint_label_, presentation.hint);
+        lv_obj_set_style_text_color(hint_label_, color, 0);
+    }
+#endif
+
 public:
     static void rounder_event_cb(lv_event_t* e) {
         lv_area_t* area = static_cast<lv_area_t*>(lv_event_get_param(e));
@@ -69,42 +311,107 @@ public:
                     bool mirror_x,
                     bool mirror_y,
                     bool swap_xy)
-        : SpiLcdDisplay(io_handle, panel_handle, width, height, offset_x, offset_y, mirror_x, mirror_y, swap_xy) {}
+        : SpiLcdDisplay(io_handle, panel_handle, width, height, offset_x, offset_y, mirror_x, mirror_y, swap_xy) {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        esp_timer_create_args_t timer_args = {
+            .callback = [](void* arg) {
+                auto* self = static_cast<RoundLcdDisplay*>(arg);
+                self->receipt_visible_.store(false);
+                self->ApplyRestingVisualState();
+            },
+            .arg = this,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "stopwatch_visual_reset",
+            .skip_unhandled_events = true,
+        };
+        ESP_ERROR_CHECK(esp_timer_create(&timer_args, &visual_reset_timer_));
+#endif
+    }
+
+    ~RoundLcdDisplay() override {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        if (visual_reset_timer_ != nullptr) {
+            esp_timer_stop(visual_reset_timer_);
+            esp_timer_delete(visual_reset_timer_);
+        }
+#endif
+    }
 
     void SetupUI() override {
         SpiLcdDisplay::SetupUI();
         DisplayLockGuard lock(this);
 
-        // Horizontal inset so labels stay inside the round mask
-        lv_obj_set_style_pad_left(status_bar_, LV_HOR_RES * 0.2, 0);
-        lv_obj_set_style_pad_right(status_bar_, LV_HOR_RES * 0.2, 0);
+        lv_display_add_event_cb(display_, rounder_event_cb, LV_EVENT_INVALIDATE_AREA, NULL);
 
-        // Status bar: upper half, below top icon bar (not at screen bottom)
-        lv_obj_align(status_bar_, LV_ALIGN_TOP_MID, 0, DISPLAY_STATUS_BAR_TOP_OFF);
-        lv_obj_set_width(status_label_, LV_HOR_RES * 0.6);
-        lv_obj_set_width(notification_label_, LV_HOR_RES * 0.6);
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        auto* screen = lv_screen_active();
+        lv_obj_set_style_bg_color(screen, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_color(container_, lv_color_hex(0x000000), 0);
+
+        // Keep network and battery indicators inside the circular display's safe arc.
+        lv_obj_set_width(top_bar_, kRoundTopBarWidth);
+        lv_obj_set_style_bg_opa(top_bar_, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_pad_all(top_bar_, 0, 0);
+        lv_obj_align(top_bar_, LV_ALIGN_TOP_MID, 0, kRoundTopBarOffset);
+        lv_obj_set_style_text_color(network_label_, lv_color_hex(kColorCream), 0);
+        lv_obj_set_style_text_color(mute_label_, lv_color_hex(kColorCream), 0);
+        lv_obj_set_style_text_color(battery_label_, lv_color_hex(kColorCream), 0);
+
+        brand_label_ = lv_label_create(screen);
+        lv_obj_set_width(brand_label_, kRoundContentWidth);
+        lv_label_set_long_mode(brand_label_, LV_LABEL_LONG_WRAP);
+        lv_label_set_recolor(brand_label_, true);
+        lv_obj_set_style_text_align(brand_label_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_line_space(brand_label_, 4, 0);
+        lv_label_set_text(
+            brand_label_,
+            "#d4b67a PROVISIONS#\n#f5f2eb KITCHEN HELPER#");
+        lv_obj_align(brand_label_, LV_ALIGN_TOP_MID, 0, 84);
+
+        lv_obj_set_size(emoji_box_, 88, 88);
+        lv_obj_set_style_radius(emoji_box_, 44, 0);
+        lv_obj_set_style_bg_opa(emoji_box_, LV_OPA_20, 0);
+        lv_obj_set_style_border_width(emoji_box_, 2, 0);
+        lv_obj_align(emoji_box_, LV_ALIGN_CENTER, 0, -4);
+        lv_obj_center(emoji_label_);
+
+        lv_obj_set_size(status_bar_, kRoundContentWidth, 52);
+        lv_obj_set_style_pad_all(status_bar_, 0, 0);
+        lv_obj_align(status_bar_, LV_ALIGN_CENTER, 0, 79);
+        lv_obj_set_width(status_label_, kRoundContentWidth);
+        lv_obj_set_width(notification_label_, kRoundContentWidth);
+        lv_label_set_long_mode(status_label_, LV_LABEL_LONG_CLIP);
+        lv_label_set_long_mode(notification_label_, LV_LABEL_LONG_CLIP);
         lv_obj_align(status_label_, LV_ALIGN_CENTER, 0, 0);
         lv_obj_align(notification_label_, LV_ALIGN_CENTER, 0, 0);
 
-        // Chat/subtitle text: a bit higher, away from bottom arc
+        hint_label_ = lv_label_create(screen);
+        lv_obj_set_width(hint_label_, kRoundContentWidth);
+        lv_obj_set_style_text_font(hint_label_, &font_noto_sans_basic_16_4, 0);
+        lv_obj_set_style_text_align(hint_label_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_label_set_long_mode(hint_label_, LV_LABEL_LONG_CLIP);
+        lv_obj_align(hint_label_, LV_ALIGN_CENTER, 0, 127);
+
+        hide_subtitle_ = true;
+        if (bottom_bar_ != nullptr) {
+            lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
+        }
+        ApplyVisualStateLocked(VisualState::kBoot);
+#else
+        // Generic StopWatch layout remains unchanged.
+        lv_obj_set_style_pad_left(status_bar_, LV_HOR_RES * 0.2, 0);
+        lv_obj_set_style_pad_right(status_bar_, LV_HOR_RES * 0.2, 0);
+        lv_obj_align(status_bar_, LV_ALIGN_TOP_MID, 0, DISPLAY_STATUS_BAR_TOP_OFF);
+        lv_obj_set_width(status_label_, LV_HOR_RES * 0.6);
+        lv_obj_set_width(notification_label_, LV_HOR_RES * 0.6);
         if (bottom_bar_ != nullptr) {
             lv_obj_align(bottom_bar_, LV_ALIGN_BOTTOM_MID, 0, -DISPLAY_CHAT_BAR_BOTTOM_OFF);
             lv_obj_set_width(chat_message_label_, LV_HOR_RES * 0.75);
         }
-
-        // emoji_box_: keep default LV_ALIGN_CENTER from SpiLcdDisplay::SetupUI()
-
-        // Top icons: move the top bar down inside the round display safe area
         if (top_bar_ != nullptr) {
             lv_obj_align(top_bar_, LV_ALIGN_TOP_MID, 0, DISPLAY_ROUND_EDGE_INSET / 2);
             lv_obj_set_style_pad_top(top_bar_, DISPLAY_ROUND_EDGE_INSET / 4, 0);
         }
-
-        lv_display_add_event_cb(display_, rounder_event_cb, LV_EVENT_INVALIDATE_AREA, NULL);
-
-#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-        SetHideSubtitle(true);
-        SetStatus("Boot");
 #endif
     }
 
@@ -112,13 +419,41 @@ public:
     void SetEmotion(const char* emotion) override { (void)emotion; }
 
     void SetChatMessage(const char* role, const char* content) override {
-        if (role == nullptr || content == nullptr || content[0] == '\0' ||
-            std::strcmp(role, "assistant") != 0) {
+        // Spoken detail stays in audio. The screen is intentionally limited to
+        // authenticated short state/receipt frames from the Provisions gateway.
+        (void)role;
+        (void)content;
+    }
+
+    void SetStatus(const char* status) override {
+        if (IsClockStatus(status)) {
             return;
         }
+        const VisualState state = StateForStatus(status);
+        resting_state_.store(state);
+        if (receipt_visible_.load() && state != VisualState::kListening &&
+            state != VisualState::kConnecting && state != VisualState::kUnavailable) {
+            return;
+        }
+        receipt_visible_.store(false);
+        CancelVisualReset();
+        if (notification_timer_ != nullptr) {
+            esp_timer_stop(notification_timer_);
+        }
+        ApplyVisualState(state);
+    }
 
-        std::string result = ProvisionsStopWatch::EllipsizeUtf8(content, kMaximumResultBytes);
-        ShowNotification(result, 3000);
+    void ShowNotification(const char* notification, int duration_ms = 3000) override {
+        const char* title = nullptr;
+        const VisualState state = StateForNotification(notification, &title);
+        receipt_visible_.store(true);
+        LvglDisplay::ShowNotification(title, duration_ms);
+        ApplyNotificationDecorations(state);
+        ScheduleVisualReset(duration_ms);
+    }
+
+    void ShowNotification(const std::string& notification, int duration_ms = 3000) override {
+        ShowNotification(notification.c_str(), duration_ms);
     }
 
     void ClearChatMessages() override {}
@@ -409,7 +744,11 @@ public:
     }
 
     AudioCodec* GetAudioCodec() override {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        static ProvisionsStopwatchAudioCodec audio_codec(
+#else
         static Es8311AudioCodec audio_codec(
+#endif
             i2c_bus_,
             I2C_NUM_0,
             AUDIO_INPUT_SAMPLE_RATE,
@@ -422,17 +761,6 @@ public:
             AUDIO_CODEC_GPIO_PA,
             AUDIO_CODEC_ES8311_ADDR,
             false);
-#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-        static const bool default_volume_initialized = []() {
-            Settings settings("audio", false);
-            const int saved_volume = settings.GetInt("output_volume", -1);
-            if (saved_volume <= 0 || saved_volume > 100) {
-                audio_codec.SetOutputVolume(kDefaultOutputVolume);
-            }
-            return true;
-        }();
-        (void)default_volume_initialized;
-#endif
         return &audio_codec;
     }
 

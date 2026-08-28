@@ -29,6 +29,10 @@ private:
     virtual int Read(int16_t* dest, int samples) override;
     virtual int Write(const int16_t* data, int samples) override;
 
+protected:
+    // Applies a runtime-only pilot level without updating the audio NVS key.
+    void SetOutputVolumeForSession(int volume);
+
 public:
     Es8311AudioCodec(void* i2c_master_handle, i2c_port_t i2c_port, int input_sample_rate, int output_sample_rate,
         gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din,
