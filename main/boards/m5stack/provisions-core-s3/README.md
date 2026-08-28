@@ -48,6 +48,75 @@ python3 scripts/build.py m5stack/provisions-core-s3 \
   --wake-word disabled
 ```
 
+## Reversible bench-only provisioning
+
+`bench_profile.json` is an explicit, temporary acceptance path for the first
+physical CoreS3/Lite and StopWatch loop. It is not the pilot security profile.
+It keeps the exact Provisions hardware identity, gateway-only/manual-Talk UX,
+camera exclusion and 16 MB dual-OTA layout, disables every boot image-validation
+skip option, and requires externally signed app images for OTA verification. It
+deliberately disables hardware Secure Boot, flash encryption, NVS encryption and
+anti-rollback eFuse use. It contains no eFuse enablement path.
+
+Build a CoreS3 family image with the dedicated profile, never `config.json`:
+
+```sh
+python3 scripts/build.py m5stack/provisions-core-s3 \
+  --config bench_profile.json \
+  --name provisions-kitchen-helper-core-s3-lite \
+  --language en-US \
+  --wake-word disabled
+```
+
+Use `provisions-kitchen-helper-core-s3` only for the matching full CoreS3. Sign
+the secure-padded application outside the build environment with the approved
+RSA-3072 key. The bundle tool verifies that signature and the exact public-key
+hash from the factory registration output. It also verifies the build metadata,
+app hardware marker, all independently supplied artifact hashes and the exact
+partition binary. An ordinary development build, secure-pilot build, wrong-board
+build, unsigned app or any build that enables an eFuse-backed security feature
+is rejected.
+
+Package the externally signed application, unsigned bench bootloader, partition
+table, OTA data, assets, `project_description.json` and `config/sdkconfig.h` in
+the same artifact-directory layout documented in the secure factory section
+below. The approved hash record must describe these final packaged bytes.
+
+The factory registration tool's private schema-v2 `device.json` can be consumed
+directly. It and the output must remain outside this repository. The input must
+be operator-owned mode `0600`; the output parent must be private and the output
+must not already exist. A separately retained, verified full 16 MB factory
+backup is mandatory before the tool will authorize an erase. Supply its absolute
+path and independently recorded lowercase SHA-256; a partial dump, symlink,
+wrong hash or repository-local image is rejected:
+
+```sh
+python3 scripts/prepare_provisions_reversible_bench.py \
+  --input '/absolute/private/path/device.json' \
+  --output-dir '/absolute/private/path/reversible-bench-bundle' \
+  --recovery-image '/absolute/private/path/full-factory-16mb.bin' \
+  --recovery-sha256 '<independently-recorded-lowercase-sha256>'
+```
+
+The preparation tool never touches hardware. It uses the digest-pinned ESP-IDF
+6.0.2 container with networking disabled to generate and inspect the plaintext
+NVS image. It emits exact read-MAC/eFuse preflights, full erase, complete flash
+and per-region verify commands, plus a private pre-flash verifier and redacted
+evidence. It never copies the recovery image into the bundle; private evidence
+records only its external path, exact size and approved hash. Every bench
+`esptool` command assumes the operator has manually entered ROM download mode
+and therefore uses `--before no-reset`; on StopWatch, wait for the green
+indication before running it. The `nvs_keys` partition stays erased and no
+burn-eFuse command exists.
+
+This path provides reversibility, not device security. Anyone with physical
+access can extract the Wi-Fi password and device bearer from flash, replace the
+bootloader, or bypass signed-OTA checks. Use it only on controlled development
+hardware with a short-lived device credential. Never give it to a customer,
+take it onto a live yacht, or call it a commercial pilot. Immediately after the
+bench acceptance, revoke the credential, erase the entire flash, restore the
+verified factory backup or approved secure firmware, and retain the evidence.
+
 ## Offline factory provisioning
 
 The secure pilot factory flow is a single pre-first-boot write containing the

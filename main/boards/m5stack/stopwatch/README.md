@@ -1,5 +1,30 @@
 # StopWatch
 
+For the temporary Provisions physical-loop acceptance build, use the dedicated
+`bench_profile.json` instead of `config.json` or `pilot_profile.json`:
+
+```sh
+python3 scripts/build.py m5stack/stopwatch \
+  --config bench_profile.json \
+  --name provisions-kitchen-helper-stopwatch \
+  --language en-US \
+  --wake-word disabled
+```
+
+This preserves the exact StopWatch board identity, yellow KEYA/GPIO2 manual Talk
+control, gateway-only connection and 16 MB Provisions layout while deliberately
+disabling Secure Boot, flash encryption, NVS encryption and eFuse anti-rollback.
+The app must still be externally signed for OTA verification and image-validation
+skip options are disabled. Prepare its registered schema-v2 `device.json` with
+`scripts/prepare_provisions_reversible_bench.py`; see the CoreS3 Provisions README
+for its mandatory external full-16-MB recovery-image arguments, private bundle
+contract and mandatory revocation/full-flash wipe. Manually enter ROM download
+mode and wait for the green indication; bench commands deliberately use
+`--before no-reset` instead of attempting automatic reset.
+
+The resulting credential and Wi-Fi password are physically extractable. This is
+controlled demo hardware only: never a customer/yacht device or commercial pilot.
+
 -----------
 ## hardware
 

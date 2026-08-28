@@ -1,0 +1,69 @@
+{
+    "manufacturer": "m5stack",
+    "type": "provisions-kitchen-helper-core-s3",
+    "target": "esp32s3",
+    "builds": [
+        {
+            "name": "provisions-kitchen-helper-core-s3",
+            "sdkconfig_append": [
+                "CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3=y",
+                "CONFIG_SPIRAM_MODE_QUAD=y",
+                "CONFIG_LOG_DEFAULT_LEVEL_INFO=y",
+                "CONFIG_LOG_MAXIMUM_LEVEL_INFO=y",
+                "CONFIG_CAMERA_GC0308=n",
+                "CONFIG_ESP_VIDEO_ENABLE_DVP_VIDEO_DEVICE=n",
+                "CONFIG_OTA_URL=\"https://app.provisions-app.com/kitchen-helper/preview/v1/bootstrap\"",
+                "CONFIG_PARTITION_TABLE_CUSTOM=y",
+                "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=\"partitions/provisions/16m.csv\"",
+                "CONFIG_BOOTLOADER_SKIP_VALIDATE_ALWAYS=n",
+                "CONFIG_BOOTLOADER_SKIP_VALIDATE_ON_POWER_ON=n",
+                "CONFIG_BOOTLOADER_SKIP_VALIDATE_IN_DEEP_SLEEP=n",
+                "CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y",
+                "CONFIG_PROVISIONS_GATEWAY_REQUIRED=y",
+                "CONFIG_WAKE_WORD_DISABLED=y",
+                "CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=y",
+                "CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y",
+                "CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=n",
+                "CONFIG_SECURE_BOOT=n",
+                "CONFIG_SECURE_BOOT_V2_ENABLED=n",
+                "CONFIG_SECURE_FLASH_ENC_ENABLED=n",
+                "CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=n",
+                "CONFIG_NVS_ENCRYPTION=n",
+                "CONFIG_NVS_SEC_KEY_PROTECT_USING_FLASH_ENC=n",
+                "CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK=n",
+                "CONFIG_APP_ANTI_ROLLBACK=n"
+            ]
+        },
+        {
+            "name": "provisions-kitchen-helper-core-s3-lite",
+            "sdkconfig_append": [
+                "CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE=y",
+                "CONFIG_SPIRAM_MODE_QUAD=y",
+                "CONFIG_LOG_DEFAULT_LEVEL_INFO=y",
+                "CONFIG_LOG_MAXIMUM_LEVEL_INFO=y",
+                "CONFIG_CAMERA_GC0308=n",
+                "CONFIG_ESP_VIDEO_ENABLE_DVP_VIDEO_DEVICE=n",
+                "CONFIG_OTA_URL=\"https://app.provisions-app.com/kitchen-helper/preview/v1/bootstrap\"",
+                "CONFIG_PARTITION_TABLE_CUSTOM=y",
+                "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=\"partitions/provisions/16m.csv\"",
+                "CONFIG_BOOTLOADER_SKIP_VALIDATE_ALWAYS=n",
+                "CONFIG_BOOTLOADER_SKIP_VALIDATE_ON_POWER_ON=n",
+                "CONFIG_BOOTLOADER_SKIP_VALIDATE_IN_DEEP_SLEEP=n",
+                "CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y",
+                "CONFIG_PROVISIONS_GATEWAY_REQUIRED=y",
+                "CONFIG_WAKE_WORD_DISABLED=y",
+                "CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=y",
+                "CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y",
+                "CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=n",
+                "CONFIG_SECURE_BOOT=n",
+                "CONFIG_SECURE_BOOT_V2_ENABLED=n",
+                "CONFIG_SECURE_FLASH_ENC_ENABLED=n",
+                "CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=n",
+                "CONFIG_NVS_ENCRYPTION=n",
+                "CONFIG_NVS_SEC_KEY_PROTECT_USING_FLASH_ENC=n",
+                "CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK=n",
+                "CONFIG_APP_ANTI_ROLLBACK=n"
+            ]
+        }
+    ]
+}
