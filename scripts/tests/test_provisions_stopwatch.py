@@ -66,6 +66,10 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("Application::GetInstance().Schedule", source)
         self.assertIn("ResetDisplayIdleTimer()", source)
         self.assertIn("GetBacklight()->SetBrightness(5)", source)
+        self.assertIn("kDefaultOutputVolume = 90", source)
+        self.assertIn('Settings settings("audio", false)', source)
+        self.assertIn('settings.GetInt("output_volume", -1)', source)
+        self.assertIn("audio_codec.SetOutputVolume(kDefaultOutputVolume)", source)
         power_level = source.split(
             "void SetPowerSaveLevel(PowerSaveLevel level) override", 1
         )[1].split("#endif", 1)[0]

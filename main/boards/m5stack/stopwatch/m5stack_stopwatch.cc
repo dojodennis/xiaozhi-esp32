@@ -8,6 +8,7 @@
 #include "M5IOE1.h"
 #include "M5PM1.h"
 #include "config.h"
+#include "settings.h"
 #include "utf8_ellipsis.h"
 #include "assets/lang_config.h"
 #include <atomic>
@@ -28,6 +29,7 @@ namespace {
 constexpr char kSignedHardwareIdentity[] = "PROVISIONS_SIGNED_HARDWARE_IDENTITY=" BOARD_NAME;
 constexpr size_t kMaximumResultBytes = 48;
 constexpr int64_t kDisplayIdleTimeoutUs = 45LL * 1000 * 1000;
+constexpr int kDefaultOutputVolume = 90;
 
 }  // namespace
 #endif
@@ -420,6 +422,17 @@ public:
             AUDIO_CODEC_GPIO_PA,
             AUDIO_CODEC_ES8311_ADDR,
             false);
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        static const bool default_volume_initialized = []() {
+            Settings settings("audio", false);
+            const int saved_volume = settings.GetInt("output_volume", -1);
+            if (saved_volume <= 0 || saved_volume > 100) {
+                audio_codec.SetOutputVolume(kDefaultOutputVolume);
+            }
+            return true;
+        }();
+        (void)default_volume_initialized;
+#endif
         return &audio_codec;
     }
 
