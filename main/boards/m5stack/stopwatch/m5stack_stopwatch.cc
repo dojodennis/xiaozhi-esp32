@@ -30,7 +30,14 @@ constexpr int64_t kDisplayIdleTimeoutUs = 45LL * 1000 * 1000;
 constexpr int kDefaultOutputVolume = 90;
 constexpr int kRoundTopBarWidth = 260;
 constexpr int kRoundTopBarOffset = 46;
-constexpr int kRoundContentWidth = 350;
+constexpr int kRoundContentWidth = 330;
+constexpr int kRoundBrandWidth = 280;
+constexpr int kRoundBrandTopOffset = 84;
+constexpr int kRoundTitleTopOffset = 108;
+constexpr int kRoundRuleTopOffset = 151;
+constexpr int kRoundIconOffset = -2;
+constexpr int kRoundStatusOffset = 76;
+constexpr int kRoundHintOffset = 123;
 
 constexpr uint32_t kColorGold = 0xD4B67A;
 constexpr uint32_t kColorCream = 0xF5F2EB;
@@ -56,6 +63,7 @@ public:
 }  // namespace
 
 LV_FONT_DECLARE(font_noto_sans_basic_16_4);
+LV_FONT_DECLARE(font_noto_sans_basic_30_4);
 #endif
 
 // CO5300 AMOLED: initialize at full brightness, then restore the saved setting.
@@ -87,6 +95,7 @@ private:
         kUnavailable,
         kAdded,
         kSuccess,
+        kRecorded,
         kQuestion,
         kWarning,
         kNotice,
@@ -100,6 +109,8 @@ private:
     };
 
     lv_obj_t* brand_label_ = nullptr;
+    lv_obj_t* title_label_ = nullptr;
+    lv_obj_t* brand_rule_ = nullptr;
     lv_obj_t* hint_label_ = nullptr;
     esp_timer_handle_t visual_reset_timer_ = nullptr;
     std::atomic<VisualState> resting_state_{VisualState::kBoot};
@@ -114,31 +125,37 @@ private:
     static StatePresentation PresentationFor(VisualState state) {
         switch (state) {
             case VisualState::kBoot:
-                return {"Starting", "PLEASE WAIT", MATERIAL_SYMBOLS_PROGRESS_ACTIVITY, kColorGold};
+                return {"Starting", "Please wait", MATERIAL_SYMBOLS_PROGRESS_ACTIVITY, kColorGold};
             case VisualState::kConnecting:
-                return {"Connecting", "CONNECTING SECURELY", MATERIAL_SYMBOLS_WIFI, kColorBlue};
+                return {"Connecting", "Securing connection", MATERIAL_SYMBOLS_WIFI, kColorBlue};
             case VisualState::kReady:
-                return {"Ready", "HOLD YELLOW BUTTON TO TALK", MATERIAL_SYMBOLS_MIC, kColorGreen};
+                return {"Ready", "Hold yellow button to talk", MATERIAL_SYMBOLS_MIC, kColorGreen};
             case VisualState::kListening:
-                return {"Listening", "RELEASE WHEN FINISHED", MATERIAL_SYMBOLS_MIC, kColorGold};
+                return {"Listening", "Release when finished", MATERIAL_SYMBOLS_MIC, kColorGold};
             case VisualState::kWorking:
-                return {"Working", "CHECKING PROVISIONS", MATERIAL_SYMBOLS_PROGRESS_ACTIVITY, kColorBlue};
+                return {"Working", "Checking Provisions", MATERIAL_SYMBOLS_PROGRESS_ACTIVITY,
+                        kColorBlue};
             case VisualState::kSpeaking:
-                return {"Replying", "PLAYING SPOKEN ANSWER", MATERIAL_SYMBOLS_VOLUME_UP, kColorBlue};
+                return {"Replying", "Playing spoken answer", MATERIAL_SYMBOLS_VOLUME_UP,
+                        kColorBlue};
             case VisualState::kUnavailable:
-                return {"Unavailable", "TRY AGAIN", MATERIAL_SYMBOLS_CLOUD_OFF, kColorRed};
+                return {"Unavailable", "Please try again", MATERIAL_SYMBOLS_CLOUD_OFF, kColorRed};
             case VisualState::kAdded:
-                return {"Added to draft", "NOT SENT", MATERIAL_SYMBOLS_CHECK_CIRCLE, kColorGreen};
+                return {"Added to draft", "Draft only - not sent", MATERIAL_SYMBOLS_CHECK_CIRCLE,
+                        kColorGreen};
             case VisualState::kSuccess:
-                return {"Done", "SPOKEN RESULT", MATERIAL_SYMBOLS_CHECK_CIRCLE, kColorGreen};
+                return {"Done", "Listen for the result", MATERIAL_SYMBOLS_CHECK_CIRCLE,
+                        kColorGreen};
+            case VisualState::kRecorded:
+                return {"Recorded", "Not physically verified", MATERIAL_SYMBOLS_INFO, kColorAmber};
             case VisualState::kQuestion:
-                return {"One question", "LISTEN AND ANSWER", MATERIAL_SYMBOLS_HELP, kColorGold};
+                return {"One question", "Listen and answer", MATERIAL_SYMBOLS_HELP, kColorGold};
             case VisualState::kWarning:
-                return {"Not changed", "NO CHANGE MADE", MATERIAL_SYMBOLS_WARNING, kColorAmber};
+                return {"Not changed", "No change made", MATERIAL_SYMBOLS_WARNING, kColorAmber};
             case VisualState::kNotice:
-                return {"Notice", "LISTEN FOR DETAILS", MATERIAL_SYMBOLS_INFO, kColorAmber};
+                return {"Notice", "Listen for details", MATERIAL_SYMBOLS_INFO, kColorAmber};
         }
-        return {"Unavailable", "TRY AGAIN", MATERIAL_SYMBOLS_CLOUD_OFF, kColorRed};
+        return {"Unavailable", "Please try again", MATERIAL_SYMBOLS_CLOUD_OFF, kColorRed};
     }
 
     static VisualState StateForStatus(const char* status) {
@@ -199,10 +216,13 @@ private:
         if (std::strcmp(notification, "Found") == 0 ||
             std::strcmp(notification, "Delivered") == 0 ||
             std::strcmp(notification, "On the way") == 0 ||
-            std::strcmp(notification, "Recorded") == 0 ||
             std::strcmp(notification, "Draft only") == 0) {
             *title = notification;
             return VisualState::kSuccess;
+        }
+        if (std::strcmp(notification, "Recorded") == 0) {
+            *title = notification;
+            return VisualState::kRecorded;
         }
         if (std::strcmp(notification, "Choose one") == 0 ||
             std::strcmp(notification, "Need unit") == 0 ||
@@ -357,29 +377,52 @@ public:
         lv_obj_set_style_text_color(mute_label_, lv_color_hex(kColorCream), 0);
         lv_obj_set_style_text_color(battery_label_, lv_color_hex(kColorCream), 0);
 
+        // Brand and product title use separate type scales so the opening frame
+        // reads as a product, not two equal lines of status copy.
         brand_label_ = lv_label_create(screen);
-        lv_obj_set_width(brand_label_, kRoundContentWidth);
-        lv_label_set_long_mode(brand_label_, LV_LABEL_LONG_WRAP);
-        lv_label_set_recolor(brand_label_, true);
+        lv_obj_set_width(brand_label_, kRoundBrandWidth);
+        lv_obj_set_style_text_font(brand_label_, &font_noto_sans_basic_16_4, 0);
+        lv_obj_set_style_text_color(brand_label_, lv_color_hex(kColorGold), 0);
+        lv_obj_set_style_text_letter_space(brand_label_, 4, 0);
         lv_obj_set_style_text_align(brand_label_, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_style_text_line_space(brand_label_, 4, 0);
-        lv_label_set_text(
-            brand_label_,
-            "#d4b67a PROVISIONS#\n#f5f2eb KITCHEN HELPER#");
-        lv_obj_align(brand_label_, LV_ALIGN_TOP_MID, 0, 84);
+        lv_label_set_long_mode(brand_label_, LV_LABEL_LONG_CLIP);
+        lv_label_set_text(brand_label_, "PROVISIONS");
+        lv_obj_align(brand_label_, LV_ALIGN_TOP_MID, 0, kRoundBrandTopOffset);
 
-        lv_obj_set_size(emoji_box_, 88, 88);
-        lv_obj_set_style_radius(emoji_box_, 44, 0);
+        title_label_ = lv_label_create(screen);
+        lv_obj_set_width(title_label_, kRoundContentWidth);
+        lv_obj_set_style_text_font(title_label_, &font_noto_sans_basic_30_4, 0);
+        lv_obj_set_style_text_color(title_label_, lv_color_hex(kColorCream), 0);
+        lv_obj_set_style_text_letter_space(title_label_, 1, 0);
+        lv_obj_set_style_text_align(title_label_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_label_set_long_mode(title_label_, LV_LABEL_LONG_CLIP);
+        lv_label_set_text(title_label_, "KITCHEN HELPER");
+        lv_obj_align(title_label_, LV_ALIGN_TOP_MID, 0, kRoundTitleTopOffset);
+
+        brand_rule_ = lv_obj_create(screen);
+        lv_obj_set_size(brand_rule_, 52, 2);
+        lv_obj_set_style_radius(brand_rule_, 1, 0);
+        lv_obj_set_style_pad_all(brand_rule_, 0, 0);
+        lv_obj_set_style_border_width(brand_rule_, 0, 0);
+        lv_obj_set_style_bg_color(brand_rule_, lv_color_hex(kColorGold), 0);
+        lv_obj_set_style_bg_opa(brand_rule_, LV_OPA_50, 0);
+        lv_obj_clear_flag(brand_rule_, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_align(brand_rule_, LV_ALIGN_TOP_MID, 0, kRoundRuleTopOffset);
+
+        lv_obj_set_size(emoji_box_, 92, 92);
+        lv_obj_set_style_radius(emoji_box_, 46, 0);
         lv_obj_set_style_bg_opa(emoji_box_, LV_OPA_20, 0);
         lv_obj_set_style_border_width(emoji_box_, 2, 0);
-        lv_obj_align(emoji_box_, LV_ALIGN_CENTER, 0, -4);
+        lv_obj_align(emoji_box_, LV_ALIGN_CENTER, 0, kRoundIconOffset);
         lv_obj_center(emoji_label_);
 
-        lv_obj_set_size(status_bar_, kRoundContentWidth, 52);
+        lv_obj_set_size(status_bar_, kRoundContentWidth, 48);
         lv_obj_set_style_pad_all(status_bar_, 0, 0);
-        lv_obj_align(status_bar_, LV_ALIGN_CENTER, 0, 79);
+        lv_obj_align(status_bar_, LV_ALIGN_CENTER, 0, kRoundStatusOffset);
         lv_obj_set_width(status_label_, kRoundContentWidth);
         lv_obj_set_width(notification_label_, kRoundContentWidth);
+        lv_obj_set_style_text_font(status_label_, &font_noto_sans_basic_30_4, 0);
+        lv_obj_set_style_text_font(notification_label_, &font_noto_sans_basic_30_4, 0);
         lv_label_set_long_mode(status_label_, LV_LABEL_LONG_CLIP);
         lv_label_set_long_mode(notification_label_, LV_LABEL_LONG_CLIP);
         lv_obj_align(status_label_, LV_ALIGN_CENTER, 0, 0);
@@ -390,7 +433,7 @@ public:
         lv_obj_set_style_text_font(hint_label_, &font_noto_sans_basic_16_4, 0);
         lv_obj_set_style_text_align(hint_label_, LV_TEXT_ALIGN_CENTER, 0);
         lv_label_set_long_mode(hint_label_, LV_LABEL_LONG_CLIP);
-        lv_obj_align(hint_label_, LV_ALIGN_CENTER, 0, 127);
+        lv_obj_align(hint_label_, LV_ALIGN_CENTER, 0, kRoundHintOffset);
 
         hide_subtitle_ = true;
         if (bottom_bar_ != nullptr) {

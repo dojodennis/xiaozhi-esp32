@@ -1,5 +1,7 @@
 import importlib.util
 import json
+import math
+import re
 import shutil
 import subprocess
 import tempfile
@@ -102,19 +104,45 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
         provisions_ui = source.split("#if CONFIG_PROVISIONS_GATEWAY_REQUIRED", 2)[2]
 
-        self.assertIn('"#d4b67a PROVISIONS#\\n#f5f2eb KITCHEN HELPER#"', source)
-        self.assertIn('return {"Ready", "HOLD YELLOW BUTTON TO TALK"', source)
-        self.assertIn('return {"Listening", "RELEASE WHEN FINISHED"', source)
-        self.assertIn('return {"Working", "CHECKING PROVISIONS"', source)
-        self.assertIn('return {"Added to draft", "NOT SENT"', source)
-        self.assertIn('return {"Unavailable", "TRY AGAIN"', source)
+        self.assertIn('lv_label_set_text(brand_label_, "PROVISIONS")', source)
+        self.assertIn('lv_label_set_text(title_label_, "KITCHEN HELPER")', source)
+        self.assertIn(
+            "lv_obj_set_style_text_font(brand_label_, &font_noto_sans_basic_16_4",
+            source,
+        )
+        self.assertIn(
+            "lv_obj_set_style_text_font(title_label_, &font_noto_sans_basic_30_4",
+            source,
+        )
+        self.assertIn("lv_obj_set_style_text_letter_space(brand_label_, 4", source)
+        self.assertIn("lv_obj_set_size(brand_rule_, 52, 2)", source)
+        self.assertIn('return {"Ready", "Hold yellow button to talk"', source)
+        self.assertIn('return {"Listening", "Release when finished"', source)
+        self.assertIn('return {"Working", "Checking Provisions"', source)
+        self.assertIn('return {"Added to draft", "Draft only - not sent"', source)
+        self.assertIn('return {"Unavailable", "Please try again"', source)
         self.assertIn("MATERIAL_SYMBOLS_CHECK_CIRCLE", source)
         self.assertIn("MATERIAL_SYMBOLS_CLOUD_OFF", source)
         self.assertIn("kRoundTopBarWidth = 260", source)
         self.assertIn("kRoundTopBarOffset = 46", source)
-        self.assertIn("kRoundContentWidth = 350", source)
+        self.assertIn("kRoundContentWidth = 330", source)
+        self.assertIn("kRoundBrandTopOffset = 84", source)
+        self.assertIn("kRoundTitleTopOffset = 108", source)
+        self.assertIn("kRoundRuleTopOffset = 151", source)
+        self.assertIn("kRoundIconOffset = -2", source)
+        self.assertIn("kRoundStatusOffset = 76", source)
+        self.assertIn("kRoundHintOffset = 123", source)
+        self.assertIn("lv_color_hex(0x000000)", provisions_ui)
         self.assertIn('std::strcmp(notification, "Added")', source)
         self.assertIn('std::strcmp(notification, "Undone")', source)
+        recorded_mapping = source.split(
+            'if (std::strcmp(notification, "Recorded") == 0)', 1
+        )[1].split("}", 1)[0]
+        self.assertIn("VisualState::kRecorded", recorded_mapping)
+        self.assertIn(
+            'return {"Recorded", "Not physically verified", MATERIAL_SYMBOLS_INFO, kColorAmber}',
+            source,
+        )
         self.assertIn('std::strcmp(status, Lang::Strings::LISTENING)', source)
         self.assertIn("IsClockStatus(status)", source)
         self.assertIn('.name = "stopwatch_visual_reset"', source)
@@ -126,6 +154,64 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("Lang::Strings::CHECKING_NEW_VERSION", source)
         self.assertIn("Lang::Strings::LOADING_PROTOCOL", source)
         self.assertIn("lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN)", provisions_ui)
+
+    def test_provisions_screen_geometry_stays_inside_round_safe_area(self):
+        source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
+
+        def constant(name):
+            match = re.search(rf"constexpr int {name} = (-?\d+);", source)
+            self.assertIsNotNone(match, f"missing {name}")
+            return int(match.group(1))
+
+        center = 233
+        safe_radius = 229
+        content_width = constant("kRoundContentWidth")
+        rectangles = {
+            "top bar": (
+                constant("kRoundTopBarWidth"),
+                30,
+                center,
+                constant("kRoundTopBarOffset") + 15,
+            ),
+            "brand": (
+                constant("kRoundBrandWidth"),
+                22,
+                center,
+                constant("kRoundBrandTopOffset") + 11,
+            ),
+            "title": (
+                content_width,
+                38,
+                center,
+                constant("kRoundTitleTopOffset") + 19,
+            ),
+            "icon": (
+                92,
+                92,
+                center,
+                center + constant("kRoundIconOffset"),
+            ),
+            "status": (
+                content_width,
+                48,
+                center,
+                center + constant("kRoundStatusOffset"),
+            ),
+            "hint": (
+                content_width,
+                22,
+                center,
+                center + constant("kRoundHintOffset"),
+            ),
+        }
+
+        for name, (width, height, x, y) in rectangles.items():
+            with self.subTest(name=name):
+                farthest_corner = math.hypot(
+                    abs(x - center) + width / 2,
+                    abs(y - center) + height / 2,
+                )
+                self.assertLessEqual(farthest_corner, safe_radius)
 
     @unittest.skipUnless(shutil.which("c++"), "host C++ compiler is unavailable")
     def test_display_ellipsis_keeps_utf8_code_points_intact(self):
