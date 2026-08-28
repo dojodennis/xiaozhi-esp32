@@ -7,6 +7,7 @@
 #include <esp_lcd_panel_io.h>
 #include <esp_lcd_panel_ops.h>
 #include <atomic>
+#include <cstdint>
 #include <memory>
 
 #define PREVIEW_IMAGE_DURATION_MS 5000
@@ -61,7 +62,7 @@ class SpiLcdDisplay : public LcdDisplay {
 public:
     SpiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel, int width,
                   int height, int offset_x, int offset_y, bool mirror_x, bool mirror_y,
-                  bool swap_xy);
+                  bool swap_xy, uint16_t initial_clear_color = 0xFFFF);
 };
 
 // RGB LCD display

@@ -23,6 +23,12 @@
 #define LCD_OPCODE_WRITE_CMD (0x02ULL)
 
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+constexpr uint16_t kStopwatchInitialClearColor = 0x0000;
+#else
+constexpr uint16_t kStopwatchInitialClearColor = 0xFFFF;
+#endif
+
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
 namespace {
 
 constexpr char kSignedHardwareIdentity[] = "PROVISIONS_SIGNED_HARDWARE_IDENTITY=" BOARD_NAME;
@@ -165,7 +171,7 @@ private:
             case VisualState::kDraft:
                 return {"Draft only", "Unsent - not submitted", MATERIAL_SYMBOLS_INFO, kColorAmber};
             case VisualState::kRecorded:
-                return {"Recorded", "Not physically verified", MATERIAL_SYMBOLS_INFO, kColorAmber};
+                return {"Recorded", "From Provisions records", MATERIAL_SYMBOLS_INFO, kColorAmber};
             case VisualState::kQuestion:
                 return {"One question", "Listen and answer", MATERIAL_SYMBOLS_HELP, kColorGold};
             case VisualState::kWarning:
@@ -380,7 +386,8 @@ public:
                     bool mirror_x,
                     bool mirror_y,
                     bool swap_xy)
-        : SpiLcdDisplay(io_handle, panel_handle, width, height, offset_x, offset_y, mirror_x, mirror_y, swap_xy) {
+        : SpiLcdDisplay(io_handle, panel_handle, width, height, offset_x, offset_y, mirror_x,
+                        mirror_y, swap_xy, kStopwatchInitialClearColor) {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
         esp_timer_create_args_t timer_args = {
             .callback = [](void* arg) {

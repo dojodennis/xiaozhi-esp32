@@ -150,7 +150,7 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         )[1].split("}", 1)[0]
         self.assertIn("VisualState::kRecorded", recorded_mapping)
         self.assertIn(
-            'return {"Recorded", "Not physically verified", MATERIAL_SYMBOLS_INFO, kColorAmber}',
+            'return {"Recorded", "From Provisions records", MATERIAL_SYMBOLS_INFO, kColorAmber}',
             source,
         )
         self.assertIn(
@@ -171,6 +171,20 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("Lang::Strings::CHECKING_NEW_VERSION", source)
         self.assertIn("Lang::Strings::LOADING_PROTOCOL", source)
         self.assertIn("lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN)", provisions_ui)
+
+    def test_provisions_stopwatch_clears_amoled_to_black_without_changing_defaults(self):
+        source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
+        display_header = (ROOT / "main/display/lcd_display.h").read_text(encoding="utf-8")
+        display_source = (ROOT / "main/display/lcd_display.cc").read_text(encoding="utf-8")
+
+        self.assertIn("kStopwatchInitialClearColor = 0x0000", source)
+        self.assertIn("kStopwatchInitialClearColor = 0xFFFF", source)
+        self.assertIn("swap_xy, kStopwatchInitialClearColor", source)
+        self.assertIn("uint16_t initial_clear_color = 0xFFFF", display_header)
+        self.assertIn(
+            "std::vector<uint16_t> buffer(width_, initial_clear_color)",
+            display_source,
+        )
 
     def test_provisions_amoled_idles_to_black_and_restores_all_chrome(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")

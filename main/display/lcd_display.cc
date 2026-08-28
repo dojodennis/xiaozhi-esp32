@@ -98,10 +98,11 @@ LcdDisplay::LcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_
 
 SpiLcdDisplay::SpiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel,
                              int width, int height, int offset_x, int offset_y, bool mirror_x,
-                             bool mirror_y, bool swap_xy)
+                             bool mirror_y, bool swap_xy, uint16_t initial_clear_color)
     : LcdDisplay(panel_io, panel, width, height) {
-    // draw white
-    std::vector<uint16_t> buffer(width_, 0xFFFF);
+    // Clear the panel before LVGL starts. White remains the generic-board default;
+    // dark-first products can opt into black without changing other boards.
+    std::vector<uint16_t> buffer(width_, initial_clear_color);
     for (int y = 0; y < height_; y++) {
         esp_lcd_panel_draw_bitmap(panel_, 0, y, width_, y + 1, buffer.data());
     }
