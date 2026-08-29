@@ -65,7 +65,9 @@ constexpr int kReplyScrollIntervalMs = 4 * 1000;
 constexpr int kReplyScrollStep = 176;
 
 constexpr uint32_t kColorGold = 0xD4B67A;
-constexpr uint32_t kColorCream = 0xF5F2EB;
+// Pure white on the true-black ground so the UI melts into the device frame
+// (Dennis 2026-08-29).
+constexpr uint32_t kColorCream = 0xFFFFFF;
 constexpr uint32_t kColorGreen = 0x7FBF8F;
 constexpr uint32_t kColorBlue = 0x9FB8D8;
 constexpr uint32_t kColorAmber = 0xE0A256;
@@ -154,6 +156,11 @@ private:
     std::atomic<bool> reply_visible_{false};
     std::atomic<bool> power_save_active_{false};
     std::atomic<uint32_t> reply_generation_{0};
+    // Banner over the reply text: the last receipt's title and state colour
+    // ("REPLIED" in green, "NO NEW REPLY" in amber). Written and read under
+    // the display lock.
+    std::string reply_banner_title_ = "REPLY";
+    uint32_t reply_banner_color_ = kColorGold;
 
     static bool IsClockStatus(const char* status) {
         return status != nullptr && std::strlen(status) == 5 && status[2] == ':' &&
@@ -161,44 +168,46 @@ private:
                status[3] >= '0' && status[3] <= '9' && status[4] >= '0' && status[4] <= '9';
     }
 
+    // Banner language (Dennis 2026-08-29): short uppercase fragments a chef
+    // reads in one glance, the icon carrying the meaning — not sentences.
     static StatePresentation PresentationFor(VisualState state) {
         switch (state) {
             case VisualState::kBoot:
-                return {"Starting", "Preparing your helper", MATERIAL_SYMBOLS_PROGRESS_ACTIVITY,
+                return {"STARTING", "ONE MOMENT", MATERIAL_SYMBOLS_PROGRESS_ACTIVITY,
                         kColorGold};
             case VisualState::kConnecting:
-                return {"Connecting", "Joining Provisions securely", MATERIAL_SYMBOLS_WIFI,
+                return {"CONNECTING", "SECURE LINK", MATERIAL_SYMBOLS_WIFI,
                         kColorBlue};
             case VisualState::kReady:
-                return {"Ready", "Hold yellow button to talk", MATERIAL_SYMBOLS_MIC, kColorGreen};
+                return {"READY", "HOLD TO TALK", MATERIAL_SYMBOLS_MIC, kColorGreen};
             case VisualState::kListening:
-                return {"Listening", "Release when finished", MATERIAL_SYMBOLS_MIC, kColorGold};
+                return {"LISTENING", "RELEASE TO SEND", MATERIAL_SYMBOLS_MIC, kColorGold};
             case VisualState::kWorking:
-                return {"Working", "Checking your Provisions", MATERIAL_SYMBOLS_PROGRESS_ACTIVITY,
+                return {"CHECKING", "ONE MOMENT", MATERIAL_SYMBOLS_PROGRESS_ACTIVITY,
                         kColorBlue};
             case VisualState::kSpeaking:
-                return {"Replying", "Listen for your answer", MATERIAL_SYMBOLS_VOLUME_UP,
+                return {"REPLY", "LISTEN", MATERIAL_SYMBOLS_VOLUME_UP,
                         kColorBlue};
             case VisualState::kUnavailable:
-                return {"Unavailable", "Please try again", MATERIAL_SYMBOLS_CLOUD_OFF, kColorRed};
+                return {"OFFLINE", "TRY AGAIN", MATERIAL_SYMBOLS_CLOUD_OFF, kColorRed};
             case VisualState::kAdded:
-                return {"Added to draft", "Draft only - not sent", MATERIAL_SYMBOLS_CHECK_CIRCLE,
+                return {"ADDED", "DRAFT - NOT SENT", MATERIAL_SYMBOLS_CHECK_CIRCLE,
                         kColorGreen};
             case VisualState::kSuccess:
-                return {"Done", "Listen for the result", MATERIAL_SYMBOLS_CHECK_CIRCLE,
+                return {"DONE", "LISTEN", MATERIAL_SYMBOLS_CHECK_CIRCLE,
                         kColorGreen};
             case VisualState::kDraft:
-                return {"Draft only", "Unsent - not submitted", MATERIAL_SYMBOLS_INFO, kColorAmber};
+                return {"DRAFT", "NOT SENT", MATERIAL_SYMBOLS_INFO, kColorAmber};
             case VisualState::kRecorded:
-                return {"Recorded", "From Provisions records", MATERIAL_SYMBOLS_INFO, kColorAmber};
+                return {"RECORDED", "FROM RECORDS", MATERIAL_SYMBOLS_INFO, kColorAmber};
             case VisualState::kQuestion:
-                return {"One question", "Listen and answer", MATERIAL_SYMBOLS_HELP, kColorGold};
+                return {"QUESTION", "ANSWER NOW", MATERIAL_SYMBOLS_HELP, kColorGold};
             case VisualState::kWarning:
-                return {"Not changed", "No change made", MATERIAL_SYMBOLS_WARNING, kColorAmber};
+                return {"NO CHANGE", "NOTHING DONE", MATERIAL_SYMBOLS_WARNING, kColorAmber};
             case VisualState::kNotice:
-                return {"Notice", "Listen for details", MATERIAL_SYMBOLS_INFO, kColorAmber};
+                return {"NOTICE", "LISTEN", MATERIAL_SYMBOLS_INFO, kColorAmber};
         }
-        return {"Unavailable", "Please try again", MATERIAL_SYMBOLS_CLOUD_OFF, kColorRed};
+        return {"OFFLINE", "TRY AGAIN", MATERIAL_SYMBOLS_CLOUD_OFF, kColorRed};
     }
 
     void SetReplyLayoutLocked(bool visible) {
@@ -352,44 +361,83 @@ private:
         return VisualState::kBoot;
     }
 
+    // Inbound strings are the gateway's display labels — matching must track
+    // the gateway's _DISPLAY_TEXT_BY_TOOL sets. Output titles are banners.
     static VisualState StateForNotification(const char* notification, const char** title) {
         if (notification == nullptr) {
-            *title = "Notice";
+            *title = "NOTICE";
             return VisualState::kNotice;
         }
         if (std::strcmp(notification, "Added") == 0) {
-            *title = "Added to draft";
+            *title = "ADDED";
             return VisualState::kAdded;
         }
         if (std::strcmp(notification, "Undone") == 0) {
-            *title = "Removed from draft";
+            *title = "REMOVED";
             return VisualState::kAdded;
         }
-        if (std::strcmp(notification, "Found") == 0 ||
-            std::strcmp(notification, "Delivered") == 0 ||
-            std::strcmp(notification, "On the way") == 0) {
-            *title = notification;
+        if (std::strcmp(notification, "Found") == 0) {
+            *title = "FOUND";
             return VisualState::kSuccess;
         }
+        if (std::strcmp(notification, "Delivered") == 0) {
+            *title = "DELIVERED";
+            return VisualState::kSuccess;
+        }
+        if (std::strcmp(notification, "On the way") == 0) {
+            *title = "ON THE WAY";
+            return VisualState::kSuccess;
+        }
+        if (std::strcmp(notification, "Replied") == 0) {
+            *title = "REPLIED";
+            return VisualState::kSuccess;
+        }
+        if (std::strcmp(notification, "No new reply") == 0) {
+            *title = "NO NEW REPLY";
+            return VisualState::kWarning;
+        }
+        if (std::strcmp(notification, "Reply waiting") == 0) {
+            *title = "REPLY WAITING";
+            return VisualState::kNotice;
+        }
+        if (std::strcmp(notification, "No thread") == 0) {
+            *title = "NO THREAD";
+            return VisualState::kWarning;
+        }
         if (std::strcmp(notification, "Draft only") == 0) {
-            *title = notification;
+            *title = "DRAFT";
             return VisualState::kDraft;
         }
         if (std::strcmp(notification, "Recorded") == 0) {
-            *title = notification;
+            *title = "RECORDED";
             return VisualState::kRecorded;
         }
-        if (std::strcmp(notification, "Choose one") == 0 ||
-            std::strcmp(notification, "Need unit") == 0 ||
-            std::strcmp(notification, "Ready to add") == 0) {
-            *title = notification;
+        if (std::strcmp(notification, "Choose one") == 0) {
+            *title = "CHOOSE ONE";
             return VisualState::kQuestion;
         }
-        if (std::strcmp(notification, "No match") == 0 ||
-            std::strcmp(notification, "Cancelled") == 0 ||
-            std::strcmp(notification, "Check app") == 0 ||
-            std::strcmp(notification, "Not changed") == 0) {
-            *title = notification;
+        if (std::strcmp(notification, "Need unit") == 0) {
+            *title = "WHICH UNIT?";
+            return VisualState::kQuestion;
+        }
+        if (std::strcmp(notification, "Ready to add") == 0) {
+            *title = "READY TO ADD";
+            return VisualState::kQuestion;
+        }
+        if (std::strcmp(notification, "No match") == 0) {
+            *title = "NO MATCH";
+            return VisualState::kWarning;
+        }
+        if (std::strcmp(notification, "Cancelled") == 0) {
+            *title = "CANCELLED";
+            return VisualState::kWarning;
+        }
+        if (std::strcmp(notification, "Check app") == 0) {
+            *title = "CHECK APP";
+            return VisualState::kWarning;
+        }
+        if (std::strcmp(notification, "Not changed") == 0) {
+            *title = "NO CHANGE";
             return VisualState::kWarning;
         }
         *title = notification;
@@ -710,9 +758,11 @@ public:
         // to squeeze private order detail into the one-line receipt capsule.
         reply_header_label_ = lv_label_create(screen);
         lv_obj_set_width(reply_header_label_, kReplyHeaderWidth);
-        lv_obj_set_style_text_font(reply_header_label_, &font_noto_sans_basic_16_4, 0);
+        // Banner-sized: the verdict ("REPLIED", "NO NEW REPLY") reads first,
+        // in its state colour; the sentence below is detail.
+        lv_obj_set_style_text_font(reply_header_label_, &font_noto_sans_basic_30_4, 0);
         lv_obj_set_style_text_color(reply_header_label_, lv_color_hex(kColorGold), 0);
-        lv_obj_set_style_text_letter_space(reply_header_label_, 3, 0);
+        lv_obj_set_style_text_letter_space(reply_header_label_, 2, 0);
         lv_obj_set_style_text_align(reply_header_label_, LV_TEXT_ALIGN_CENTER, 0);
         lv_label_set_long_mode(reply_header_label_, LV_LABEL_LONG_CLIP);
         lv_label_set_text(reply_header_label_, "REPLY");
@@ -723,14 +773,11 @@ public:
         lv_obj_set_size(reply_panel_, kReplyPanelWidth, kReplyPanelHeight);
         lv_obj_set_style_radius(reply_panel_, 32, 0);
         lv_obj_set_style_pad_all(reply_panel_, 20, 0);
-        // Opaque near-black ground: the text carries the screen; no tinted
-        // wash competing with it, only a faint gold hairline for edge
-        // definition against the true-black bezel.
-        lv_obj_set_style_bg_color(reply_panel_, lv_color_hex(0x0E0D0B), 0);
+        // No box at all: banner and text float on the same true black as the
+        // bezel, so the screen melts into the device frame.
+        lv_obj_set_style_bg_color(reply_panel_, lv_color_hex(0x000000), 0);
         lv_obj_set_style_bg_opa(reply_panel_, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_color(reply_panel_, lv_color_hex(kColorGold), 0);
-        lv_obj_set_style_border_width(reply_panel_, 1, 0);
-        lv_obj_set_style_border_opa(reply_panel_, LV_OPA_30, 0);
+        lv_obj_set_style_border_width(reply_panel_, 0, 0);
         lv_obj_set_scroll_dir(reply_panel_, LV_DIR_VER);
         lv_obj_set_scrollbar_mode(reply_panel_, LV_SCROLLBAR_MODE_AUTO);
         lv_obj_align(reply_panel_, LV_ALIGN_CENTER, 0, kReplyPanelOffset);
@@ -794,6 +841,9 @@ public:
                 return;
             }
             reply_generation_.fetch_add(1);
+            lv_label_set_text(reply_header_label_, reply_banner_title_.c_str());
+            lv_obj_set_style_text_color(reply_header_label_,
+                                        lv_color_hex(reply_banner_color_), 0);
             // LVGL copies the string. No transcript text is retained in board
             // state, logs, preferences, or flash.
             lv_label_set_text(reply_label_, content);
@@ -881,6 +931,9 @@ public:
             lv_obj_set_style_text_color(emoji_label_, color, 0);
             lv_label_set_text(hint_label_, presentation.hint);
             lv_obj_set_style_text_color(hint_label_, color, 0);
+            // The receipt banner also heads the reply text that follows.
+            reply_banner_title_ = title;
+            reply_banner_color_ = presentation.color;
             ApplyChromeLocked(state, presentation);
         }
         if (!ScheduleVisualReset(duration_ms)) {
