@@ -51,11 +51,14 @@ constexpr int kRoundStatusOffset = 82;
 constexpr int kRoundHintWidth = 304;
 constexpr int kRoundHintHeight = 38;
 constexpr int kRoundHintOffset = 132;
+// Reply surface sized for kitchen glanceability (Dennis 2026-08-29: cream on
+// low-opacity blue was unreadable on the real AMOLED). The panel is opaque
+// near-black, the text white and large; the header is one short gold word.
 constexpr int kReplyHeaderWidth = 280;
-constexpr int kReplyHeaderTopOffset = 106;
-constexpr int kReplyPanelWidth = 348;
-constexpr int kReplyPanelHeight = 230;
-constexpr int kReplyPanelOffset = 25;
+constexpr int kReplyHeaderTopOffset = 64;
+constexpr int kReplyPanelWidth = 400;
+constexpr int kReplyPanelHeight = 300;
+constexpr int kReplyPanelOffset = 16;
 constexpr int kReplyPlaybackMaximumMs = 35 * 1000;
 constexpr int kReplyHoldAfterSpeechMs = 12 * 1000;
 constexpr int kReplyScrollIntervalMs = 4 * 1000;
@@ -712,17 +715,20 @@ public:
         lv_obj_set_style_text_letter_space(reply_header_label_, 3, 0);
         lv_obj_set_style_text_align(reply_header_label_, LV_TEXT_ALIGN_CENTER, 0);
         lv_label_set_long_mode(reply_header_label_, LV_LABEL_LONG_CLIP);
-        lv_label_set_text(reply_header_label_, "ASSISTANT REPLY");
+        lv_label_set_text(reply_header_label_, "REPLY");
         lv_obj_align(reply_header_label_, LV_ALIGN_TOP_MID, 0, kReplyHeaderTopOffset);
         lv_obj_add_flag(reply_header_label_, LV_OBJ_FLAG_HIDDEN);
 
         reply_panel_ = lv_obj_create(screen);
         lv_obj_set_size(reply_panel_, kReplyPanelWidth, kReplyPanelHeight);
-        lv_obj_set_style_radius(reply_panel_, 28, 0);
-        lv_obj_set_style_pad_all(reply_panel_, 16, 0);
-        lv_obj_set_style_bg_color(reply_panel_, lv_color_hex(kColorBlue), 0);
-        lv_obj_set_style_bg_opa(reply_panel_, LV_OPA_10, 0);
-        lv_obj_set_style_border_color(reply_panel_, lv_color_hex(kColorBlue), 0);
+        lv_obj_set_style_radius(reply_panel_, 32, 0);
+        lv_obj_set_style_pad_all(reply_panel_, 20, 0);
+        // Opaque near-black ground: the text carries the screen; no tinted
+        // wash competing with it, only a faint gold hairline for edge
+        // definition against the true-black bezel.
+        lv_obj_set_style_bg_color(reply_panel_, lv_color_hex(0x0E0D0B), 0);
+        lv_obj_set_style_bg_opa(reply_panel_, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(reply_panel_, lv_color_hex(kColorGold), 0);
         lv_obj_set_style_border_width(reply_panel_, 1, 0);
         lv_obj_set_style_border_opa(reply_panel_, LV_OPA_30, 0);
         lv_obj_set_scroll_dir(reply_panel_, LV_DIR_VER);
@@ -731,12 +737,12 @@ public:
         lv_obj_add_flag(reply_panel_, LV_OBJ_FLAG_HIDDEN);
 
         reply_label_ = lv_label_create(reply_panel_);
-        lv_obj_set_width(reply_label_, kReplyPanelWidth - 32);
+        lv_obj_set_width(reply_label_, kReplyPanelWidth - 40);
         lv_obj_set_height(reply_label_, LV_SIZE_CONTENT);
-        lv_obj_set_style_text_font(reply_label_, &font_noto_sans_basic_16_4, 0);
-        lv_obj_set_style_text_color(reply_label_, lv_color_hex(kColorCream), 0);
+        lv_obj_set_style_text_font(reply_label_, &font_noto_sans_basic_30_4, 0);
+        lv_obj_set_style_text_color(reply_label_, lv_color_hex(0xFFFFFF), 0);
         lv_obj_set_style_text_align(reply_label_, LV_TEXT_ALIGN_LEFT, 0);
-        lv_obj_set_style_text_line_space(reply_label_, 4, 0);
+        lv_obj_set_style_text_line_space(reply_label_, 8, 0);
         lv_label_set_long_mode(reply_label_, LV_LABEL_LONG_WRAP);
         lv_label_set_text(reply_label_, "");
         lv_obj_align(reply_label_, LV_ALIGN_TOP_MID, 0, 0);
