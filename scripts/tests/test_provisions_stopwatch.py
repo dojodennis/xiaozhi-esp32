@@ -59,7 +59,10 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("lv_label_set_text(reply_label_, content)", source)
         self.assertIn("No transcript text is retained", source)
         self.assertNotIn("last_reply_text_", source)
-        self.assertNotIn("ProvisionsStopWatch::EllipsizeUtf8", source)
+        reply_setter = source.split("void SetChatMessage", 1)[1].split(
+            "void SetPowerSaveMode", 1
+        )[0]
+        self.assertNotIn("ProvisionsStopWatch::EllipsizeUtf8", reply_setter)
         self.assertIn("kDisplayIdleTimeoutUs = 45LL * 1000 * 1000", source)
         self.assertIn('.name = "stopwatch_display_idle"', source)
         self.assertIn("esp_timer_start_once", source)
@@ -126,11 +129,11 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("lv_obj_set_style_bg_opa(hint_panel_, LV_OPA_10", source)
         self.assertIn("lv_obj_set_style_bg_color(talk_button_dot_", source)
         self.assertIn("kColorTalkButton = 0xF2C84B", source)
-        self.assertIn('return {"Ready", "Hold yellow button to talk"', source)
-        self.assertIn('return {"Listening", "Release when finished"', source)
-        self.assertIn('return {"Working", "Checking your Provisions"', source)
-        self.assertIn('return {"Added to draft", "Draft only - not sent"', source)
-        self.assertIn('return {"Unavailable", "Please try again"', source)
+        self.assertIn('return {"READY", "HOLD TO TALK"', source)
+        self.assertIn('return {"LISTENING", "RELEASE TO SEND"', source)
+        self.assertIn('return {"CHECKING", "ONE MOMENT"', source)
+        self.assertIn('return {"ADDED", "DRAFT - NOT SENT"', source)
+        self.assertIn('return {"OFFLINE", "TRY AGAIN"', source)
         self.assertIn("MATERIAL_SYMBOLS_CHECK_CIRCLE", source)
         self.assertIn("MATERIAL_SYMBOLS_CLOUD_OFF", source)
         self.assertIn("kRoundTopBarWidth = 260", source)
@@ -152,11 +155,11 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         )[1].split("}", 1)[0]
         self.assertIn("VisualState::kRecorded", recorded_mapping)
         self.assertIn(
-            'return {"Recorded", "From Provisions records", MATERIAL_SYMBOLS_INFO, kColorAmber}',
+            'return {"RECORDED", "FROM RECORDS", MATERIAL_SYMBOLS_INFO, kColorAmber}',
             source,
         )
         self.assertIn(
-            'return {"Draft only", "Unsent - not submitted", MATERIAL_SYMBOLS_INFO, kColorAmber}',
+            'return {"DRAFT", "NOT SENT", MATERIAL_SYMBOLS_INFO, kColorAmber}',
             source,
         )
         draft_mapping = source.split(
@@ -173,7 +176,7 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("Lang::Strings::CHECKING_NEW_VERSION", source)
         self.assertIn("Lang::Strings::LOADING_PROTOCOL", source)
         self.assertIn("lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN)", provisions_ui)
-        self.assertIn('lv_label_set_text(reply_header_label_, "ASSISTANT REPLY")', source)
+        self.assertIn('lv_label_set_text(reply_header_label_, "REPLY")', source)
         self.assertIn("lv_label_set_long_mode(reply_label_, LV_LABEL_LONG_WRAP)", source)
         self.assertIn('.name = "stopwatch_reply_scroll"', source)
         self.assertIn("lv_obj_get_scroll_bottom", source)
@@ -219,6 +222,8 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
             "hint_panel_",
             "reply_header_label_",
             "reply_panel_",
+            "orbit_layer_",
+            "alarm_layer_",
         ):
             self.assertIn(object_name, power_save)
         self.assertIn("lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN)", power_save)
@@ -227,16 +232,19 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         reply_layout = source.split("void SetReplyLayoutLocked", 1)[1].split(
             "void CancelReplyScroll", 1
         )[0]
-        self.assertIn("display_awake && !visible", reply_layout)
-        self.assertIn("display_awake && visible", reply_layout)
+        self.assertIn("show_alarm = display_awake && timer_alarm_active_", reply_layout)
+        self.assertIn("show_reply = display_awake && !show_alarm && visible", reply_layout)
+        self.assertIn("ShouldShowOrbitLocked()", reply_layout)
+        self.assertIn("SetVisible(alarm_layer_, show_alarm)", reply_layout)
         self.assertNotIn("LV_ANIM_REPEAT_INFINITE", source)
 
-    def test_provisions_blue_button_toggles_only_high_and_max_volume(self):
+    def test_provisions_blue_button_silences_alarm_or_toggles_high_and_max_volume(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
         provisions_buttons = source.split("void InitializeButtons()", 1)[1].split("#else", 1)[0]
 
         self.assertIn("button2_.OnClick", provisions_buttons)
         self.assertIn("Application::GetInstance().Schedule", provisions_buttons)
+        self.assertIn("display_->SilenceTimerAlarm()", provisions_buttons)
         self.assertIn("kDefaultOutputVolume", provisions_buttons)
         self.assertIn("kMaximumOutputVolume", provisions_buttons)
         self.assertNotIn("volume = 0", provisions_buttons)
@@ -305,12 +313,6 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
                 center,
                 constant("kReplyHeaderTopOffset") + 11,
             ),
-            "reply panel": (
-                constant("kReplyPanelWidth"),
-                constant("kReplyPanelHeight"),
-                center,
-                center + constant("kReplyPanelOffset"),
-            ),
         }
 
         for name, (width, height, x, y) in rectangles.items():
@@ -320,6 +322,13 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
                     abs(y - center) + height / 2,
                 )
                 self.assertLessEqual(farthest_corner, safe_radius)
+
+        # The reply surface is an opaque-black scroll viewport clipped by the
+        # round panel, not visible rectangular chrome. Keep it within the
+        # physical canvas while the text viewport intentionally uses the width.
+        self.assertLessEqual(constant("kReplyPanelWidth"), 466)
+        self.assertLessEqual(constant("kReplyPanelHeight"), 466)
+        self.assertIn("lv_obj_set_style_border_width(reply_panel_, 0", source)
 
         hero_bottom = (
             center

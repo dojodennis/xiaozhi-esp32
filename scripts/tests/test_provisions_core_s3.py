@@ -308,8 +308,7 @@ class ProvisionsGatewayIntegrationTests(unittest.TestCase):
         self.assertIn("GetDeviceState() != kDeviceStateSpeaking", application)
         self.assertIn("InvalidateProvisionsTtsTurn()", application)
         self.assertIn("Do not log the text because it can contain private yacht data", application)
-        self.assertIn("raw_frame.find('\\0')", websocket)
-        self.assertIn('raw_frame.find("\\\\u0000")', websocket)
+        self.assertIn("ProvisionsJsonGuard::ContainsEmbeddedNul(raw_frame)", websocket)
         self.assertIn("Rejecting gateway JSON containing an embedded NUL", websocket)
         self.assertIn("cJSON_ParseWithLengthOpts", websocket)
         self.assertIn("const char* parse_end = nullptr", websocket)
@@ -426,6 +425,55 @@ class ProvisionsGatewayIntegrationTests(unittest.TestCase):
 
 
 class ProvisionsEndpointPolicyCompileTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("c++"), "host C++ compiler is unavailable")
+    def test_json_nul_guard_respects_escape_parity(self):
+        test_source = textwrap.dedent(
+            r'''
+            #include "protocols/provisions_json_guard.h"
+
+            #include <cassert>
+            #include <string>
+
+            int main() {
+                using ProvisionsJsonGuard::ContainsEmbeddedNul;
+                assert(ContainsEmbeddedNul(
+                    R"json({"label":"safe\u0000hidden"})json"));
+                assert(!ContainsEmbeddedNul(
+                    R"json({"label":"safe\\u0000hidden"})json"));
+                assert(ContainsEmbeddedNul(
+                    R"json({"label":"safe\\\u0000hidden"})json"));
+
+                std::string raw_nul = "safe";
+                raw_nul.push_back('\0');
+                raw_nul.append("hidden");
+                assert(ContainsEmbeddedNul(raw_nul));
+                return 0;
+            }
+            '''
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary = Path(temporary_directory)
+            source = temporary / "provisions_json_guard_test.cc"
+            executable = temporary / "provisions_json_guard_test"
+            source.write_text(test_source, encoding="utf-8")
+            subprocess.run(
+                [
+                    shutil.which("c++"),
+                    "-std=c++17",
+                    "-Wall",
+                    "-Wextra",
+                    "-Werror",
+                    "-I",
+                    str(ROOT / "main"),
+                    str(source),
+                    "-o",
+                    str(executable),
+                ],
+                check=True,
+                cwd=ROOT,
+            )
+            subprocess.run([str(executable)], check=True, cwd=ROOT)
+
     @unittest.skipUnless(shutil.which("c++"), "host C++ compiler is unavailable")
     def test_voice_upload_gate_rejects_stale_work_after_concurrent_release(self):
         test_source = textwrap.dedent(

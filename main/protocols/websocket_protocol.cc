@@ -5,6 +5,7 @@
 #include "system_info.h"
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
 #include "provisions_endpoint_policy.h"
+#include "provisions_json_guard.h"
 #endif
 
 #include <esp_log.h>
@@ -19,6 +20,12 @@
 #include "assets/lang_config.h"
 
 #define TAG "WS"
+
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+namespace {
+constexpr size_t kMaximumProvisionsTextFrameBytes = 32 * 1024;
+}
+#endif
 
 WebsocketProtocol::WebsocketProtocol() { event_group_handle_ = xEventGroupCreate(); }
 
@@ -231,12 +238,18 @@ bool WebsocketProtocol::OpenAudioChannel() {
             }
         } else {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+            if (len > kMaximumProvisionsTextFrameBytes) {
+                gateway_authenticated_.store(false);
+                ESP_LOGE(TAG, "Rejecting oversized gateway JSON");
+                SetError("Invalid gateway message");
+                return;
+            }
             // cJSON exposes decoded strings as NUL-terminated buffers. Reject
-            // embedded NUL representations before parsing so a sentence such
-            // as `safe\u0000hidden` cannot be validated as only its prefix.
+            // raw NUL bytes and real JSON NUL escapes before parsing, while
+            // permitting an escaped backslash followed by the literal text
+            // `u0000`.
             const std::string_view raw_frame(data, len);
-            if (raw_frame.find('\0') != std::string_view::npos ||
-                raw_frame.find("\\u0000") != std::string_view::npos) {
+            if (ProvisionsJsonGuard::ContainsEmbeddedNul(raw_frame)) {
                 gateway_authenticated_.store(false);
                 ESP_LOGE(TAG, "Rejecting gateway JSON containing an embedded NUL");
                 SetError("Invalid gateway message");
@@ -415,6 +428,9 @@ std::string WebsocketProtocol::GetHelloMessage() {
 #endif
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     cJSON_AddBoolToObject(features, "mcp", false);
+    if (Application::GetInstance().HasProvisionsTimerSnapshotConsumer()) {
+        cJSON_AddBoolToObject(features, "galley_timer_snapshot_v1", true);
+    }
 #else
     cJSON_AddBoolToObject(features, "mcp", true);
 #endif

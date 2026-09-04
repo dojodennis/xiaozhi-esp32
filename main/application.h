@@ -22,6 +22,7 @@
 #include "device_state_machine.h"
 #include "notify/notify_player.h"
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+#include "provisions_timer_snapshot.h"
 #include "provisions_tts_turn.h"
 #endif
 
@@ -122,6 +123,12 @@ public:
     AecMode GetAecMode() const { return aec_mode_; }
     void PlaySound(const std::string_view& sound);
     AudioService& GetAudioService() { return audio_service_; }
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    using ProvisionsTimerSnapshotCallback =
+        std::function<void(const ProvisionsTimerSnapshot::Update&)>;
+    void RegisterProvisionsTimerSnapshotCallback(ProvisionsTimerSnapshotCallback callback);
+    bool HasProvisionsTimerSnapshotConsumer();
+#endif
     
     /**
      * Reset protocol resources (thread-safe)
@@ -161,6 +168,9 @@ private:
     std::atomic<bool> provisions_response_pending_{false};
     std::atomic<int64_t> provisions_tts_deadline_us_{0};
     ProvisionsTtsTurn provisions_tts_turn_;
+    ProvisionsTimerSnapshot::Gate provisions_timer_snapshot_gate_;
+    std::mutex provisions_timer_snapshot_callback_mutex_;
+    ProvisionsTimerSnapshotCallback provisions_timer_snapshot_callback_;
     int provisions_heartbeat_ticks_ = 0;
     int provisions_response_ticks_ = 0;
     int provisions_reconnect_wait_ticks_ = 0;

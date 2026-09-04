@@ -840,6 +840,34 @@ void Application::InitializeProtocol() {
             bool terminal = false;
             std::string display_text;
 
+            if (valid && HasProvisionsTimerSnapshotConsumer() &&
+                (strcmp(state->valuestring, "timer_snapshot") == 0 ||
+                 strcmp(state->valuestring, "timer_snapshot_reset") == 0)) {
+                ProvisionsTimerSnapshot::Update update;
+                const auto result =
+                    provisions_timer_snapshot_gate_.Apply(root, protocol_->session_id(), update);
+                if (result == ProvisionsTimerSnapshot::ApplyResult::kStaleRevision) {
+                    ESP_LOGW(TAG, "Ignoring stale Provisions timer snapshot");
+                    return;
+                }
+                if (result != ProvisionsTimerSnapshot::ApplyResult::kAccepted) {
+                    ESP_LOGE(TAG, "Rejecting malformed Provisions timer snapshot");
+                    reject_gateway_frame();
+                    return;
+                }
+                Schedule([this, update = std::move(update)]() {
+                    ProvisionsTimerSnapshotCallback callback;
+                    {
+                        std::lock_guard<std::mutex> lock(provisions_timer_snapshot_callback_mutex_);
+                        callback = provisions_timer_snapshot_callback_;
+                    }
+                    if (callback) {
+                        callback(update);
+                    }
+                });
+                return;
+            }
+
             if (valid && strcmp(state->valuestring, "heartbeat") == 0) {
                 valid = HasExactKeys(root, {"session_id", "type", "state"});
                 if (valid) {
@@ -1964,6 +1992,19 @@ bool Application::CanEnterSleepMode() {
 void Application::RegisterMcpBroadcastCallback(std::function<void(const std::string&)> callback) {
     mcp_broadcast_callback_ = std::move(callback);
 }
+
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+void Application::RegisterProvisionsTimerSnapshotCallback(
+    ProvisionsTimerSnapshotCallback callback) {
+    std::lock_guard<std::mutex> lock(provisions_timer_snapshot_callback_mutex_);
+    provisions_timer_snapshot_callback_ = std::move(callback);
+}
+
+bool Application::HasProvisionsTimerSnapshotConsumer() {
+    std::lock_guard<std::mutex> lock(provisions_timer_snapshot_callback_mutex_);
+    return static_cast<bool>(provisions_timer_snapshot_callback_);
+}
+#endif
 
 void Application::SendMcpMessage(const std::string& payload) {
     // Always schedule to run in main task for thread safety

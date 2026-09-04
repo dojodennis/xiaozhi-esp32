@@ -8,9 +8,20 @@
 #include "M5IOE1.h"
 #include "M5PM1.h"
 #include "config.h"
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+#include "orbit_dial.h"
+#include "provisions_timer_snapshot.h"
+#include "utf8_ellipsis.h"
+#endif
 #include "assets/lang_config.h"
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstring>
+#include <functional>
+#include <limits>
+#include <string>
+#include <vector>
 #include <esp_log.h>
 #include <esp_system.h>
 #include <esp_timer.h>
@@ -63,6 +74,10 @@ constexpr int kReplyPlaybackMaximumMs = 35 * 1000;
 constexpr int kReplyHoldAfterSpeechMs = 12 * 1000;
 constexpr int kReplyScrollIntervalMs = 4 * 1000;
 constexpr int kReplyScrollStep = 176;
+constexpr int64_t kOrbitTickIntervalUs = 1000LL * 1000;
+constexpr int kOrbitArcDiameter = ProvisionsStopwatchOrbit::kSlotRadius * 2;
+constexpr int kOrbitLabelWidth = 94;
+constexpr int kOrbitAlarmMaximumNames = 2;
 
 constexpr uint32_t kColorGold = 0xD4B67A;
 // Pure white on the true-black ground so the UI melts into the device frame
@@ -73,6 +88,9 @@ constexpr uint32_t kColorBlue = 0x9FB8D8;
 constexpr uint32_t kColorAmber = 0xE0A256;
 constexpr uint32_t kColorRed = 0xE07566;
 constexpr uint32_t kColorTalkButton = 0xF2C84B;
+constexpr std::array<uint32_t, ProvisionsStopwatchOrbit::kMaximumSlots> kOrbitColors = {
+    0xD4B67A, 0x7FBF8F, 0x9FB8D8, 0xC99FD8, 0xE07566, 0x73C7C4,
+};
 
 class ProvisionsStopwatchAudioCodec final : public Es8311AudioCodec {
 public:
@@ -137,6 +155,14 @@ private:
         uint32_t color;
     };
 
+    struct OrbitSlotObjects {
+        lv_obj_t* arc = nullptr;
+        lv_obj_t* label = nullptr;
+        lv_obj_t* remaining = nullptr;
+    };
+
+    using AlarmOutputChange = ProvisionsStopwatchOrbit::AlarmOutputChange;
+
     lv_obj_t* brand_label_ = nullptr;
     lv_obj_t* title_label_ = nullptr;
     lv_obj_t* brand_rule_ = nullptr;
@@ -148,24 +174,70 @@ private:
     lv_obj_t* reply_header_label_ = nullptr;
     lv_obj_t* reply_panel_ = nullptr;
     lv_obj_t* reply_label_ = nullptr;
+    lv_obj_t* orbit_layer_ = nullptr;
+    std::array<OrbitSlotObjects, ProvisionsStopwatchOrbit::kMaximumSlots> orbit_slot_objects_{};
+    lv_obj_t* orbit_center_label_ = nullptr;
+    lv_obj_t* orbit_overflow_label_ = nullptr;
+    lv_obj_t* alarm_layer_ = nullptr;
+    lv_obj_t* alarm_title_label_ = nullptr;
+    lv_obj_t* alarm_names_label_ = nullptr;
+    lv_obj_t* alarm_hint_label_ = nullptr;
     esp_timer_handle_t visual_reset_timer_ = nullptr;
     esp_timer_handle_t reply_scroll_timer_ = nullptr;
+    esp_timer_handle_t orbit_tick_timer_ = nullptr;
     std::atomic<int64_t> visual_reset_deadline_us_{0};
     std::atomic<VisualState> resting_state_{VisualState::kBoot};
     std::atomic<bool> receipt_visible_{false};
     std::atomic<bool> reply_visible_{false};
     std::atomic<bool> power_save_active_{false};
+    std::atomic<bool> timer_alarm_active_{false};
     std::atomic<uint32_t> reply_generation_{0};
     // Banner over the reply text: the last receipt's title and state colour
     // ("REPLIED" in green, "NO NEW REPLY" in amber). Written and read under
     // the display lock.
     std::string reply_banner_title_ = "REPLY";
     uint32_t reply_banner_color_ = kColorGold;
+    bool orbit_snapshot_received_ = false;
+    int64_t snapshot_received_monotonic_ms_ = 0;
+    std::string galley_session_id_;
+    ProvisionsTimerSnapshot::Snapshot timer_snapshot_;
+    ProvisionsStopwatchOrbit::SlotBoard orbit_slot_board_;
+    ProvisionsStopwatchOrbit::AlarmState timer_alarm_state_;
+    std::function<void(bool)> timer_alarm_output_callback_;
 
     static bool IsClockStatus(const char* status) {
         return status != nullptr && std::strlen(status) == 5 && status[2] == ':' &&
                status[0] >= '0' && status[0] <= '9' && status[1] >= '0' && status[1] <= '9' &&
                status[3] >= '0' && status[3] <= '9' && status[4] >= '0' && status[4] <= '9';
+    }
+
+    static void SetVisible(lv_obj_t* object, bool visible) {
+        if (object == nullptr) {
+            return;
+        }
+        if (visible) {
+            lv_obj_remove_flag(object, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    int64_t EffectiveServerNowMs() const {
+        if (!orbit_snapshot_received_) {
+            return 0;
+        }
+        const int64_t monotonic_ms = esp_timer_get_time() / 1000;
+        const int64_t elapsed_ms =
+            std::max<int64_t>(0, monotonic_ms - snapshot_received_monotonic_ms_);
+        if (elapsed_ms > std::numeric_limits<int64_t>::max() - timer_snapshot_.server_now_ms) {
+            return std::numeric_limits<int64_t>::max();
+        }
+        return timer_snapshot_.server_now_ms + elapsed_ms;
+    }
+
+    bool ShouldShowOrbitLocked() const {
+        return orbit_snapshot_received_ && !receipt_visible_.load() &&
+               resting_state_.load() == VisualState::kReady;
     }
 
     // Banner language (Dennis 2026-08-29): short uppercase fragments a chef
@@ -212,31 +284,277 @@ private:
 
     void SetReplyLayoutLocked(bool visible) {
         const bool display_awake = !power_save_active_.load();
-        lv_obj_t* normal[] = {
-            title_label_, brand_rule_, hero_halo_, status_bar_, hint_panel_
-        };
+        const bool show_alarm = display_awake && timer_alarm_active_.load();
+        const bool show_reply = display_awake && !show_alarm && visible;
+        const bool show_orbit =
+            display_awake && !show_alarm && !show_reply && ShouldShowOrbitLocked();
+        const bool show_normal = display_awake && !show_alarm && !show_reply && !show_orbit;
+
+        SetVisible(top_bar_, show_normal || show_reply);
+        SetVisible(brand_label_, show_normal || show_reply);
+        lv_obj_t* normal[] = {title_label_, brand_rule_, hero_halo_, status_bar_, hint_panel_};
         for (auto* object : normal) {
-            if (object == nullptr) {
-                continue;
-            }
-            if (display_awake && !visible) {
-                lv_obj_remove_flag(object, LV_OBJ_FLAG_HIDDEN);
-            } else {
-                lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
-            }
+            SetVisible(object, show_normal);
         }
 
         lv_obj_t* reply[] = {reply_header_label_, reply_panel_};
         for (auto* object : reply) {
-            if (object == nullptr) {
+            SetVisible(object, show_reply);
+        }
+        SetVisible(orbit_layer_, show_orbit);
+        SetVisible(alarm_layer_, show_alarm);
+    }
+
+    AlarmOutputChange RefreshOrbitLocked() {
+        if (!orbit_snapshot_received_) {
+            return AlarmOutputChange::kNone;
+        }
+
+        const int64_t now_ms = EffectiveServerNowMs();
+        ProvisionsStopwatchOrbit::LatchDueTimers(timer_snapshot_.timers, now_ms);
+        orbit_slot_board_.Update(timer_snapshot_.timers, now_ms);
+        const auto colliding_ids =
+            ProvisionsStopwatchOrbit::CollidingIds(timer_snapshot_.timers, now_ms);
+        const auto& slots = orbit_slot_board_.slots();
+        for (std::size_t index = 0; index < slots.size(); ++index) {
+            const auto& slot = slots[index];
+            auto& objects = orbit_slot_objects_[index];
+            SetVisible(objects.arc, true);
+            SetVisible(objects.label, true);
+            SetVisible(objects.remaining, slot.occupied);
+            if (objects.arc == nullptr || objects.label == nullptr ||
+                objects.remaining == nullptr) {
                 continue;
             }
-            if (display_awake && visible) {
-                lv_obj_remove_flag(object, LV_OBJ_FLAG_HIDDEN);
+            if (!slot.occupied) {
+                lv_arc_set_value(objects.arc, 0);
+                lv_obj_set_style_arc_color(objects.arc, lv_color_hex(0x252525), LV_PART_MAIN);
+                lv_obj_set_style_arc_color(objects.arc, lv_color_hex(0x252525), LV_PART_INDICATOR);
+                lv_obj_set_style_arc_width(objects.arc, 6, LV_PART_MAIN);
+                lv_label_set_text(objects.label, "+");
+                lv_obj_set_style_text_color(objects.label, lv_color_hex(0x555555), 0);
+                continue;
+            }
+
+            const bool finished =
+                slot.timer.status == ProvisionsTimerSnapshot::TimerStatus::kAttention ||
+                slot.timer.deadline_ms <= now_ms;
+            const bool colliding = std::find(colliding_ids.begin(), colliding_ids.end(),
+                                             slot.timer.id) != colliding_ids.end();
+            const uint32_t color = finished ? kColorRed : kOrbitColors[index];
+            const int arc_value = static_cast<int>(
+                ProvisionsStopwatchOrbit::RemainingFraction(slot, now_ms) * 1000.0F);
+            lv_arc_set_value(objects.arc, arc_value);
+            lv_obj_set_style_arc_color(objects.arc, lv_color_hex(color), LV_PART_INDICATOR);
+            lv_obj_set_style_arc_color(
+                objects.arc, lv_color_hex(colliding ? kColorAmber : 0x303030), LV_PART_MAIN);
+            lv_obj_set_style_arc_width(objects.arc, colliding ? 10 : 6, LV_PART_MAIN);
+            lv_label_set_text(objects.label, slot.timer.label.c_str());
+            lv_obj_set_style_text_color(objects.label, lv_color_hex(kColorCream), 0);
+            const std::string remaining = finished ? "DONE"
+                                                   : ProvisionsStopwatchOrbit::FormatRemaining(
+                                                         slot.timer.deadline_ms, now_ms);
+            lv_label_set_text(objects.remaining, remaining.c_str());
+            lv_obj_set_style_text_color(objects.remaining, lv_color_hex(color), 0);
+        }
+
+        const auto next_active = std::min_element(
+            timer_snapshot_.timers.begin(), timer_snapshot_.timers.end(),
+            [now_ms](const auto& left, const auto& right) {
+                const bool left_future =
+                    left.status == ProvisionsTimerSnapshot::TimerStatus::kActive &&
+                    left.deadline_ms > now_ms;
+                const bool right_future =
+                    right.status == ProvisionsTimerSnapshot::TimerStatus::kActive &&
+                    right.deadline_ms > now_ms;
+                if (left_future != right_future) {
+                    return left_future;
+                }
+                return left.deadline_ms < right.deadline_ms;
+            });
+        std::string center_text;
+        if (timer_snapshot_.timers.empty()) {
+            center_text = "NO TIMERS";
+        } else if (next_active != timer_snapshot_.timers.end() &&
+                   next_active->status == ProvisionsTimerSnapshot::TimerStatus::kActive &&
+                   next_active->deadline_ms > now_ms) {
+            center_text =
+                ProvisionsStopWatch::EllipsizeUtf8(next_active->label, 18) + "\n" +
+                ProvisionsStopwatchOrbit::FormatRemaining(next_active->deadline_ms, now_ms);
+        } else {
+            center_text = "ATTENTION";
+        }
+        if (orbit_center_label_ != nullptr) {
+            lv_label_set_text(orbit_center_label_, center_text.c_str());
+        }
+        if (orbit_overflow_label_ != nullptr) {
+            const int overflow = orbit_slot_board_.overflow_count();
+            if (overflow > 0) {
+                const std::string overflow_text = "+" + std::to_string(overflow);
+                lv_label_set_text(orbit_overflow_label_, overflow_text.c_str());
+                SetVisible(orbit_overflow_label_, true);
             } else {
-                lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
+                SetVisible(orbit_overflow_label_, false);
             }
         }
+
+        const auto finished =
+            ProvisionsStopwatchOrbit::FinishedTimers(timer_snapshot_.timers, now_ms);
+        const AlarmOutputChange output_change = timer_alarm_state_.Update(finished);
+        timer_alarm_active_.store(timer_alarm_state_.active());
+        if (!finished.empty()) {
+            if (alarm_title_label_ != nullptr) {
+                lv_label_set_text(alarm_title_label_,
+                                  finished.size() == 1 ? "TIMER DONE" : "TIMERS DONE");
+            }
+            if (alarm_names_label_ != nullptr) {
+                std::string names;
+                const std::size_t shown =
+                    std::min<std::size_t>(finished.size(), kOrbitAlarmMaximumNames);
+                for (std::size_t index = 0; index < shown; ++index) {
+                    if (!names.empty()) {
+                        names.push_back('\n');
+                    }
+                    names.append(ProvisionsStopWatch::EllipsizeUtf8(finished[index].label, 20));
+                }
+                if (finished.size() > shown) {
+                    names.append("\n+");
+                    names.append(std::to_string(finished.size() - shown));
+                    names.append(" MORE");
+                }
+                lv_label_set_text(alarm_names_label_, names.c_str());
+            }
+            if (alarm_hint_label_ != nullptr) {
+                lv_label_set_text(alarm_hint_label_,
+                                  timer_alarm_state_.silenced() ? "SILENCED" : "BLUE SILENCES");
+            }
+        }
+        SetReplyLayoutLocked(reply_visible_.load());
+        return output_change;
+    }
+
+    void ApplyAlarmOutputChange(AlarmOutputChange change) {
+        if (timer_alarm_output_callback_ == nullptr || change == AlarmOutputChange::kNone) {
+            return;
+        }
+        timer_alarm_output_callback_(change == AlarmOutputChange::kStart);
+    }
+
+    void RefreshOrbit() {
+        AlarmOutputChange output_change;
+        {
+            DisplayLockGuard lock(this);
+            output_change = RefreshOrbitLocked();
+        }
+        ApplyAlarmOutputChange(output_change);
+    }
+
+    void CreateOrbitUiLocked(lv_obj_t* screen) {
+        orbit_layer_ = lv_obj_create(screen);
+        lv_obj_set_size(orbit_layer_, ProvisionsStopwatchOrbit::kDisplaySize,
+                        ProvisionsStopwatchOrbit::kDisplaySize);
+        lv_obj_set_style_pad_all(orbit_layer_, 0, 0);
+        lv_obj_set_style_border_width(orbit_layer_, 0, 0);
+        lv_obj_set_style_radius(orbit_layer_, 0, 0);
+        lv_obj_set_style_bg_color(orbit_layer_, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(orbit_layer_, LV_OPA_COVER, 0);
+        lv_obj_clear_flag(orbit_layer_, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_center(orbit_layer_);
+
+        for (std::size_t index = 0; index < orbit_slot_objects_.size(); ++index) {
+            const auto center = ProvisionsStopwatchOrbit::SlotCenter(static_cast<int>(index));
+            auto& objects = orbit_slot_objects_[index];
+            objects.arc = lv_arc_create(orbit_layer_);
+            lv_obj_set_size(objects.arc, kOrbitArcDiameter, kOrbitArcDiameter);
+            lv_obj_set_pos(objects.arc, center.x - ProvisionsStopwatchOrbit::kSlotRadius,
+                           center.y - ProvisionsStopwatchOrbit::kSlotRadius);
+            lv_arc_set_rotation(objects.arc, 270);
+            lv_arc_set_bg_angles(objects.arc, 0, 360);
+            lv_arc_set_range(objects.arc, 0, 1000);
+            lv_arc_set_value(objects.arc, 1000);
+            lv_obj_remove_style(objects.arc, nullptr, LV_PART_KNOB);
+            lv_obj_clear_flag(objects.arc, LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_set_style_arc_width(objects.arc, 6, LV_PART_MAIN);
+            lv_obj_set_style_arc_width(objects.arc, 8, LV_PART_INDICATOR);
+            lv_obj_set_style_arc_color(objects.arc, lv_color_hex(0x303030), LV_PART_MAIN);
+            lv_obj_set_style_arc_color(objects.arc, lv_color_hex(kOrbitColors[index]),
+                                       LV_PART_INDICATOR);
+
+            objects.label = lv_label_create(orbit_layer_);
+            lv_obj_set_width(objects.label, kOrbitLabelWidth);
+            lv_obj_set_style_text_font(objects.label, &font_noto_sans_basic_16_4, 0);
+            lv_obj_set_style_text_color(objects.label, lv_color_hex(kColorCream), 0);
+            lv_obj_set_style_text_align(objects.label, LV_TEXT_ALIGN_CENTER, 0);
+            lv_label_set_long_mode(objects.label, LV_LABEL_LONG_DOT);
+            lv_obj_set_pos(objects.label, center.x - kOrbitLabelWidth / 2, center.y - 21);
+
+            objects.remaining = lv_label_create(orbit_layer_);
+            lv_obj_set_width(objects.remaining, kOrbitLabelWidth);
+            lv_obj_set_style_text_font(objects.remaining, &font_noto_sans_basic_16_4, 0);
+            lv_obj_set_style_text_color(objects.remaining, lv_color_hex(kOrbitColors[index]), 0);
+            lv_obj_set_style_text_align(objects.remaining, LV_TEXT_ALIGN_CENTER, 0);
+            lv_label_set_long_mode(objects.remaining, LV_LABEL_LONG_CLIP);
+            lv_obj_set_pos(objects.remaining, center.x - kOrbitLabelWidth / 2, center.y + 5);
+        }
+
+        orbit_center_label_ = lv_label_create(orbit_layer_);
+        lv_obj_set_width(orbit_center_label_, 150);
+        lv_obj_set_style_text_font(orbit_center_label_, &font_noto_sans_basic_30_4, 0);
+        lv_obj_set_style_text_color(orbit_center_label_, lv_color_hex(kColorCream), 0);
+        lv_obj_set_style_text_align(orbit_center_label_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_label_set_long_mode(orbit_center_label_, LV_LABEL_LONG_WRAP);
+        lv_label_set_text(orbit_center_label_, "NO TIMERS");
+        lv_obj_center(orbit_center_label_);
+
+        orbit_overflow_label_ = lv_label_create(orbit_layer_);
+        lv_obj_set_width(orbit_overflow_label_, 80);
+        lv_obj_set_style_text_font(orbit_overflow_label_, &font_noto_sans_basic_16_4, 0);
+        lv_obj_set_style_text_color(orbit_overflow_label_, lv_color_hex(kColorAmber), 0);
+        lv_obj_set_style_text_align(orbit_overflow_label_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_label_set_text(orbit_overflow_label_, "");
+        lv_obj_align(orbit_overflow_label_, LV_ALIGN_CENTER, 0, 62);
+
+        alarm_layer_ = lv_obj_create(screen);
+        lv_obj_set_size(alarm_layer_, ProvisionsStopwatchOrbit::kDisplaySize,
+                        ProvisionsStopwatchOrbit::kDisplaySize);
+        lv_obj_set_style_pad_all(alarm_layer_, 0, 0);
+        lv_obj_set_style_border_width(alarm_layer_, 0, 0);
+        lv_obj_set_style_radius(alarm_layer_, 0, 0);
+        lv_obj_set_style_bg_color(alarm_layer_, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(alarm_layer_, LV_OPA_COVER, 0);
+        lv_obj_clear_flag(alarm_layer_, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_center(alarm_layer_);
+
+        alarm_title_label_ = lv_label_create(alarm_layer_);
+        lv_obj_set_width(alarm_title_label_, 320);
+        lv_obj_set_style_text_font(alarm_title_label_, &font_noto_sans_basic_30_4, 0);
+        lv_obj_set_style_text_color(alarm_title_label_, lv_color_hex(kColorRed), 0);
+        lv_obj_set_style_text_letter_space(alarm_title_label_, 2, 0);
+        lv_obj_set_style_text_align(alarm_title_label_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_label_set_text(alarm_title_label_, "TIMER DONE");
+        lv_obj_align(alarm_title_label_, LV_ALIGN_TOP_MID, 0, 96);
+
+        alarm_names_label_ = lv_label_create(alarm_layer_);
+        lv_obj_set_width(alarm_names_label_, 340);
+        lv_obj_set_style_text_font(alarm_names_label_, &font_noto_sans_basic_30_4, 0);
+        lv_obj_set_style_text_color(alarm_names_label_, lv_color_hex(kColorCream), 0);
+        lv_obj_set_style_text_align(alarm_names_label_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_line_space(alarm_names_label_, 8, 0);
+        lv_label_set_long_mode(alarm_names_label_, LV_LABEL_LONG_WRAP);
+        lv_label_set_text(alarm_names_label_, "");
+        lv_obj_align(alarm_names_label_, LV_ALIGN_CENTER, 0, -4);
+
+        alarm_hint_label_ = lv_label_create(alarm_layer_);
+        lv_obj_set_width(alarm_hint_label_, 240);
+        lv_obj_set_style_text_font(alarm_hint_label_, &font_noto_sans_basic_16_4, 0);
+        lv_obj_set_style_text_color(alarm_hint_label_, lv_color_hex(kColorAmber), 0);
+        lv_obj_set_style_text_letter_space(alarm_hint_label_, 2, 0);
+        lv_obj_set_style_text_align(alarm_hint_label_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_label_set_text(alarm_hint_label_, "BLUE SILENCES");
+        lv_obj_align(alarm_hint_label_, LV_ALIGN_BOTTOM_MID, 0, -92);
+
+        SetVisible(orbit_layer_, false);
+        SetVisible(alarm_layer_, false);
     }
 
     void CancelReplyScroll() {
@@ -611,6 +929,19 @@ public:
             .skip_unhandled_events = true,
         };
         ESP_ERROR_CHECK(esp_timer_create(&scroll_timer_args, &reply_scroll_timer_));
+
+        esp_timer_create_args_t orbit_timer_args = {
+            .callback =
+                [](void* arg) {
+                    auto* self = static_cast<RoundLcdDisplay*>(arg);
+                    Application::GetInstance().Schedule([self]() { self->RefreshOrbit(); });
+                },
+            .arg = this,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "stopwatch_orbit_tick",
+            .skip_unhandled_events = true,
+        };
+        ESP_ERROR_CHECK(esp_timer_create(&orbit_timer_args, &orbit_tick_timer_));
 #endif
     }
 
@@ -623,6 +954,10 @@ public:
         if (reply_scroll_timer_ != nullptr) {
             esp_timer_stop(reply_scroll_timer_);
             esp_timer_delete(reply_scroll_timer_);
+        }
+        if (orbit_tick_timer_ != nullptr) {
+            esp_timer_stop(orbit_tick_timer_);
+            esp_timer_delete(orbit_tick_timer_);
         }
 #endif
     }
@@ -794,11 +1129,14 @@ public:
         lv_label_set_text(reply_label_, "");
         lv_obj_align(reply_label_, LV_ALIGN_TOP_MID, 0, 0);
 
+        CreateOrbitUiLocked(screen);
+
         hide_subtitle_ = true;
         if (bottom_bar_ != nullptr) {
             lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
         }
         ApplyVisualStateLocked(VisualState::kBoot);
+        ESP_ERROR_CHECK(esp_timer_start_periodic(orbit_tick_timer_, kOrbitTickIntervalUs));
 #else
         // Generic StopWatch layout remains unchanged.
         lv_obj_set_style_pad_left(status_bar_, LV_HOR_RES * 0.2, 0);
@@ -818,6 +1156,70 @@ public:
     }
 
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    void SetTimerAlarmOutputCallback(std::function<void(bool)> callback) {
+        timer_alarm_output_callback_ = std::move(callback);
+    }
+
+    void ApplyTimerSnapshot(const ProvisionsTimerSnapshot::Snapshot& snapshot) {
+        AlarmOutputChange output_change;
+        {
+            DisplayLockGuard lock(this);
+            const bool same_galley_session =
+                orbit_snapshot_received_ && snapshot.session_id == galley_session_id_;
+            const auto previous_timers = timer_snapshot_.timers;
+            if (!same_galley_session) {
+                orbit_slot_board_ = ProvisionsStopwatchOrbit::SlotBoard{};
+                timer_alarm_state_.BeginNewSession();
+            }
+            orbit_snapshot_received_ = true;
+            galley_session_id_ = snapshot.session_id;
+            timer_snapshot_ = snapshot;
+            if (same_galley_session) {
+                ProvisionsStopwatchOrbit::PreserveAttention(previous_timers,
+                                                            timer_snapshot_.timers);
+            }
+            snapshot_received_monotonic_ms_ = esp_timer_get_time() / 1000;
+            output_change = RefreshOrbitLocked();
+        }
+        ApplyAlarmOutputChange(output_change);
+    }
+
+    void ResetTimerSnapshot() {
+        AlarmOutputChange output_change;
+        {
+            DisplayLockGuard lock(this);
+            orbit_snapshot_received_ = false;
+            timer_alarm_active_.store(false);
+            snapshot_received_monotonic_ms_ = 0;
+            galley_session_id_.clear();
+            timer_snapshot_ = ProvisionsTimerSnapshot::Snapshot{};
+            orbit_slot_board_ = ProvisionsStopwatchOrbit::SlotBoard{};
+            output_change = timer_alarm_state_.Reset();
+            SetReplyLayoutLocked(reply_visible_.load());
+        }
+        ApplyAlarmOutputChange(output_change);
+    }
+
+    bool SilenceTimerAlarm() {
+        AlarmOutputChange output_change = AlarmOutputChange::kNone;
+        {
+            DisplayLockGuard lock(this);
+            if (!timer_alarm_active_.load()) {
+                return false;
+            }
+            output_change = timer_alarm_state_.Silence();
+            if (output_change == AlarmOutputChange::kStop) {
+                if (alarm_hint_label_ != nullptr) {
+                    lv_label_set_text(alarm_hint_label_, "SILENCED");
+                }
+            }
+        }
+        ApplyAlarmOutputChange(output_change);
+        return true;
+    }
+
+    bool HasTimerAlarm() const { return timer_alarm_active_.load(); }
+
     void SetEmotion(const char* emotion) override { (void)emotion; }
 
     void SetChatMessage(const char* role, const char* content) override {
@@ -865,7 +1267,8 @@ public:
         DisplayLockGuard lock(this);
         lv_obj_t* chrome[] = {
             top_bar_, brand_label_, title_label_, brand_rule_, hero_halo_,
-            status_bar_, hint_panel_, reply_header_label_, reply_panel_
+            status_bar_, hint_panel_, reply_header_label_, reply_panel_,
+            orbit_layer_, alarm_layer_
         };
         for (auto* object : chrome) {
             if (object != nullptr) {
@@ -1130,6 +1533,9 @@ private:
         button2_.OnClick([this]() {
             ResetDisplayIdleTimer();
             Application::GetInstance().Schedule([this]() {
+                if (display_->SilenceTimerAlarm()) {
+                    return;
+                }
                 auto* codec = GetAudioCodec();
                 const bool maximum = codec->output_volume() >= kMaximumOutputVolume;
                 codec->SetOutputVolume(maximum ? kDefaultOutputVolume : kMaximumOutputVolume);
@@ -1171,6 +1577,10 @@ private:
                 Application::GetInstance().Schedule([self, deadline]() {
                     if (self->display_idle_deadline_us_.load() != deadline ||
                         esp_timer_get_time() < deadline) {
+                        return;
+                    }
+                    if (self->display_->HasTimerAlarm()) {
+                        self->ResetDisplayIdleTimer();
                         return;
                     }
                     self->display_dimmed_ = true;
@@ -1240,6 +1650,20 @@ public:
         InitializeDisplay();
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
         InitializeDisplayIdleTimer();
+        display_->SetTimerAlarmOutputCallback([this](bool active) {
+            ioe_.digitalWrite(IOE_PIN_MOTOR, active ? HIGH : LOW);
+            if (active) {
+                ResetDisplayIdleTimer();
+            }
+        });
+        Application::GetInstance().RegisterProvisionsTimerSnapshotCallback(
+            [this](const ProvisionsTimerSnapshot::Update& update) {
+                if (update.kind == ProvisionsTimerSnapshot::Update::Kind::kReset) {
+                    display_->ResetTimerSnapshot();
+                } else {
+                    display_->ApplyTimerSnapshot(update.snapshot);
+                }
+            });
 #endif
         InitializeButtons();
     }
