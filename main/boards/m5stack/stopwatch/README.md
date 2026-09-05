@@ -1,5 +1,31 @@
 # StopWatch
 
+## Temporary USB-only self-test
+
+Explicitly approved reversible bench only: build with `--config usb_selftest_profile.json`
+and the existing `provisions-kitchen-helper-stopwatch` name, English and disabled
+wake word. The normal bench profile explicitly disables the test switch.
+
+The diagnostic selects a board-local entry point instead of the normal application.
+It does not start Wi-Fi, the gateway, audio capture/playback, normal button handlers
+or automatic display-idle scheduling. All NVS handles are forced read-only, and a
+missing existing board identity aborts before constructing the board. It requires
+the existing external signing identity and an app-only, verified recovery workflow.
+It must not be offered through OTA or retained as normal operating firmware.
+
+After the exact flash/security/NVS/recovery gates pass, collect the 19 synthetic
+framebuffers with `python3 scripts/orbit_usb_capture.py --output /new/private/directory`.
+The local USB command arms one bounded fixture run. Synthetic PCM values enter
+the same crest meters; fixture statuses exercise the unchanged renderer. Captures
+are actual LVGL RGB565 snapshots on the device, transported with bounded RLE and
+a checksum. No raw logs, transcripts, room audio or credentials are captured.
+
+Inspect the PNGs and report before restoring the exact retained normal signed app.
+These tests verify renderer states/framebuffers, not physical panel appearance,
+button actuation, microphone pickup, speaker sound or acoustic quality. They also
+do not establish live gateway/PTT/TTS-path acceptance. Existing source/host and
+authenticated-boot evidence remain separate.
+
 ## Orbit crest bench test
 
 The Provisions-only face uses the supplied crest at rest, tight input-reactive

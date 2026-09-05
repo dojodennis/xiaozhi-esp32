@@ -418,10 +418,12 @@ public:
         InitializeI2c();
         InitializeSpi();
         InitializeDisplay();
-#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED && !CONFIG_ORBIT_USB_SELFTEST
         InitializeDisplayIdleTimer();
 #endif
+#if !CONFIG_ORBIT_USB_SELFTEST
         InitializeButtons();
+#endif
     }
 
     AudioCodec* GetAudioCodec() override {

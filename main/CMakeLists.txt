@@ -925,6 +925,15 @@ file(GLOB BOARD_SOURCES
 )
 list(APPEND SOURCES ${BOARD_SOURCES})
 
+if(CONFIG_ORBIT_USB_SELFTEST)
+    if(NOT CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH OR
+       NOT CONFIG_PROVISIONS_GATEWAY_REQUIRED OR CONFIG_SECURE_BOOT OR
+       CONFIG_SECURE_FLASH_ENC_ENABLED)
+        message(FATAL_ERROR "Orbit USB self-test requires the reversible C152 bench profile")
+    endif()
+    list(REMOVE_ITEM SOURCES "main.cc")
+endif()
+
 # Select one audio engine for each chip family
 if(CONFIG_IDF_TARGET_ESP32S3 OR CONFIG_IDF_TARGET_ESP32P4 OR CONFIG_IDF_TARGET_ESP32S31)
     list(APPEND SOURCES "audio/engines/afe_audio_engine.cc")
@@ -1122,6 +1131,7 @@ idf_component_register(SRCS ${SOURCES}
                         esp_eth
                         esp_driver_gpio
                         esp_driver_uart
+                        esp_driver_usb_serial_jtag
                         esp_driver_spi
                         esp_driver_i2c
                         esp_driver_i2s
@@ -1140,6 +1150,10 @@ idf_component_register(SRCS ${SOURCES}
                         xiaozhi-fonts
                         ${MAIN_PRIV_REQUIRES_EXTRA}
                     )
+
+if(CONFIG_ORBIT_USB_SELFTEST AND NOT CMAKE_BUILD_EARLY_EXPANSION)
+    target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=nvs_open")
+endif()
 
 # Use target_compile_definitions to define the reported board identity
 # If BOARD_NAME is empty, use BOARD_TYPE

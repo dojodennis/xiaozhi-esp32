@@ -4,6 +4,10 @@
 #include "crest_audio.h"
 #include "crest_motion.h"
 
+#if CONFIG_ORBIT_USB_SELFTEST
+#include <cJSON.h>
+#endif
+
 // Only compiled by the Provisions C152 board. Base display objects remain
 // alive for shared status/theme code, but hidden behind this opaque face.
 class OrbitCrestDisplay final : public SpiLcdDisplay {
@@ -167,6 +171,37 @@ class OrbitCrestDisplay final : public SpiLcdDisplay {
     }
 
 public:
+#if CONFIG_ORBIT_USB_SELFTEST
+    // Observe the real renderer under its existing lock. No normal-build hook.
+    lv_draw_buf_t* BenchSnapshot(std::string& metadata) {
+        DisplayLockGuard lock(this);
+        lv_obj_update_layout(lv_screen_active());
+        auto* document = cJSON_CreateObject();
+        if (!document)
+            return nullptr;
+        cJSON_AddNumberToObject(document, "state", static_cast<int>(state_));
+        cJSON_AddNumberToObject(document, "band", frame_.band_opacity);
+        cJSON_AddNumberToObject(document, "star", frame_.star_opacity);
+        cJSON_AddNumberToObject(document, "color", frame_.color);
+        cJSON_AddNumberToObject(document, "speech_clock_ms", speech_clock_ms_);
+        cJSON_AddNumberToObject(document, "level", level_);
+        cJSON_AddBoolToObject(document, "timer_paused", lv_timer_get_paused(animation_timer_));
+        cJSON_AddBoolToObject(document, "power_save", power_save_);
+        cJSON_AddStringToObject(document, "caption", lv_label_get_text(caption_));
+        auto* radii = cJSON_AddArrayToObject(document, "radii");
+        auto* opacities = cJSON_AddArrayToObject(document, "opacities");
+        for (int index = 0; index < 3; ++index) {
+            cJSON_AddItemToArray(radii, cJSON_CreateNumber(frame_.radii[index]));
+            cJSON_AddItemToArray(opacities, cJSON_CreateNumber(frame_.opacity[index]));
+        }
+        char* text = cJSON_PrintUnformatted(document);
+        metadata = text ? text : "{}";
+        cJSON_free(text);
+        cJSON_Delete(document);
+        return lv_snapshot_take(lv_screen_active(), LV_COLOR_FORMAT_RGB565);
+    }
+#endif
+
     OrbitCrestDisplay(esp_lcd_panel_io_handle_t io, esp_lcd_panel_handle_t panel, int width,
                       int height, int offset_x, int offset_y, bool mirror_x, bool mirror_y,
                       bool swap_xy)

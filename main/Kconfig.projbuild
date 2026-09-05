@@ -910,6 +910,15 @@ config PROVISIONS_GATEWAY_REQUIRED
     bool
     default y if BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3 || BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE || BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH
 
+config ORBIT_USB_SELFTEST
+    bool "Temporary offline Orbit USB renderer self-test"
+    default n
+    depends on BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH && !SECURE_BOOT && !SECURE_FLASH_ENC_ENABLED
+    help
+        Explicit reversible bench only. Replaces the normal application entry
+        point with a USB-armed synthetic renderer test. No network or physical
+        audio service is started. Restore the normal signed app after capture.
+
 config PROVISIONS_PREVIEW_HOST
     string
     default "app.provisions-app.com"

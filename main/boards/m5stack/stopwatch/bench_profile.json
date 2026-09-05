@@ -7,6 +7,7 @@
             "name": "provisions-kitchen-helper-stopwatch",
             "sdkconfig_append": [
                 "CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH=y",
+                "CONFIG_ORBIT_USB_SELFTEST=n",
                 "CONFIG_SPIRAM=y",
                 "CONFIG_SPIRAM_MODE_OCT=y",
                 "CONFIG_SPIRAM_SPEED_80M=y",
