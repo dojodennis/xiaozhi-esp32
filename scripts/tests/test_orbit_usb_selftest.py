@@ -36,6 +36,13 @@ class OrbitUsbSelfTestTests(unittest.TestCase):
         self.assertIn('--wrap=nvs_open', cmake)
         self.assertIn('list(REMOVE_ITEM SOURCES "main.cc")', cmake)
 
+    def test_theme_fixture_never_persists_preferences(self):
+        source = (ROOT / "main/display/display.cc").read_text()
+        theme = source.split("void Display::SetTheme(Theme* theme) {", 1)[1].split("\n}", 1)[0]
+        self.assertIn('current_theme_ = theme;', theme)
+        self.assertIn('#if !CONFIG_ORBIT_USB_SELFTEST\n    Settings settings("display", true);', theme)
+        self.assertIn('settings.SetString("theme", theme->name());\n#endif', theme)
+
     def test_rle_cross_language_stride_and_long_run(self):
         program = r'''
 #include "usb_selftest_packet.h"

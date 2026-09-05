@@ -137,6 +137,8 @@ def collect(port, destination, timeout):
                     buffer.clear()
                 while b"\n" in buffer:
                     raw, _, buffer = buffer.partition(b"\n")
+                    if b"ESP_ERROR_CHECK failed" in raw or b"Guru Meditation" in raw:
+                        raise ValueError("diagnostic safety assertion or panic; raw log discarded")
                     # Ignore all ordinary logs, including identity/settings.
                     if not raw.startswith(b"ORBIT_"):
                         continue
@@ -195,8 +197,13 @@ def collect(port, destination, timeout):
         print(json.dumps({"frames": len(frames), "checks": len(checks),
                           "failed": [item["check"] for item in checks if not item["passed"]]}))
         return report["passed"]
-    except Exception:
+    except Exception as error:
         (destination / "INCOMPLETE.txt").write_text("Capture incomplete; no acceptance claimed.\n")
+        (destination / "partial-report.json").write_text(json.dumps({
+            "scope": "synthetic renderer only; incomplete, no acceptance",
+            "frames_captured": list(frames), "metadata": metadata,
+            "error_type": type(error).__name__, "raw_logs_saved": False,
+        }, indent=2) + "\n")
         raise
 
 

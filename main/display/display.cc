@@ -8,6 +8,7 @@
 #include "assets/lang_config.h"
 #include "audio_codec.h"
 #include "board.h"
+#include "sdkconfig.h"
 #include "settings.h"
 
 #define TAG "Display"
@@ -41,8 +42,11 @@ void Display::ClearChatMessages() {
 
 void Display::SetTheme(Theme* theme) {
     current_theme_ = theme;
+    // Temporary USB fixtures apply themes in RAM without saving preferences.
+#if !CONFIG_ORBIT_USB_SELFTEST
     Settings settings("display", true);
     settings.SetString("theme", theme->name());
+#endif
 }
 
 void Display::SetPowerSaveMode(bool on) { ESP_LOGW(TAG, "SetPowerSaveMode: %d", on); }
