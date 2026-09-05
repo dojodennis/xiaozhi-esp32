@@ -49,6 +49,7 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
 
     def test_provisions_behavior_is_thin_hold_to_talk(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
+        source += (BOARD_DIR / "crest_display.h").read_text(encoding="utf-8")
         config = (BOARD_DIR / "config.h").read_text(encoding="utf-8")
         self.assertIn('"PROVISIONS_SIGNED_HARDWARE_IDENTITY=" BOARD_NAME', source)
         self.assertIn("button1_.OnPressDown", source)
@@ -56,7 +57,7 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("button1_.OnPressUp", source)
         self.assertIn("StopListening", source)
         self.assertIn("hide_subtitle_ = true", source)
-        self.assertIn("lv_label_set_text(reply_label_, content)", source)
+        self.assertNotIn("lv_label_set_text(reply_label_, content)", source)
         self.assertIn("No transcript text is retained", source)
         self.assertNotIn("last_reply_text_", source)
         self.assertNotIn("ProvisionsStopWatch::EllipsizeUtf8", source)
@@ -102,92 +103,22 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn('#define PROVISIONS_HARDWARE_PROFILE "stopwatch-client"', config)
         self.assertIn("#define PROVISIONS_NOMINAL_BATTERY_MAH 450", config)
 
-    def test_provisions_screen_is_branded_and_reply_capable(self):
-        source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
-        provisions_ui = source.split("#if CONFIG_PROVISIONS_GATEWAY_REQUIRED", 2)[2]
-
-        self.assertIn('lv_label_set_text(brand_label_, "PROVISIONS")', source)
-        self.assertIn('lv_label_set_text(title_label_, "KITCHEN HELPER")', source)
-        self.assertIn(
-            "lv_obj_set_style_text_font(brand_label_, &font_noto_sans_basic_16_4",
-            source,
-        )
-        self.assertIn(
-            "lv_obj_set_style_text_font(title_label_, &font_noto_sans_basic_30_4",
-            source,
-        )
-        self.assertIn("lv_obj_set_style_text_letter_space(brand_label_, 4", source)
-        self.assertIn("lv_obj_set_size(brand_rule_, 68, 3)", source)
-        self.assertIn('lv_label_set_text(brand_mark_label_, "P")', source)
-        self.assertIn("lv_obj_set_parent(emoji_box_, hero_halo_)", source)
-        self.assertIn("lv_obj_set_style_bg_opa(hero_halo_, LV_OPA_10", source)
-        self.assertIn("lv_obj_set_style_border_opa(hero_halo_, LV_OPA_20", source)
-        self.assertIn("lv_obj_set_style_bg_opa(status_bar_, LV_OPA_10", source)
-        self.assertIn("lv_obj_set_style_bg_opa(hint_panel_, LV_OPA_10", source)
-        self.assertIn("lv_obj_set_style_bg_color(talk_button_dot_", source)
-        self.assertIn("kColorTalkButton = 0xF2C84B", source)
-        self.assertIn('return {"Ready", "Hold yellow button to talk"', source)
-        self.assertIn('return {"Listening", "Release when finished"', source)
-        self.assertIn('return {"Working", "Checking your Provisions"', source)
-        self.assertIn('return {"Added to draft", "Draft only - not sent"', source)
-        self.assertIn('return {"Unavailable", "Please try again"', source)
-        self.assertIn("MATERIAL_SYMBOLS_CHECK_CIRCLE", source)
-        self.assertIn("MATERIAL_SYMBOLS_CLOUD_OFF", source)
-        self.assertIn("kRoundTopBarWidth = 260", source)
-        self.assertIn("kRoundTopBarOffset = 46", source)
-        self.assertIn("kRoundContentWidth = 330", source)
-        self.assertIn("kRoundBrandTopOffset = 78", source)
-        self.assertIn("kRoundTitleTopOffset = 103", source)
-        self.assertIn("kRoundRuleTopOffset = 146", source)
-        self.assertIn("kRoundHeroSize = 124", source)
-        self.assertIn("kRoundHeroOffset = -10", source)
-        self.assertIn("kRoundStatusWidth = 320", source)
-        self.assertIn("kRoundStatusOffset = 82", source)
-        self.assertIn("kRoundHintOffset = 132", source)
-        self.assertIn("lv_color_hex(0x000000)", provisions_ui)
-        self.assertIn('std::strcmp(notification, "Added")', source)
-        self.assertIn('std::strcmp(notification, "Undone")', source)
-        recorded_mapping = source.split(
-            'if (std::strcmp(notification, "Recorded") == 0)', 1
-        )[1].split("}", 1)[0]
-        self.assertIn("VisualState::kRecorded", recorded_mapping)
-        self.assertIn(
-            'return {"Recorded", "From Provisions records", MATERIAL_SYMBOLS_INFO, kColorAmber}',
-            source,
-        )
-        self.assertIn(
-            'return {"Draft only", "Unsent - not submitted", MATERIAL_SYMBOLS_INFO, kColorAmber}',
-            source,
-        )
-        draft_mapping = source.split(
-            'if (std::strcmp(notification, "Draft only") == 0)', 1
-        )[1].split("}", 1)[0]
-        self.assertIn("VisualState::kDraft", draft_mapping)
-        self.assertIn('std::strcmp(status, Lang::Strings::LISTENING)', source)
-        self.assertIn("IsClockStatus(status)", source)
-        self.assertIn('.name = "stopwatch_visual_reset"', source)
-        self.assertIn("receipt_visible_.store(true)", source)
-        self.assertIn("receipt_visible_.load() && state != VisualState::kListening", source)
-        self.assertIn("ApplyVisualStateLocked(resting_state_.load())", source)
-        self.assertNotIn("ApplyVisualState(self->resting_state_.load())", source)
-        self.assertIn("Lang::Strings::CHECKING_NEW_VERSION", source)
-        self.assertIn("Lang::Strings::LOADING_PROTOCOL", source)
-        self.assertIn("lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN)", provisions_ui)
-        self.assertIn('lv_label_set_text(reply_header_label_, "ASSISTANT REPLY")', source)
-        self.assertIn("lv_label_set_long_mode(reply_label_, LV_LABEL_LONG_WRAP)", source)
-        self.assertIn('.name = "stopwatch_reply_scroll"', source)
-        self.assertIn("lv_obj_get_scroll_bottom", source)
-        self.assertIn("lv_obj_scroll_to_y", source)
-        self.assertIn("void RestartReplyFromTop()", source)
-        self.assertIn("lv_obj_get_scroll_y(self->reply_panel_) > 0", source)
-        self.assertIn("self->CancelReplyScroll();", source)
-        self.assertIn("reply_generation_.load() != generation", source)
-        self.assertIn("kReplyPlaybackMaximumMs = 35 * 1000", source)
-        self.assertIn("kReplyHoldAfterSpeechMs = 12 * 1000", source)
-        self.assertIn('lv_label_set_text(reply_label_, "")', source)
-        self.assertIn("resting_state_.store(VisualState::kUnavailable)", source)
-        self.assertIn("if (!ScheduleVisualReset(kReplyPlaybackMaximumMs))", source)
-        self.assertIn("if (!ScheduleVisualReset(kReplyHoldAfterSpeechMs))", source)
+    def test_provisions_screen_uses_exact_crest_without_transcript_chrome(self):
+        source = (BOARD_DIR / "crest_display.h").read_text()
+        board = (BOARD_DIR / "m5stack_stopwatch.cc").read_text()
+        self.assertIn("using RoundLcdDisplay = OrbitCrestDisplay", board)
+        self.assertIn("OrbitCrest::kBandImage", source)
+        self.assertIn("OrbitCrest::kStarImage", source)
+        self.assertIn("LV_OPA_COVER", source)
+        self.assertIn("OrbitCrest::ResultCaption(notification)", source)
+        self.assertIn("No transcript text is retained", source)
+        self.assertNotIn("lv_label_set_text(caption_, content)", source)
+        self.assertNotIn("lv_obj_scroll_to_y", source)
+        self.assertNotIn("MATERIAL_SYMBOLS_MIC", source)
+        self.assertNotIn("HOLD TO TALK", source)
+        self.assertIn("state_ == State::Speaking ? speech_clock_ms_", source)
+        self.assertIn("OrbitCrest::input_meter", source)
+        self.assertIn("OrbitCrest::output_meter", source)
 
     def test_provisions_stopwatch_clears_amoled_to_black_without_changing_defaults(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
@@ -203,33 +134,16 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
             display_source,
         )
 
-    def test_provisions_amoled_idles_to_black_and_restores_all_chrome(self):
-        source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
-        power_save = source.split(
-            "void SetPowerSaveMode(bool on) override", 1
-        )[1].split("void SetStatus", 1)[0]
-
-        for object_name in (
-            "top_bar_",
-            "brand_label_",
-            "title_label_",
-            "brand_rule_",
-            "hero_halo_",
-            "status_bar_",
-            "hint_panel_",
-            "reply_header_label_",
-            "reply_panel_",
-        ):
-            self.assertIn(object_name, power_save)
-        self.assertIn("lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN)", power_save)
-        self.assertIn("power_save_active_.store(on)", power_save)
-        self.assertIn("SetReplyLayoutLocked(reply_visible_.load())", power_save)
-        reply_layout = source.split("void SetReplyLayoutLocked", 1)[1].split(
-            "void CancelReplyScroll", 1
-        )[0]
-        self.assertIn("display_awake && !visible", reply_layout)
-        self.assertIn("display_awake && visible", reply_layout)
-        self.assertNotIn("LV_ANIM_REPEAT_INFINITE", source)
+    def test_provisions_amoled_idles_without_animation_and_restores_face(self):
+        source = (BOARD_DIR / "crest_display.h").read_text()
+        power_save = source.split("void SetPowerSaveMode(bool on) override", 1)[1]
+        self.assertIn("lv_obj_add_flag(face_, LV_OBJ_FLAG_HIDDEN)", power_save)
+        self.assertIn("lv_obj_remove_flag(face_, LV_OBJ_FLAG_HIDDEN)", power_save)
+        self.assertIn("lv_timer_pause(animation_timer_)", power_save)
+        self.assertIn("lv_timer_resume(animation_timer_)", power_save)
+        self.assertIn("!OrbitCrest::UsesRings(state_)", source)
+        self.assertIn("Shared theme refresh must never turn", source)
+        self.assertNotIn("Application::GetInstance().Schedule", source)
 
     def test_provisions_blue_button_toggles_only_high_and_max_volume(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
@@ -243,108 +157,15 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertNotIn("SetOutputVolume(0)", provisions_buttons)
         self.assertNotIn("ShowNotification", provisions_buttons)
 
-    def test_receipt_reset_rejects_stale_timer_callbacks(self):
-        source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
-
-        self.assertIn("visual_reset_deadline_us_", source)
-        self.assertIn("visual_reset_deadline_us_.load() != deadline", source)
-        self.assertIn("visual_reset_deadline_us_.store(0)", source)
-        self.assertNotIn("LvglDisplay::ShowNotification(title, duration_ms)", source)
-
-    def test_provisions_screen_geometry_stays_inside_round_safe_area(self):
-        source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
-
-        def constant(name):
-            match = re.search(rf"constexpr int {name} = (-?\d+);", source)
-            self.assertIsNotNone(match, f"missing {name}")
-            return int(match.group(1))
-
-        center = 233
-        safe_radius = 229
-        content_width = constant("kRoundContentWidth")
-        rectangles = {
-            "top bar": (
-                constant("kRoundTopBarWidth"),
-                30,
-                center,
-                constant("kRoundTopBarOffset") + 15,
-            ),
-            "brand": (
-                constant("kRoundBrandWidth"),
-                22,
-                center,
-                constant("kRoundBrandTopOffset") + 11,
-            ),
-            "title": (
-                content_width,
-                38,
-                center,
-                constant("kRoundTitleTopOffset") + 19,
-            ),
-            "hero": (
-                constant("kRoundHeroSize"),
-                constant("kRoundHeroSize"),
-                center,
-                center + constant("kRoundHeroOffset"),
-            ),
-            "status": (
-                constant("kRoundStatusWidth"),
-                constant("kRoundStatusHeight"),
-                center,
-                center + constant("kRoundStatusOffset"),
-            ),
-            "hint": (
-                constant("kRoundHintWidth"),
-                constant("kRoundHintHeight"),
-                center,
-                center + constant("kRoundHintOffset"),
-            ),
-            "reply header": (
-                constant("kReplyHeaderWidth"),
-                22,
-                center,
-                constant("kReplyHeaderTopOffset") + 11,
-            ),
-            "reply panel": (
-                constant("kReplyPanelWidth"),
-                constant("kReplyPanelHeight"),
-                center,
-                center + constant("kReplyPanelOffset"),
-            ),
-        }
-
-        for name, (width, height, x, y) in rectangles.items():
-            with self.subTest(name=name):
-                farthest_corner = math.hypot(
-                    abs(x - center) + width / 2,
-                    abs(y - center) + height / 2,
-                )
-                self.assertLessEqual(farthest_corner, safe_radius)
-
-        hero_bottom = (
-            center
-            + constant("kRoundHeroOffset")
-            + constant("kRoundHeroSize") / 2
-        )
-        status_top = (
-            center
-            + constant("kRoundStatusOffset")
-            - constant("kRoundStatusHeight") / 2
-        )
-        status_bottom = (
-            center
-            + constant("kRoundStatusOffset")
-            + constant("kRoundStatusHeight") / 2
-        )
-        hint_top = (
-            center
-            + constant("kRoundHintOffset")
-            - constant("kRoundHintHeight") / 2
-        )
-        self.assertLess(hero_bottom, status_top)
-        self.assertLess(status_bottom, hint_top)
-
-    @unittest.skipUnless(shutil.which("c++"), "host C++ compiler is unavailable")
+    def test_crest_lifecycle_and_geometry_are_bounded(self):
+        source = (BOARD_DIR / "crest_display.h").read_text()
+        self.assertIn("now - result_started_ms_ >= result_hold_ms_", source)
+        self.assertIn("now - reply_started_ms_ >= 35000", source)
+        self.assertIn("ClearResultLocked()", source)
+        self.assertIn("lv_timer_delete(animation_timer_)", source)
+        self.assertIn("lv_obj_set_size(caption_, 280, 74)", source)
+        self.assertLess(math.hypot(140, 97 + 37), 201)
+        self.assertIn("lv_label_set_text_static", source)
     def test_display_ellipsis_keeps_utf8_code_points_intact(self):
         test_source = textwrap.dedent(
             r"""

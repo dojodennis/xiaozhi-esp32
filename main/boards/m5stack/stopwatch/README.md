@@ -1,5 +1,29 @@
 # StopWatch
 
+## Orbit crest bench test
+
+The Provisions-only face uses the supplied crest at rest, tight input-reactive
+concentric rings while listening, and outward rings driven by local playback.
+The generic board layout, yellow hold-to-talk and blue volume toggle are unchanged.
+The opaque black face remains black across shared theme refreshes. Full transcripts
+and technical notification strings are not rendered. Basic result captions come
+only from existing allowlisted gateway receipts; there is no new saved-note or
+stock behavior.
+
+The test is based on installed commit `77ac185` / version 2.4.8. It does not include
+the separate Galley timer integration. Use the same `bench_profile.json` command
+below. Signing remains external with the existing approved identity. Installation
+must preserve the live bootloader, partition table, NVS and OTA selector; verify
+the active app slot and recovery image before any app-only USB write.
+
+`scripts/generate_orbit_crest.py` requires CairoSVG and Pillow. It renders the
+original compound path once, splits its disconnected alpha components, and proves
+that recombination preserves every alpha byte. The SVG payload is unchanged; the
+repository's text copy adds only a terminal newline. Generated A8 data is guarded
+out of generic firmware. Motion math, audio sampling bounds and geometry have
+host tests. The reduced-motion math is implemented and tested but this minimal
+bench slice does not add a user-facing preference or a new button mapping.
+
 For the temporary Provisions physical-loop acceptance build, use the dedicated
 `bench_profile.json` instead of `config.json` or `pilot_profile.json`:
 
