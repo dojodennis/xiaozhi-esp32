@@ -34,8 +34,12 @@ public:
     virtual void EnableInput(bool enable);
     virtual void EnableOutput(bool enable);
 
-    virtual void OutputData(std::vector<int16_t>& data);
+    virtual bool OutputData(std::vector<int16_t>& data);
     virtual bool InputData(std::vector<int16_t>& data);
+    // Called only by the input task before a new local recording. Unsupported
+    // codecs fail closed rather than relabeling buffered audio as a new press.
+    virtual bool PrepareInputCapture() { return false; }
+    virtual bool IsOutputDrained() const { return true; }
     virtual void Start();
 
     inline bool duplex() const { return duplex_; }

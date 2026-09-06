@@ -14,6 +14,16 @@ namespace provisions {
 namespace {
 constexpr size_t kContextBytes = 40;
 constexpr int64_t kRetryDelayUs = 30LL * 1000 * 1000;
+// The packaged ESP Opus encoder reports 104 samples of lookahead at 16 kHz.
+// Budget 20 ms of zero padding after microphone closure so the final samples
+// leave the encoder even when capture ends on a frame boundary. This fits the
+// existing 167-frame journal/wire cap at the full 160000 captured samples.
+constexpr size_t kCaptureTailSamples = 320;
+// The packaged 60 ms VOIP encoder alone needs over 20 KiB of task stack.
+// Keep room for this worker's capture/receipt locals and the persistence path.
+constexpr size_t kRecordingStackBytes = 40 * 1024;
+static_assert((VoiceRecording::kMaxSamples + kCaptureTailSamples + 959) / 960 <=
+              VoiceOutbox::kMaxPackets);
 bool HasId(const VoiceId& id) {
     return std::any_of(id.begin(), id.end(), [](uint8_t byte) { return byte != 0; });
 }
@@ -86,7 +96,7 @@ bool VoiceRecorder::Start(Notify notify, ReplayReady replay_ready) {
                 recorder->stopped_.store(true);
                 vTaskDelete(nullptr);
             },
-            "orbit_record", 12288, this, 3, &task_) != pdPASS) {
+            "orbit_record", kRecordingStackBytes, this, 3, &task_) != pdPASS) {
         stopped_.store(true);
         task_ = nullptr;
         return false;
@@ -240,22 +250,26 @@ bool VoiceRecorder::Encode(const VoiceRecording::Work& work, VoiceCapture& captu
     if (esp_opus_enc_open(&config, sizeof(config), &encoder) != ESP_AUDIO_ERR_OK || !encoder)
         return false;
     int input_bytes = 0, output_bytes = 0;
-    esp_opus_enc_get_frame_size(encoder, &input_bytes, &output_bytes);
-    bool ok = input_bytes == 1920 && output_bytes > 0 && output_bytes <= 2048;
+    bool ok =
+        esp_opus_enc_get_frame_size(encoder, &input_bytes, &output_bytes) == ESP_AUDIO_ERR_OK &&
+        input_bytes == 1920 && output_bytes > 0 && output_bytes <= 2048;
     std::array<int16_t, 960> input{};
     std::array<uint8_t, 2048> output{};
     capture = work.capture;
     capture.packet_count = 0;
     size_t opus_bytes = 0;
-    for (size_t offset = 0; ok && offset < work.samples; offset += input.size()) {
+    for (size_t offset = 0; ok && offset < work.samples + kCaptureTailSamples;
+         offset += input.size()) {
         input.fill(0);
-        std::copy_n(work.pcm + offset, std::min(input.size(), work.samples - offset),
-                    input.begin());
+        if (offset < work.samples)
+            std::copy_n(work.pcm + offset, std::min(input.size(), work.samples - offset),
+                        input.begin());
         esp_audio_enc_in_frame_t in{.buffer = reinterpret_cast<uint8_t*>(input.data()),
                                     .len = 1920};
         esp_audio_enc_out_frame_t out{.buffer = output.data(),
                                       .len = static_cast<uint32_t>(output.size()),
-                                      .encoded_bytes = 0};
+                                      .encoded_bytes = 0,
+                                      .pts = 0};
         ok = esp_opus_enc_process(encoder, &in, &out) == ESP_AUDIO_ERR_OK &&
              out.encoded_bytes > 0 && out.encoded_bytes <= output.size() &&
              bytes + 2 + out.encoded_bytes <= VoiceOutbox::kMaxFrameBytes &&

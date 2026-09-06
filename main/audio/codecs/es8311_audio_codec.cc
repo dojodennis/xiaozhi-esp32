@@ -165,6 +165,9 @@ void Es8311AudioCodec::CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk, gp
 
     ESP_ERROR_CHECK(i2s_channel_init_std_mode(tx_handle_, &std_cfg));
     ESP_ERROR_CHECK(i2s_channel_init_std_mode(rx_handle_, &std_cfg));
+    i2s_event_callbacks_t callbacks = {};
+    callbacks.on_sent = OnOutputSent;
+    ESP_ERROR_CHECK(i2s_channel_register_event_callback(tx_handle_, &callbacks, this));
     ESP_ERROR_CHECK(i2s_channel_enable(tx_handle_));
     ESP_ERROR_CHECK(i2s_channel_enable(rx_handle_));
     ESP_LOGI(TAG, "Duplex channels created");
@@ -212,15 +215,52 @@ void Es8311AudioCodec::EnableOutput(bool enable) {
 }
 
 int Es8311AudioCodec::Read(int16_t* dest, int samples) {
-    if (input_enabled_) {
-        ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_read(dev_, (void*)dest, samples * sizeof(int16_t)));
-    }
+    if (!input_enabled_ || samples <= 0 ||
+        esp_codec_dev_read(dev_, dest, samples * sizeof(int16_t)) != ESP_CODEC_DEV_OK)
+        return 0;
     return samples;
 }
 
 int Es8311AudioCodec::Write(const int16_t* data, int samples) {
-    if (output_enabled_) {
-        ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_write(dev_, (void*)data, samples * sizeof(int16_t)));
-    }
-    return samples;
+    if (!output_enabled_ || samples <= 0)
+        return 0;
+    portENTER_CRITICAL(&output_dma_mutex_);
+    output_write_active_ = true;
+    portEXIT_CRITICAL(&output_dma_mutex_);
+    const int result = esp_codec_dev_write(dev_, (void*)data, samples * sizeof(int16_t));
+    // The write returns after copying into DMA. One complete descriptor ring
+    // after that copy also covers any partial write before a driver error.
+    portENTER_CRITICAL(&output_dma_mutex_);
+    output_dma_remaining_ = AUDIO_CODEC_DMA_DESC_NUM;
+    output_write_active_ = false;
+    portEXIT_CRITICAL(&output_dma_mutex_);
+    return result == ESP_CODEC_DEV_OK ? samples : 0;
+}
+
+bool Es8311AudioCodec::OnOutputSent(i2s_chan_handle_t, i2s_event_data_t*, void* context) {
+    auto* codec = static_cast<Es8311AudioCodec*>(context);
+    portENTER_CRITICAL_ISR(&codec->output_dma_mutex_);
+    if (codec->output_dma_remaining_ != 0)
+        --codec->output_dma_remaining_;
+    portEXIT_CRITICAL_ISR(&codec->output_dma_mutex_);
+    return false;
+}
+
+bool Es8311AudioCodec::IsOutputDrained() const {
+    portENTER_CRITICAL(&output_dma_mutex_);
+    const bool drained = !output_write_active_ && output_dma_remaining_ == 0;
+    portEXIT_CRITICAL(&output_dma_mutex_);
+    return drained;
+}
+
+bool Es8311AudioCodec::PrepareInputCapture() {
+    EnableInput(true);
+    std::lock_guard<std::mutex> lock(data_if_mutex_);
+    if (!input_enabled_ || !dev_ || !rx_handle_)
+        return false;
+    // This task owns RX reads, so disabling cannot wait on another read. TX
+    // remains enabled; restarting RX resets its DMA queue and current pointer.
+    const auto stopped = i2s_channel_disable(rx_handle_);
+    return (stopped == ESP_OK || stopped == ESP_ERR_INVALID_STATE) &&
+           i2s_channel_enable(rx_handle_) == ESP_OK;
 }

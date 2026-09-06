@@ -90,12 +90,14 @@ struct AudioServiceCallbacks {
     std::function<void(void)> on_audio_testing_queue_full;
     // Fired when the decode/playback queues and their in-flight work are drained.
     std::function<void(void)> on_playback_drained;
+    std::function<void(uint32_t playback_id)> on_playback_error;
     std::function<void(uint32_t playback_id, uint32_t media_position_ms)> on_playback_progress;
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     // Called on the input task for a bounded 10 ms chunk. The receiver copies
     // into preallocated local capture memory; it must not encode, write or send.
     std::function<void(uint32_t, const int16_t*, size_t, size_t)> on_recording_audio;
     std::function<void(uint32_t)> on_recording_error;
+    std::function<void(uint32_t)> on_recording_ready;
 #endif
 };
 
@@ -109,6 +111,7 @@ struct AudioTask {
     AudioTaskType type;
     std::vector<int16_t> pcm;
     uint32_t voice_upload_generation = 0;
+    uint32_t playback_generation = 0;
     uint32_t timestamp = 0;
     uint32_t playback_id = 0;
     uint32_t media_position_ms = 0;
@@ -150,6 +153,11 @@ public:
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     void StartLocalRecording(uint32_t press);
     void StopLocalRecording(uint32_t expected_press = 0);
+    // Includes a discarded in-flight read, not just the physical button flag.
+    bool IsLocalRecordingClosed(uint32_t press) const;
+    // A closed older press alone does not imply that a newer press is idle.
+    bool IsLocalInputIdle() const;
+    bool IsLocalRecordingReady(uint32_t press) const;
 #endif
     void CloseVoiceUploadGate();
     template <typename Action>
@@ -239,6 +247,8 @@ private:
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     std::mutex local_recording_mutex_;
     std::atomic<uint32_t> local_recording_press_{0};
+    std::atomic<uint32_t> local_input_press_{0};
+    std::atomic<uint32_t> local_prepared_press_{0};
 #endif
 
     esp_timer_handle_t audio_power_timer_ = nullptr;

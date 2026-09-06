@@ -43,7 +43,7 @@ void vTaskDelete(void*);
 #include <cstdint>
 constexpr int ESP_AUDIO_ERR_OK=0,ESP_AUDIO_SAMPLE_RATE_16K=16000,ESP_AUDIO_MONO=1,ESP_AUDIO_BIT16=16;
 struct esp_audio_enc_in_frame_t {uint8_t* buffer;uint32_t len;};
-struct esp_audio_enc_out_frame_t {uint8_t* buffer;uint32_t len;uint32_t encoded_bytes;};
+struct esp_audio_enc_out_frame_t {uint8_t* buffer;uint32_t len;uint32_t encoded_bytes;uint64_t pts;};
 ''',
     "esp_opus_enc.h": r'''
 #pragma once

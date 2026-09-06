@@ -166,6 +166,15 @@ void Application::Initialize() {
     callbacks.on_playback_drained = [this]() {
         xEventGroupSetBits(event_group_, MAIN_EVENT_PLAYBACK_DRAINED);
     };
+    callbacks.on_playback_error = [this](uint32_t playback_id) {
+        // This player owns its mutex. Invalidate the exact failed notification
+        // before publishing a drain event; an empty queue is not successful audio.
+        notify_player_.OnPlaybackError(playback_id);
+        Schedule([this]() {
+            if (!manual_listening_requested_.load())
+                Board::GetInstance().GetDisplay()->SetChatMessage("system", "Audio couldn't play.");
+        });
+    };
     callbacks.on_playback_progress = [this](uint32_t playback_id, uint32_t media_position_ms) {
         notify_player_.OnPlaybackProgress(playback_id, media_position_ms);
     };
@@ -179,6 +188,16 @@ void Application::Initialize() {
     callbacks.on_recording_error = [this](uint32_t press) {
         if (auto recorder = std::atomic_load(&provisions_recorder_))
             recorder->Fail(press);
+    };
+    callbacks.on_recording_ready = [this](uint32_t press) {
+        // Re-read current press readiness on the main task. A delayed readiness
+        // callback cannot label a released or superseding press as listening.
+        Schedule([this, press]() {
+            if (GetDeviceState() == kDeviceStateListening && manual_listening_requested_.load() &&
+                provisions_physical_press_.id() == press &&
+                audio_service_.IsLocalRecordingReady(press))
+                Board::GetInstance().GetDisplay()->SetStatus(Lang::Strings::LISTENING);
+        });
     };
 #endif
     audio_service_.SetCallbacks(callbacks);
@@ -2211,7 +2230,13 @@ void Application::HandleStateChangedEvent() {
             display->SetChatMessage("system", "");
             break;
         case kDeviceStateListening:
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+            display->SetStatus(audio_service_.IsLocalRecordingReady(provisions_physical_press_.id())
+                                   ? Lang::Strings::LISTENING
+                                   : "Preparing microphone");
+#else
             display->SetStatus(Lang::Strings::LISTENING);
+#endif
             display->SetEmotion("neutral");
 
             // Make sure the audio processor is running

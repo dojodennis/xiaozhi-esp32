@@ -21,6 +21,10 @@ private:
     gpio_num_t pa_pin_ = GPIO_NUM_NC;
     bool pa_inverted_ = false;
     std::mutex data_if_mutex_;
+    mutable portMUX_TYPE output_dma_mutex_ = portMUX_INITIALIZER_UNLOCKED;
+    bool output_write_active_ = false;
+    uint32_t output_dma_remaining_ = 0;
+    static bool OnOutputSent(i2s_chan_handle_t handle, i2s_event_data_t* event, void* context);
 
     void CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din);
     void ResetCodec();
@@ -42,6 +46,8 @@ public:
     virtual void SetOutputVolume(int volume) override;
     virtual void EnableInput(bool enable) override;
     virtual void EnableOutput(bool enable) override;
+    bool PrepareInputCapture() override;
+    bool IsOutputDrained() const override;
 };
 
 #endif // _ES8311_AUDIO_CODEC_H

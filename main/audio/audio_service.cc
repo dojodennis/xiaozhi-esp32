@@ -212,6 +212,8 @@ bool AudioService::ReadAudioData(std::vector<int16_t>& data, int sample_rate, in
     }
 
     if (codec_->input_sample_rate() != sample_rate) {
+        if (input_resampler_ == nullptr)
+            return false;
         data.resize(samples * codec_->input_sample_rate() / sample_rate * codec_->input_channels());
         if (!codec_->InputData(data)) {
             return false;
@@ -220,12 +222,17 @@ bool AudioService::ReadAudioData(std::vector<int16_t>& data, int sample_rate, in
             std::lock_guard<std::mutex> lock(input_resampler_mutex_);
             uint32_t in_sample_num = data.size() / codec_->input_channels();
             uint32_t output_samples = 0;
-            esp_ae_rate_cvt_get_max_out_sample_num(input_resampler_, in_sample_num,
-                                                   &output_samples);
+            if (esp_ae_rate_cvt_get_max_out_sample_num(input_resampler_, in_sample_num,
+                                                       &output_samples) != ESP_AE_ERR_OK ||
+                output_samples == 0)
+                return false;
             auto resampled = std::vector<int16_t>(output_samples * codec_->input_channels());
             uint32_t actual_output = output_samples;
-            esp_ae_rate_cvt_process(input_resampler_, (esp_ae_sample_t)data.data(), in_sample_num,
-                                    (esp_ae_sample_t)resampled.data(), &actual_output);
+            if (esp_ae_rate_cvt_process(input_resampler_, (esp_ae_sample_t)data.data(),
+                                        in_sample_num, (esp_ae_sample_t)resampled.data(),
+                                        &actual_output) != ESP_AE_ERR_OK ||
+                actual_output == 0 || actual_output > output_samples)
+                return false;
             resampled.resize(actual_output * codec_->input_channels());
             data = std::move(resampled);
         }
@@ -255,6 +262,9 @@ void AudioService::AudioInputTask() {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     std::vector<int16_t> recording_data;
     recording_data.reserve(320);
+    uint32_t prepared_press = 0;
+    uint32_t preparing_press = 0;
+    std::chrono::steady_clock::time_point preparation_deadline;
 #endif
     constexpr EventBits_t kAudioInputActiveBits = AS_EVENT_AUDIO_TESTING_RUNNING |
                                                   AS_EVENT_WAKE_WORD_RUNNING |
@@ -265,6 +275,12 @@ void AudioService::AudioInputTask() {
         ;
 
     while (true) {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        // A released read has returned before this point. Publish closure even
+        // when clearing the active event would otherwise leave this task asleep.
+        if (local_input_press_.load() != local_recording_press_.load())
+            local_input_press_.store(0, std::memory_order_release);
+#endif
         EventBits_t bits = xEventGroupWaitBits(
             event_group_, kAudioInputActiveBits | AS_EVENT_AUDIO_INPUT_STOP_REQUEST, pdFALSE,
             pdFALSE, portMAX_DELAY);
@@ -294,8 +310,46 @@ void AudioService::AudioInputTask() {
         }
 
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-        const uint32_t recording_press = local_recording_press_.load(std::memory_order_acquire);
+        uint32_t recording_press = 0;
+        {
+            std::lock_guard<std::mutex> lock(local_recording_mutex_);
+            recording_press = local_recording_press_.load(std::memory_order_acquire);
+            local_input_press_.store(recording_press, std::memory_order_release);
+        }
         if (recording_press != 0) {
+            if (prepared_press != recording_press) {
+                if (preparing_press != recording_press) {
+                    preparing_press = recording_press;
+                    preparation_deadline =
+                        std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
+                }
+                bool output_drained = false;
+                {
+                    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+                    output_drained = !output_in_flight_ && codec_->IsOutputDrained();
+                }
+                if (!output_drained && std::chrono::steady_clock::now() < preparation_deadline) {
+                    vTaskDelay(pdMS_TO_TICKS(1));
+                    continue;
+                }
+                bool prepared = output_drained && codec_->PrepareInputCapture();
+                if (prepared && input_resampler_ != nullptr) {
+                    std::lock_guard<std::mutex> lock(input_resampler_mutex_);
+                    prepared = esp_ae_rate_cvt_reset(input_resampler_) == ESP_AE_ERR_OK;
+                }
+                if (local_recording_press_.load(std::memory_order_acquire) != recording_press)
+                    continue;
+                if (!prepared) {
+                    StopLocalRecording(recording_press);
+                    if (callbacks_.on_recording_error)
+                        callbacks_.on_recording_error(recording_press);
+                    continue;
+                }
+                prepared_press = recording_press;
+                local_prepared_press_.store(recording_press, std::memory_order_release);
+                if (callbacks_.on_recording_ready)
+                    callbacks_.on_recording_ready(recording_press);
+            }
             // Read the microphone on its owning task, independently of the
             // network and the realtime encoder's upload gate. A release (or a
             // newer press) discards an in-flight read instead of admitting any
@@ -308,6 +362,7 @@ void AudioService::AudioInputTask() {
                     callbacks_.on_recording_audio(recording_press, recording_data.data(),
                                                   recording_data.size() / channels, channels);
                 } else if (callbacks_.on_recording_error) {
+                    StopLocalRecording(recording_press);
                     callbacks_.on_recording_error(recording_press);
                 }
             }
@@ -363,8 +418,21 @@ void AudioService::AudioInputTask() {
 void AudioService::AudioOutputTask() {
     while (true) {
         std::unique_lock<std::mutex> lock(audio_queue_mutex_);
-        audio_queue_cv_.wait(
-            lock, [this]() { return !audio_playback_queue_.empty() || service_stopped_.load(); });
+        while (audio_playback_queue_.empty() && !service_stopped_.load()) {
+            const bool drained = MarkPlaybackDrainedLocked();
+            if (drained && callbacks_.on_playback_drained) {
+                lock.unlock();
+                callbacks_.on_playback_drained();
+                lock.lock();
+            }
+            if (!audio_playback_queue_.empty() || service_stopped_.load())
+                break;
+            if (!playback_drained_notified_) {
+                audio_queue_cv_.wait_for(lock, std::chrono::milliseconds(10));
+            } else {
+                audio_queue_cv_.wait(lock);
+            }
+        }
         if (service_stopped_.load()) {
             break;
         }
@@ -381,24 +449,53 @@ void AudioService::AudioOutputTask() {
             codec_->EnableOutput(true);
         }
 
-        if (task->playback_id != 0 && callbacks_.on_playback_progress) {
+        lock.lock();
+        const bool current = task->playback_generation == playback_generation_ &&
+                             !service_stopped_.load()
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+                             && local_recording_press_.load() == 0
+#endif
+            ;
+        lock.unlock();
+        bool played = false;
+        if (current)
+            played = codec_->OutputData(task->pcm);
+        if (played && task->playback_id != 0 && callbacks_.on_playback_progress) {
             callbacks_.on_playback_progress(task->playback_id, task->media_position_ms);
         }
 
-        codec_->OutputData(task->pcm);
-
         /* Update the last output time */
-        last_output_time_ = std::chrono::steady_clock::now();
-        debug_statistics_.playback_count++;
+        if (played) {
+            last_output_time_ = std::chrono::steady_clock::now();
+            debug_statistics_.playback_count++;
+        }
 
         bool notify_drained = false;
         lock.lock();
+        const bool failed = current && !played && task->playback_generation == playback_generation_;
+        if (failed) {
+            ++playback_generation_;
+            audio_decode_queue_.clear();
+            audio_playback_queue_.clear();
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+            local_feedback_ = {};
+            local_feedback_active_ = false;
+#endif
+        }
 #if CONFIG_USE_SERVER_AEC
         /* Record the timestamp for server AEC */
         if (task->timestamp > 0) {
             timestamp_queue_.push_back(task->timestamp);
         }
 #endif
+        // Keep output in flight while failure consumers invalidate delivery.
+        // Otherwise an older queued drain event could observe empty queues and
+        // report successful completion before this error callback arrives.
+        if (failed && callbacks_.on_playback_error) {
+            lock.unlock();
+            callbacks_.on_playback_error(task->playback_id);
+            lock.lock();
+        }
         output_in_flight_ = false;
         notify_drained = MarkPlaybackDrainedLocked();
         audio_queue_cv_.notify_all();
@@ -452,6 +549,7 @@ void AudioService::OpusCodecTask() {
 
             auto task = std::make_unique<AudioTask>();
             task->type = kAudioTaskTypeDecodeToPlaybackQueue;
+            task->playback_generation = generation;
             task->timestamp = packet->timestamp;
             task->playback_id = packet->playback_id;
             task->media_position_ms = packet->media_position_ms;
@@ -788,8 +886,30 @@ void AudioService::StartLocalRecording(uint32_t press) {
     std::lock_guard<std::mutex> lock(local_recording_mutex_);
     if (press == 0 || service_stopped_.load())
         return;
+    std::lock_guard<std::mutex> queue_lock(audio_queue_mutex_);
+    ++playback_generation_;
+    audio_decode_queue_.clear();
+    audio_playback_queue_.clear();
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    local_feedback_ = {};
+    local_feedback_active_ = false;
+#endif
+    local_prepared_press_.store(0, std::memory_order_release);
     local_recording_press_.store(press, std::memory_order_release);
+    audio_queue_cv_.notify_all();
     xEventGroupSetBits(event_group_, AS_EVENT_LOCAL_RECORDING_RUNNING);
+}
+bool AudioService::IsLocalRecordingClosed(uint32_t press) const {
+    return local_recording_press_.load(std::memory_order_acquire) != press &&
+           local_input_press_.load(std::memory_order_acquire) != press;
+}
+bool AudioService::IsLocalInputIdle() const {
+    return local_recording_press_.load(std::memory_order_acquire) == 0 &&
+           local_input_press_.load(std::memory_order_acquire) == 0;
+}
+bool AudioService::IsLocalRecordingReady(uint32_t press) const {
+    return press != 0 && local_recording_press_.load(std::memory_order_acquire) == press &&
+           local_prepared_press_.load(std::memory_order_acquire) == press;
 }
 void AudioService::StopLocalRecording(uint32_t expected_press) {
     std::lock_guard<std::mutex> lock(local_recording_mutex_);
@@ -1001,7 +1121,7 @@ bool AudioService::IsPlaybackDrainedLocked() const {
         return false;
 #endif
     return audio_decode_queue_.empty() && audio_playback_queue_.empty() && !decode_in_flight_ &&
-           !output_in_flight_;
+           !output_in_flight_ && codec_->IsOutputDrained();
 }
 
 bool AudioService::MarkPlaybackDrainedLocked() {

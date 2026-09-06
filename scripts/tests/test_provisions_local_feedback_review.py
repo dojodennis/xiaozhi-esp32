@@ -81,17 +81,20 @@ struct AudioStreamPacket {
 enum AudioTaskType {kAudioTaskTypeEncodeToSendQueue,kAudioTaskTypeEncodeToTestingQueue,kAudioTaskTypeDecodeToPlaybackQueue};
 struct AudioTask {
     AudioTaskType type{};std::vector<int16_t> pcm;
+    uint32_t playback_generation=0;
     uint32_t timestamp=0,playback_id=0,media_position_ms=0,voice_upload_generation=0;
 };
 struct Callbacks {
     std::function<void()> on_playback_drained,on_send_queue_available;
+    std::function<void(uint32_t)> on_playback_error;
     std::function<void(uint32_t,uint32_t)> on_playback_progress;
     std::function<void(uint32_t)> on_recording_error;
 };
 struct Codec {
     std::mutex mutex;std::vector<int16_t> played;bool output_enabled(){return true;}void EnableOutput(bool){}
     int output_sample_rate(){return 24000;}
-    void OutputData(const std::vector<int16_t>& pcm){std::lock_guard<std::mutex> lock(mutex);played.push_back(pcm.at(0));}
+    bool OutputData(const std::vector<int16_t>& pcm){std::lock_guard<std::mutex> lock(mutex);played.push_back(pcm.at(0));return true;}
+    bool IsOutputDrained() const{return true;}
     size_t size(){std::lock_guard<std::mutex> lock(mutex);return played.size();}
 };
 struct AudioService {
