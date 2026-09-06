@@ -1,11 +1,16 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
+#include "sdkconfig.h"
+
 #include <cJSON.h>
 #include <chrono>
 #include <functional>
 #include <string>
 #include <vector>
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+#include "provisions_reply_turn.h"
+#endif
 
 struct AudioStreamPacket {
     int sample_rate = 0;
@@ -48,6 +53,11 @@ public:
     inline int server_sample_rate() const { return server_sample_rate_; }
     inline int server_frame_duration() const { return server_frame_duration_; }
     inline const std::string& session_id() const { return session_id_; }
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    uint32_t voice_turn_id() const { return voice_turn_.id(); }
+    bool IsCurrentVoiceTurn(uint32_t id) const { return voice_turn_.IsCurrent(id); }
+    void InvalidateVoiceReply() { voice_turn_.Invalidate(); }
+#endif
 
     void OnIncomingAudio(std::function<void(std::unique_ptr<AudioStreamPacket> packet)> callback);
     void OnIncomingJson(std::function<void(const cJSON* root)> callback);
@@ -81,6 +91,9 @@ protected:
     int server_frame_duration_ = 60;
     bool error_occurred_ = false;
     std::string session_id_;
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    ProvisionsReplyTurn voice_turn_;
+#endif
     std::chrono::time_point<std::chrono::steady_clock> last_incoming_time_;
 
     virtual bool SendText(const std::string& text) = 0;

@@ -2,6 +2,24 @@
 
 This document describes the WebSocket communication protocol between the device and the server, based on the current code. When implementing a server, please cross-check with the actual implementation.
 
+For `CONFIG_PROVISIONS_GATEWAY_REQUIRED`, the device opts into `features.turn_ids`
+and requires `provisions.turn_ids: true` in the authenticated server hello.
+Every manual listen start/stop and every non-heartbeat Provisions/TTS reply has an
+integer `turn_id` from 1 through 2147483647. New captures increase it without
+wrapping. This correlates replies; it grants no business or tenant authority.
+
+A new physical Talk press interrupts Working/Speaking immediately. Replies must
+match the current session and capture, including when their UI callback runs
+later. Cancelled starts, reconnects and failures invalidate old reply acceptance
+without reusing the counter. A distinct physical-press generation also prevents
+an older deferred start from clearing a newer press. Release closes the existing
+microphone upload gate before the main task handles it. Generic WebSocket and
+MQTT/UDP clients keep their original message format.
+
+Deploy a gateway supporting this negotiation before installing this Provisions
+firmware. Raw Opus binary frames remain protocol v1 and follow ordered TTS
+control frames. See `docs/orbit-talk-interruption-validation.md` for evidence.
+
 ---
 
 ## 1. Overall Flow

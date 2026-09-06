@@ -282,7 +282,7 @@ class ProvisionsGatewayIntegrationTests(unittest.TestCase):
         self.assertIn('strcmp(type->valuestring, "provisions") != 0', application)
         self.assertIn('strcmp(type->valuestring, "tts") != 0', application)
         self.assertIn("Rejecting unsupported Provisions gateway frame type", application)
-        self.assertIn('{"session_id", "type", "state", "text", "receipt_id"}', application)
+        self.assertIn('"receipt_id", "turn_id"}', " ".join(application.split()))
         self.assertIn('strcmp(state->valuestring, "working") == 0', application)
         self.assertIn('strcmp(text->valuestring, "Working") == 0', application)
         self.assertIn('strcmp(state->valuestring, "result") == 0', application)
@@ -393,7 +393,11 @@ class ProvisionsGatewayIntegrationTests(unittest.TestCase):
         )
         self.assertIn("SetProvisionsResponsePending(true)", application)
         self.assertIn('return provisions_response_pending_.load() ? "Working" : "Ready"', application)
-        self.assertIn("Ignoring Talk while the previous request is working", application)
+        self.assertNotIn("Ignoring Talk while the previous request is working", application)
+        talk_start = application.split("void Application::HandleStartListeningEvent()", 1)[1].split(
+            "void Application::HandleStopListeningEvent()", 1
+        )[0]
+        self.assertIn("AbortSpeaking(kAbortReasonNone)", talk_start)
         self.assertIn("SendGatewayHeartbeat", application)
         self.assertIn("IsGatewayHeartbeatExpired", application)
         self.assertIn("kProvisionsMaximumReconnectAttempts = 5", application)

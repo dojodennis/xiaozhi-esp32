@@ -250,9 +250,8 @@ bool WebsocketProtocol::OpenAudioChannel() {
             auto root = cJSON_ParseWithLengthOpts(data, len, &parse_end, false);
             if (root != nullptr) {
                 const char* const frame_end = data + len;
-                while (parse_end < frame_end &&
-                       (*parse_end == ' ' || *parse_end == '\t' ||
-                        *parse_end == '\r' || *parse_end == '\n')) {
+                while (parse_end < frame_end && (*parse_end == ' ' || *parse_end == '\t' ||
+                                                 *parse_end == '\r' || *parse_end == '\n')) {
                     ++parse_end;
                 }
                 if (parse_end != frame_end) {
@@ -308,7 +307,8 @@ bool WebsocketProtocol::OpenAudioChannel() {
                     }
 #endif
 #if !CONFIG_PROVISIONS_GATEWAY_REQUIRED
-                } else {
+                }
+                else {
                     if (on_incoming_json_ != nullptr) {
                         on_incoming_json_(root);
                     }
@@ -415,6 +415,7 @@ std::string WebsocketProtocol::GetHelloMessage() {
 #endif
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     cJSON_AddBoolToObject(features, "mcp", false);
+    cJSON_AddBoolToObject(features, "turn_ids", true);
 #else
     cJSON_AddBoolToObject(features, "mcp", true);
 #endif
@@ -447,10 +448,12 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     auto version = cJSON_GetObjectItem(root, "version");
     auto provisions = cJSON_GetObjectItem(root, "provisions");
-    auto authenticated = cJSON_IsObject(provisions)
-                             ? cJSON_GetObjectItem(provisions, "authenticated")
-                             : nullptr;
-    if (!cJSON_IsNumber(version) || version->valuedouble != 1 || !cJSON_IsTrue(authenticated)) {
+    auto authenticated =
+        cJSON_IsObject(provisions) ? cJSON_GetObjectItem(provisions, "authenticated") : nullptr;
+    auto turn_ids =
+        cJSON_IsObject(provisions) ? cJSON_GetObjectItem(provisions, "turn_ids") : nullptr;
+    if (!cJSON_IsNumber(version) || version->valuedouble != 1 || !cJSON_IsTrue(authenticated) ||
+        !cJSON_IsTrue(turn_ids)) {
         ESP_LOGE(TAG, "Provisions gateway rejected protocol or device authentication");
         RejectServerHello("Device authentication failed");
         return;
@@ -465,13 +468,15 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
     }
 
     auto audio_params = cJSON_GetObjectItem(root, "audio_params");
-    auto format = cJSON_IsObject(audio_params) ? cJSON_GetObjectItem(audio_params, "format") : nullptr;
+    auto format =
+        cJSON_IsObject(audio_params) ? cJSON_GetObjectItem(audio_params, "format") : nullptr;
     auto sample_rate =
         cJSON_IsObject(audio_params) ? cJSON_GetObjectItem(audio_params, "sample_rate") : nullptr;
     auto channels =
         cJSON_IsObject(audio_params) ? cJSON_GetObjectItem(audio_params, "channels") : nullptr;
-    auto frame_duration =
-        cJSON_IsObject(audio_params) ? cJSON_GetObjectItem(audio_params, "frame_duration") : nullptr;
+    auto frame_duration = cJSON_IsObject(audio_params)
+                              ? cJSON_GetObjectItem(audio_params, "frame_duration")
+                              : nullptr;
     if (!cJSON_IsString(format) || strcmp(format->valuestring, "opus") != 0 ||
         !cJSON_IsNumber(sample_rate) || sample_rate->valuedouble != 24000 ||
         !cJSON_IsNumber(channels) || channels->valuedouble != 1 ||

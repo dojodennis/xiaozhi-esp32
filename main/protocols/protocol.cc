@@ -72,8 +72,17 @@ void Protocol::SendWakeWordDetected(const std::string& wake_word) {
 }
 
 void Protocol::SendStartListening(ListeningMode mode) {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    if (!voice_turn_.Begin()) {
+        SetError("Talk session expired");
+        return;
+    }
+#endif
     std::string message = "{\"session_id\":\"" + session_id_ + "\"";
     message += ",\"type\":\"listen\",\"state\":\"start\"";
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    message += ",\"turn_id\":" + std::to_string(voice_turn_id());
+#endif
     if (mode == kListeningModeRealtime) {
         message += ",\"mode\":\"realtime\"";
     } else if (mode == kListeningModeAutoStop) {
@@ -82,12 +91,22 @@ void Protocol::SendStartListening(ListeningMode mode) {
         message += ",\"mode\":\"manual\"";
     }
     message += "}";
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    if (!SendText(message)) {
+        voice_turn_.Invalidate();
+    }
+#else
     SendText(message);
+#endif
 }
 
 void Protocol::SendStopListening() {
     std::string message =
-        "{\"session_id\":\"" + session_id_ + "\",\"type\":\"listen\",\"state\":\"stop\"}";
+        "{\"session_id\":\"" + session_id_ + "\",\"type\":\"listen\",\"state\":\"stop\"";
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    message += ",\"turn_id\":" + std::to_string(voice_turn_id());
+#endif
+    message += "}";
     SendText(message);
 }
 
