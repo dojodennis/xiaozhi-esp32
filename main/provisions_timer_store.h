@@ -7,15 +7,15 @@ class Store {
 public:
     enum class LoadResult { Empty, Present, Fault };
     virtual ~Store() = default;
-    virtual LoadResult Load(Record& record) = 0;
-    virtual bool Save(const Record& record) = 0;
-    virtual bool Erase(const Record& expected) = 0;
+    virtual LoadResult Load(DurableSlot& slot) = 0;
+    virtual bool Transition(const DurableSlot& expected, const DurableSlot& desired) = 0;
+    virtual bool Erase(const DurableSlot& expected) = 0;
 };
 class NvsStore final : public Store {
 public:
-    LoadResult Load(Record& record) override;
-    bool Save(const Record& record) override;
-    bool Erase(const Record& expected) override;
+    LoadResult Load(DurableSlot& slot) override;
+    bool Transition(const DurableSlot& expected, const DurableSlot& desired) override;
+    bool Erase(const DurableSlot& expected) override;
 };
 }  // namespace provisions::timers
 #endif
