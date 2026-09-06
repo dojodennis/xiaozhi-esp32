@@ -2,9 +2,11 @@
 
 ## Orbit crest bench test
 
-The Provisions-only face uses the supplied crest at rest, tight input-reactive
-concentric rings while listening, and outward rings driven by local playback.
-The generic board layout, yellow hold-to-talk and blue volume toggle are unchanged.
+The Provisions-only face uses the supplied crest at rest and keeps its center star
+as a quiet anchor during listening, thinking and speaking. Three fixed concentric
+rings breathe slowly through opacity; local audio changes their presence without
+moving their edges. The generic board layout, yellow hold-to-talk and blue volume
+toggle are unchanged.
 The opaque black face remains black across shared theme refreshes. Full transcripts
 and technical notification strings are not rendered. Basic result captions come
 only from existing allowlisted gateway receipts; there is no new saved-note or

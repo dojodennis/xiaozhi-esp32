@@ -19,8 +19,6 @@ class OrbitCrestDisplay final : public SpiLcdDisplay {
     OrbitCrest::Frame frame_;
     OrbitCrest::Frame transition_from_;
     uint32_t transition_ms_ = 0;
-    uint32_t last_frame_ms_ = 0;
-    uint32_t speech_clock_ms_ = 0;
     uint32_t reply_started_ms_ = 0;
     uint32_t result_started_ms_ = 0;
     uint32_t result_hold_ms_ = 0;
@@ -29,6 +27,7 @@ class OrbitCrestDisplay final : public SpiLcdDisplay {
     bool reply_received_ = false;
     bool power_save_ = false;
     bool speech_seen_ = false;
+    bool error_ring_geometry_ = false;
     float level_ = 0;
 
     static uint32_t NowMs() { return static_cast<uint32_t>(esp_timer_get_time() / 1000); }
@@ -69,8 +68,6 @@ class OrbitCrestDisplay final : public SpiLcdDisplay {
         state_ = state;
         if (state == State::Speaking)
             reply_started_ms_ = transition_ms_;
-        if (state != State::Speaking)
-            speech_clock_ms_ = 0;
         level_ = 0;
         if (animation_timer_)
             lv_timer_resume(animation_timer_);
@@ -88,8 +85,6 @@ class OrbitCrestDisplay final : public SpiLcdDisplay {
         if (!face_ || power_save_)
             return;
         const uint32_t now = NowMs();
-        const uint32_t delta = std::min<uint32_t>(now - last_frame_ms_, 60);
-        last_frame_ms_ = now;
         if (state_ == State::Result && result_hold_ms_ &&
             now - result_started_ms_ >= result_hold_ms_) {
             ClearResultLocked();
@@ -112,17 +107,16 @@ class OrbitCrestDisplay final : public SpiLcdDisplay {
         const float target_level = age > now - transition_ms_
                                        ? 0.0F
                                        : OrbitCrest::AudioLevel(meter.mean_absolute.load(), age);
-        const float smoothing = target_level > level_ ? 0.65F : 0.2F;
+        // Slow enough to suppress packet-edge shimmer, fast enough to make a
+        // held voice visibly present without moving ring geometry.
+        const float smoothing = target_level > level_ ? 0.24F : 0.08F;
         level_ += (target_level - level_) * smoothing;
-        if (state_ == State::Speaking && target_level > 0) {
-            speech_clock_ms_ += delta;
+        if (state_ == State::Speaking && target_level > 0)
             speech_seen_ = true;
-        }
 
         OrbitCrest::Frame target;
         if (OrbitCrest::UsesRings(state_)) {
-            target = OrbitCrest::Rings(state_, state_ == State::Speaking ? speech_clock_ms_ : now,
-                                       level_, kReducedMotion);
+            target = OrbitCrest::Rings(state_, now - transition_ms_, level_, kReducedMotion);
         } else if (state_ == State::Result || state_ == State::Error || state_ == State::Boot ||
                    state_ == State::Connecting) {
             target.band_opacity = 0;
@@ -138,13 +132,21 @@ class OrbitCrestDisplay final : public SpiLcdDisplay {
         for (int index = 0; index < 3; ++index) {
             auto* ring = rings_[index];
             const int diameter = frame_.radii[index] * 2;
-            lv_obj_set_size(ring, diameter, diameter);
-            lv_obj_center(ring);
+            if (lv_obj_get_width(ring) != diameter || lv_obj_get_height(ring) != diameter) {
+                lv_obj_set_size(ring, diameter, diameter);
+                lv_obj_center(ring);
+            }
             lv_obj_set_style_arc_color(ring, lv_color_hex(frame_.color), LV_PART_MAIN);
             lv_obj_set_style_arc_opa(ring, frame_.opacity[index], LV_PART_MAIN);
-            lv_arc_set_rotation(ring, state_ == State::Error ? 270 : 0);
-            lv_arc_set_bg_angles(ring, state_ == State::Error ? 12 : 0,
-                                 state_ == State::Error ? 348 : 360);
+        }
+        const bool show_error_geometry = state_ == State::Error;
+        if (show_error_geometry != error_ring_geometry_) {
+            for (auto* ring : rings_) {
+                lv_arc_set_rotation(ring, show_error_geometry ? 270 : 0);
+                lv_arc_set_bg_angles(ring, show_error_geometry ? 12 : 0,
+                                     show_error_geometry ? 348 : 360);
+            }
+            error_ring_geometry_ = show_error_geometry;
         }
         const char* text = state_ == State::Result ? result_caption_ : OrbitCrest::Caption(state_);
         if (kReducedMotion && state_ == State::Listening)
@@ -209,16 +211,22 @@ public:
         lv_obj_set_style_bg_color(face_, lv_color_hex(0x000000), 0);
         lv_obj_set_style_bg_opa(face_, LV_OPA_COVER, 0);
         lv_obj_remove_flag(face_, LV_OBJ_FLAG_SCROLLABLE);
-        for (auto*& ring : rings_) {
-            ring = lv_arc_create(face_);
-            lv_obj_remove_style_all(ring);
-            lv_obj_set_style_arc_width(ring, 3, LV_PART_MAIN);
-            lv_obj_set_style_arc_opa(ring, LV_OPA_TRANSP, LV_PART_INDICATOR);
-            lv_obj_remove_flag(ring, LV_OBJ_FLAG_CLICKABLE);
-        }
         band_ = lv_image_create(face_);
         lv_image_set_src(band_, &OrbitCrest::kBandImage);
         lv_obj_set_pos(band_, OrbitCrest::kBandX, OrbitCrest::kBandY);
+        for (int index = 0; index < 3; ++index) {
+            auto*& ring = rings_[index];
+            ring = lv_arc_create(face_);
+            lv_obj_remove_style_all(ring);
+            const int diameter = frame_.radii[index] * 2;
+            lv_obj_set_size(ring, diameter, diameter);
+            lv_obj_center(ring);
+            lv_obj_set_style_arc_width(ring, 3, LV_PART_MAIN);
+            lv_obj_set_style_arc_opa(ring, LV_OPA_TRANSP, LV_PART_INDICATOR);
+            lv_arc_set_rotation(ring, 0);
+            lv_arc_set_bg_angles(ring, 0, 360);
+            lv_obj_remove_flag(ring, LV_OBJ_FLAG_CLICKABLE);
+        }
         star_ = lv_image_create(face_);
         lv_image_set_src(star_, &OrbitCrest::kStarImage);
         lv_obj_set_pos(star_, OrbitCrest::kStarX, OrbitCrest::kStarY);
@@ -238,7 +246,7 @@ public:
                 static_cast<OrbitCrestDisplay*>(lv_timer_get_user_data(timer))->RenderLocked();
             },
             33, this);
-        transition_ms_ = last_frame_ms_ = NowMs();
+        transition_ms_ = NowMs();
         RenderLocked();
     }
 
@@ -308,7 +316,6 @@ public:
                 lv_timer_pause(animation_timer_);
         } else {
             lv_obj_remove_flag(face_, LV_OBJ_FLAG_HIDDEN);
-            last_frame_ms_ = NowMs();
             if (animation_timer_)
                 lv_timer_resume(animation_timer_);
             RenderLocked();

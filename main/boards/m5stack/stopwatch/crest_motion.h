@@ -12,12 +12,13 @@ namespace OrbitCrest {
 
 constexpr int kDisplaySize = 466;
 constexpr int kSafeRadius = 201;
-constexpr int kTransitionMs = 220;
+constexpr int kTransitionMs = 360;
 constexpr int kResultHoldMs = 4000;
 constexpr uint32_t kIvory = 0xE8E0D2;
 constexpr uint32_t kGold = 0xC5A46D;
 constexpr uint32_t kAmber = 0xD7A45B;
 constexpr float kPi = 3.14159265359F;
+constexpr uint8_t kActiveStarOpacity = 224;
 
 enum class State { Boot, Connecting, Idle, Listening, Thinking, Speaking, Error, Result };
 
@@ -31,6 +32,25 @@ struct Frame {
 
 inline uint8_t Opacity(float value) {
     return static_cast<uint8_t>(std::clamp(value, 0.0F, 1.0F) * 255.0F);
+}
+
+inline float RaisedCosine(float cycles) { return 0.5F - 0.5F * std::cos(2.0F * kPi * cycles); }
+
+inline float SmootherStep(float phase) {
+    phase = std::clamp(phase, 0.0F, 1.0F);
+    return phase * phase * phase * (phase * (phase * 6.0F - 15.0F) + 10.0F);
+}
+
+inline uint32_t BlendColor(uint32_t from, uint32_t target, float amount) {
+    uint32_t result = 0;
+    for (int shift : {16, 8, 0}) {
+        const int start = static_cast<int>((from >> shift) & 0xFF);
+        const int end = static_cast<int>((target >> shift) & 0xFF);
+        const auto channel =
+            static_cast<uint32_t>(std::lround(start + static_cast<float>(end - start) * amount));
+        result |= channel << shift;
+    }
+    return result;
 }
 
 inline bool UsesRings(State state) {
@@ -98,30 +118,46 @@ inline float AudioLevel(uint32_t mean_absolute, uint32_t age_ms) {
 
 inline Frame Rings(State state, uint32_t elapsed_ms, float level, bool reduced_motion) {
     Frame frame;
-    frame.band_opacity = frame.star_opacity = 0;
+    // Keep the exact center star as a quiet visual anchor. The outer crest
+    // band alone yields to three fixed circles; their geometry never changes
+    // while LVGL is painting the active face.
+    frame.band_opacity = 0;
+    frame.star_opacity = kActiveStarOpacity;
     level = std::clamp(level, 0.0F, 1.0F);
     frame.color = state == State::Listening ? kGold : kIvory;
     const float time = static_cast<float>(elapsed_ms) / 1000.0F;
+
+    if (reduced_motion) {
+        if (state == State::Thinking) {
+            frame.opacity = {0, 0, Opacity(0.58F)};
+        } else if (state == State::Speaking) {
+            frame.opacity = {0, Opacity(0.58F), Opacity(0.42F)};
+        } else {
+            frame.opacity = {Opacity(0.68F), Opacity(0.52F), Opacity(0.38F)};
+        }
+        return frame;
+    }
+
+    constexpr std::array<float, 3> kListeningBase{0.68F, 0.52F, 0.38F};
+    const float listening_breath = RaisedCosine(time / 2.4F);
     for (int index = 0; index < 3; ++index) {
-        float opacity = 0.8F;
-        if (!reduced_motion && state == State::Listening) {
-            frame.radii[index] += static_cast<int>(
-                std::lround((1.0F + 4.0F * level) * std::sin(8.0F * kPi * time + index * 1.2F)));
-        } else if (!reduced_motion && state == State::Speaking) {
-            // The caller advances this clock only while output PCM is active.
-            const float phase = std::fmod(time / 0.9F + index / 3.0F, 1.0F);
-            frame.radii[index] = static_cast<int>(116.0F + 70.0F * phase + 8.0F * level);
-            opacity = 0.25F + 0.65F * std::sin(kPi * phase);
-        } else if (!reduced_motion && state == State::Thinking) {
-            opacity = 0.35F + 0.4F * (0.5F + 0.5F * std::sin(2.0F * kPi * time / 1.8F +
-                                                             index * 2.0F * kPi / 3.0F));
+        float opacity = kListeningBase[index];
+        if (state == State::Listening) {
+            // One slow shared breath keeps the circles optically concentric;
+            // voice energy adds presence without making their edges wobble.
+            opacity += 0.08F * listening_breath + 0.16F * level;
+        } else if (state == State::Speaking) {
+            // A continuous luminance wave moves out through fixed circles.
+            // There is no sawtooth radius reset and natural PCM gaps cannot
+            // stop its clock; audio contributes only a bounded lift.
+            const float wave = RaisedCosine(time / 2.2F - index * 0.16F);
+            opacity = 0.30F + 0.36F * wave + 0.18F * level;
+        } else if (state == State::Thinking) {
+            const float wave = RaisedCosine(time / 2.8F - index / 3.0F);
+            opacity = 0.22F + 0.36F * wave;
         }
         frame.opacity[index] = Opacity(opacity);
     }
-    if (reduced_motion && state == State::Thinking)
-        frame.opacity[0] = frame.opacity[1] = 0;
-    if (reduced_motion && state == State::Speaking)
-        frame.opacity[0] = 0;
     return frame;
 }
 
@@ -133,15 +169,13 @@ inline Frame Transition(const Frame& from, const Frame& target, uint32_t elapsed
         return target;
     Frame out = target;
     const float phase = static_cast<float>(elapsed_ms) / kTransitionMs;
-    const float ease = phase * phase * (3.0F - 2.0F * phase);
-    const auto blend = [ease](int a, int b) { return a + static_cast<int>((b - a) * ease); };
+    const float ease = SmootherStep(phase);
+    const auto blend = [ease](int a, int b) {
+        return static_cast<int>(std::lround(a + static_cast<float>(b - a) * ease));
+    };
     out.band_opacity = blend(from.band_opacity, target.band_opacity);
-    const float star_phase =
-        target.star_opacity < from.star_opacity
-            ? std::clamp((static_cast<float>(elapsed_ms) - 120) / 100, 0.0F, 1.0F)
-            : std::min(static_cast<float>(elapsed_ms) / 100, 1.0F);
-    out.star_opacity = from.star_opacity +
-                       static_cast<int>((target.star_opacity - from.star_opacity) * star_phase);
+    out.star_opacity = blend(from.star_opacity, target.star_opacity);
+    out.color = BlendColor(from.color, target.color, ease);
     for (int index = 0; index < 3; ++index) {
         out.radii[index] = blend(from.radii[index], target.radii[index]);
         out.opacity[index] = blend(from.opacity[index], target.opacity[index]);

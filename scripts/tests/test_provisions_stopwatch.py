@@ -116,7 +116,9 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertNotIn("lv_obj_scroll_to_y", source)
         self.assertNotIn("MATERIAL_SYMBOLS_MIC", source)
         self.assertNotIn("HOLD TO TALK", source)
-        self.assertIn("state_ == State::Speaking ? speech_clock_ms_", source)
+        self.assertIn("now - transition_ms_", source)
+        self.assertNotIn("speech_clock_ms_", source)
+        self.assertIn("lv_obj_get_width(ring) != diameter", source)
         self.assertIn("OrbitCrest::input_meter", source)
         self.assertIn("OrbitCrest::output_meter", source)
 

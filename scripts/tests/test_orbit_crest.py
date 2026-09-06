@@ -37,7 +37,9 @@ int main() {
                 for (float level : {0.0F, 0.1F, 0.5F, 1.0F}) {
                     Frame frame = Rings(state, t, level, reduced);
                     for (int radius : frame.radii) assert(radius > 0 && radius + 2 <= kSafeRadius);
-                    for (uint32_t age : {0U, 60U, 120U, 219U, 220U}) {
+                    assert(frame.radii == Frame().radii);
+                    assert(frame.radii[0] < frame.radii[1] && frame.radii[1] < frame.radii[2]);
+                    for (uint32_t age : {0U, 90U, 180U, 359U, 360U}) {
                         Frame transition = Transition(idle, frame, age, reduced);
                         bool visible = transition.band_opacity || transition.star_opacity;
                         for (auto alpha : transition.opacity) visible |= alpha > 0;
@@ -49,15 +51,37 @@ int main() {
     }
     auto listening = Rings(State::Listening, 400, 1, false);
     auto speaking = Rings(State::Speaking, 400, 1, false);
-    assert(listening.radii != speaking.radii);
+    assert(listening.radii == speaking.radii);
+    assert(listening.opacity != speaking.opacity);
+    auto quiet_listening = Rings(State::Listening, 400, 0, false);
+    auto quiet_speaking = Rings(State::Speaking, 400, 0, false);
+    for (int index = 0; index < 3; ++index) {
+        assert(listening.opacity[index] > quiet_listening.opacity[index]);
+        assert(speaking.opacity[index] > quiet_speaking.opacity[index]);
+    }
+    // Adjacent 30 Hz frames and the old 0.9-second wrap boundary stay
+    // continuous. Geometry is fixed and alpha cannot jump visibly.
+    for (uint32_t t : {0U, 330U, 899U, 900U, 2199U, 2200U, 4999U}) {
+        auto current = Rings(State::Speaking, t, 0.5F, false);
+        auto next = Rings(State::Speaking, t + 33, 0.5F, false);
+        assert(current.radii == next.radii);
+        for (int index = 0; index < 3; ++index)
+            assert(std::abs(static_cast<int>(current.opacity[index]) -
+                            static_cast<int>(next.opacity[index])) <= 8);
+    }
     auto start = Transition(idle, listening, 0, false);
     assert(start.star_opacity == 255 && start.band_opacity == 255);
-    auto halfway = Transition(idle, listening, 120, false);
-    assert(halfway.star_opacity == 255 && halfway.band_opacity < 255);
-    auto back = Transition(listening, idle, 100, false);
-    assert(back.star_opacity == 255 && back.band_opacity < 255);
+    auto halfway = Transition(idle, listening, 180, false);
+    assert(halfway.star_opacity < 255 && halfway.star_opacity > kActiveStarOpacity);
+    assert(halfway.band_opacity > 0 && halfway.band_opacity < 255);
+    assert(halfway.color != idle.color && halfway.color != listening.color);
+    auto back = Transition(listening, idle, 180, false);
+    assert(back.star_opacity < 255 && back.star_opacity > kActiveStarOpacity);
+    assert(back.band_opacity > 0 && back.band_opacity < 255);
     auto interrupted = Transition(halfway, idle, 0, false);
     assert(interrupted.band_opacity == halfway.band_opacity);
+    assert(interrupted.star_opacity == halfway.star_opacity);
+    assert(Transition(idle, listening, kTransitionMs, false).color == listening.color);
     assert(Rings(State::Listening, 0, 0, true).radii == Rings(State::Listening, 999, 1, true).radii);
     assert(AudioLevel(99, 0) == 0 && AudioLevel(32768, 121) == 0);
     assert(AudioLevel(32768, 1) == 1);
