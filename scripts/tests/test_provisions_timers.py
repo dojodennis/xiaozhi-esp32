@@ -56,7 +56,7 @@ struct AudioService {
  std::deque<std::unique_ptr<AudioStreamPacket>> audio_decode_queue_;
  std::deque<int> timestamp_queue_,audio_testing_queue_;
  std::atomic<bool> service_stopped_{false};
- std::atomic<uint32_t> timer_output_owner_{0},local_recording_press_{0},local_physical_boundary_{0},local_output_boundary_{0};
+ std::atomic<uint32_t> timer_output_owner_{0},local_input_press_{0},local_recording_press_{0},local_physical_boundary_{0},local_output_boundary_{0};
  bool output_in_flight_=false,decode_in_flight_=false,playback_drained_notified_=false,local_feedback_active_=false;
  uint32_t playback_generation_=0;std::string_view local_feedback_;void* opus_decoder_=nullptr;
  Es8311AudioCodec codec;Es8311AudioCodec* codec_=&codec;int audio_power_timer_=0;
@@ -146,7 +146,7 @@ void reboot_unknown(){NvsStore store;assert(store.Save({alarm(),Outcome::Unknown
 void reboot_terminal(){NvsStore store;assert(store.Save({alarm(),Outcome::Completed}));Harness h;h.session=uuid(10);h.service();check_receipt(h.sent.back(),"completed","reconcile_drain");assert(h.began==0&&h.queued.empty());}
 void stale_ack(){Harness h;h.completed();const auto original=stored();for(auto key:{"session_id","lease_id","playback_id","timer_id","timer_revision","attempt"}){auto a=ack(original,h.session);replace(a.get(),key,std::string(key)=="timer_revision"||std::string(key)=="attempt"?"2":"\""+uuid(88)+"\"");assert(!h.frame(a));h.service();assert(h.owner&&h.player.Fenced()&&!disk.empty());}assert(h.frame(ack(original,h.session)));h.service();assert(!h.owner);auto a=alarm();a.lease_id=uuid(22);a.attempt=2;h.start(a);assert(!h.frame(ack(original,h.session)));h.service();assert(h.owner&&stored().alarm.attempt==2);}
 void receipt_retry(){Harness h;h.completed();auto first=h.sent.back();h.time+=1000001;h.service();assert(h.sent.size()==2&&h.sent.back()==first);h.session=uuid(10);h.service();auto second=h.sent.back();h.time+=1000001;h.service();assert(second==h.sent.back()&&disk==RecordJson(stored()));}
-void disk_faults(){for(int mode=0;mode<5;++mode){reset();Harness h;if(mode==0)fail_open=true;if(mode==1)fail_set=true;if(mode==2)fail_commit=true;if(mode==3){namespace_present=true;disk="broken";}if(mode==4)corrupt_readback=true;assert(h.frame(envelope(alarm())));h.service();assert(h.player.Fenced()&&h.owner&&h.began==0&&h.sent.empty());}reset();disk="broken";namespace_present=true;Harness corrupt;corrupt.service();assert(corrupt.player.Fenced()&&corrupt.owner&&corrupt.sent.empty());}
+void disk_faults(){for(int mode=0;mode<5;++mode){reset();Harness h;if(mode==0)fail_open=true;if(mode==1)fail_set=true;if(mode==2)fail_commit=true;if(mode==3){namespace_present=true;disk="broken";}if(mode==4)corrupt_readback=true;assert(h.frame(envelope(alarm())));h.service();assert(h.player.Fenced()&&h.owner==0&&h.began==0&&h.sent.empty());}reset();disk="broken";namespace_present=true;Harness corrupt;corrupt.service();assert(corrupt.player.Fenced()&&corrupt.owner&&corrupt.sent.empty());}
 void terminal_write_fault(){Harness h;h.start();h.audio();h.stop();h.play();h.dma();fail_commit=true;h.service();assert(h.sent.empty()&&h.owner&&stored().outcome==Outcome::Unknown);}
 void erase_fault(){Harness h;h.completed();assert(h.frame(ack(stored(),h.session)));fail_erase=true;h.service();assert(!disk.empty()&&h.owner&&h.player.Fenced());}
 void store_immutable(){NvsStore s;auto a=alarm();assert(s.Save({a,Outcome::Unknown}));auto other=a;other.lease_id=uuid(100);assert(!s.Save({other,Outcome::Unknown}));assert(s.Save({a,Outcome::Failed}));assert(!s.Save({a,Outcome::Completed}));assert(!s.Save({a,Outcome::Unknown}));assert(!s.Erase({a,Outcome::Completed}));assert(s.Erase({a,Outcome::Failed}));Record r;assert(s.Load(r)==Store::LoadResult::Empty);}
@@ -210,14 +210,65 @@ void actual_output_bridge(){
  audio.stop();output.join();
  }
 }
+void actual_busy_ownership(){
+ for(int mode=0;mode<4;++mode){reset();AudioService audio;NvsStore store;Player player(store);
+ std::vector<std::string> sent;int claims=0,releases=0,cancels=0,began=0,ended=0;std::atomic<int> progress{0};
+ Player::Hooks h;
+ h.claim=[&](uint32_t id){++claims;
+  // Readiness was observed before this physical press acquired input.
+  if(mode==2){audio.local_physical_boundary_=9;audio.local_recording_press_=9;audio.local_input_press_=9;}
+  return audio.ClaimTimerOutput(id);
+ };
+ h.release=[&](uint32_t id){++releases;return audio.ReleaseTimerOutput(id);};
+ h.cancel=[&]{++cancels;audio.ResetDecoder();};h.drained=[&]{return audio.IsPlaybackIdle();};
+ h.queue=[](uint32_t,uint32_t,const std::vector<uint8_t>&){assert(false);return false;};
+ h.send=[&](const std::string& text){sent.push_back(text);return true;};h.wake=[]{};
+ h.began=[&]{++began;};h.ended=[&]{++ended;};player.Initialize(h);
+ if(mode<2){auto packet=std::make_unique<AudioStreamPacket>();packet->playback_id=7;packet->payload={0x18,0,0x55};assert(audio.PushPacketToDecodeQueue(std::move(packet),false));}
+ if(mode==3){std::vector<int16_t> pcm(1440);assert(audio.codec.OutputData(pcm));}
+ const auto generation=audio.playback_generation_;
+ assert(player.OnJson(envelope(alarm()).get(),uuid(1),true,0));
+ player.Service(uuid(1),true,mode!=0,0,1000000);
+ assert(claims==(mode==0?0:1)&&cancels==0&&began==0&&ended==0&&releases==0);
+ assert(audio.timer_output_owner_==0&&audio.playback_generation_==generation);
+ if(mode==2){assert(audio.local_recording_press_==9&&audio.local_input_press_==9&&audio.local_physical_boundary_==9);assert(sent.size()==1);}
+ else assert(sent.empty());
+ std::thread output;
+ if(mode<2){
+  assert(audio.audio_decode_queue_.size()==1&&audio.audio_decode_queue_.front()->playback_id==7);
+  // Disconnecting the declined timer also cannot reset the earlier reply.
+  player.OnDisconnected();player.Service(uuid(1),true,false,0,1001000);
+  assert(cancels==0&&audio.audio_decode_queue_.size()==1&&audio.playback_generation_==generation);
+  audio.callbacks_.on_playback_progress=[&](uint32_t id,uint32_t){assert(id==7);++progress;};
+  audio.DecodeOne();output=std::thread([&]{audio.AudioOutputTask();});
+  auto deadline=std::chrono::steady_clock::now()+2s;
+  while(progress==0&&std::chrono::steady_clock::now()<deadline)std::this_thread::sleep_for(100us);
+  assert(progress==1);
+ }
+ if(mode!=2){
+  for(int i=0;i<5;++i)audio.codec.OnOutputSent(nullptr,nullptr,&audio.codec);
+  player.Service(uuid(1),true,false,0,1002000);assert(sent.empty());
+  audio.codec.OnOutputSent(nullptr,nullptr,&audio.codec);
+  auto deadline=std::chrono::steady_clock::now()+2s;
+  while(!audio.IsPlaybackIdle()&&std::chrono::steady_clock::now()<deadline)std::this_thread::sleep_for(100us);
+  assert(audio.IsPlaybackIdle());player.Service(uuid(1),true,false,0,1003000);assert(sent.size()==1);
+ }
+ check_receipt(sent.back(),"failed");assert(player.Fenced()&&!player.OwnsOutput());
+ assert(player.OnJson(ack(stored(),uuid(1)).get(),uuid(1),true,0));
+ player.Service(uuid(1),true,false,0,1004000);
+ assert(!player.Fenced()&&disk.empty()&&releases==0&&cancels==0&&began==0&&ended==0&&audio.playback_generation_==generation);
+ if(mode==2)assert(audio.local_recording_press_==9&&audio.local_input_press_==9);
+ audio.stop();if(output.joinable())output.join();
+ }
+}
 
 int main(int argc,char** argv){assert(argc==2);std::map<std::string,std::function<void()>> tests={
 #define CASE(name) {#name,name}
- CASE(late_audio_and_json_budget),CASE(actual_output_bridge),CASE(completed_dma),CASE(no_provider_stop),CASE(interrupted_dma),CASE(decoder_failure),CASE(write_failure),CASE(digest_failure),CASE(packet_order),CASE(packet_bounds),CASE(reconnect_terminal),CASE(reboot_unknown),CASE(reboot_terminal),CASE(stale_ack),CASE(receipt_retry),CASE(disk_faults),CASE(terminal_write_fault),CASE(erase_fault),CASE(store_immutable),CASE(busy_or_press),CASE(identity_schema),CASE(snapshot_bounds),CASE(snapshot_authority),CASE(deadline_validation),CASE(tts_schema)};
+ CASE(actual_busy_ownership),CASE(late_audio_and_json_budget),CASE(actual_output_bridge),CASE(completed_dma),CASE(no_provider_stop),CASE(interrupted_dma),CASE(decoder_failure),CASE(write_failure),CASE(digest_failure),CASE(packet_order),CASE(packet_bounds),CASE(reconnect_terminal),CASE(reboot_unknown),CASE(reboot_terminal),CASE(stale_ack),CASE(receipt_retry),CASE(disk_faults),CASE(terminal_write_fault),CASE(erase_fault),CASE(store_immutable),CASE(busy_or_press),CASE(identity_schema),CASE(snapshot_bounds),CASE(snapshot_authority),CASE(deadline_validation),CASE(tts_schema)};
  reset();tests.at(argv[1])();std::cout<<argv[1]<<" passed\n";
 }
 '''
-CASES = ('late_audio_and_json_budget actual_output_bridge completed_dma no_provider_stop interrupted_dma decoder_failure write_failure digest_failure '
+CASES = ('actual_busy_ownership late_audio_and_json_budget actual_output_bridge completed_dma no_provider_stop interrupted_dma decoder_failure write_failure digest_failure '
          'packet_order packet_bounds reconnect_terminal reboot_unknown reboot_terminal stale_ack receipt_retry '
          'disk_faults terminal_write_fault erase_fault store_immutable busy_or_press identity_schema '
          'snapshot_bounds snapshot_authority deadline_validation tts_schema').split()

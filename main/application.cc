@@ -987,7 +987,7 @@ void Application::InitializeProtocol() {
         const bool timer_frame = strcmp(type->valuestring, "timer") == 0;
         const bool timer_tts =
             strcmp(type->valuestring, "tts") == 0 &&
-            (timer_player_.Fenced() || cJSON_GetObjectItemCaseSensitive(root, "playback_id"));
+            (timer_player_.OwnsOutput() || cJSON_GetObjectItemCaseSensitive(root, "playback_id"));
         if (timer_frame || timer_tts) {
             auto* websocket = static_cast<WebsocketProtocol*>(protocol.get());
             if (!timer_player_.OnJson(root, protocol->session_id(), websocket->TimersNegotiated(),
@@ -1047,7 +1047,7 @@ void Application::InitializeProtocol() {
                                cJSON_IsString(reply_state) &&
                                strcmp(reply_state->valuestring, "heartbeat") == 0;
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
-        if (!heartbeat && timer_player_.Fenced()) {
+        if (!heartbeat && timer_player_.OwnsOutput()) {
             reject_gateway_frame();
             return;
         }

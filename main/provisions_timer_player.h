@@ -32,6 +32,7 @@ public:
     void Service(const std::string& session, bool negotiated, bool ready, uint32_t press,
                  int64_t now_us);
     bool Fenced() const;
+    bool OwnsOutput() const;
     Snapshot GetSnapshot() const;
 
 private:

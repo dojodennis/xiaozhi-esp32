@@ -181,8 +181,22 @@ public:
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
     // A timer owns output until its durable terminal fact is acknowledged.
     bool ClaimTimerOutput(uint32_t id) {
+        std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+        if (id == 0 || !IsPlaybackDrainedLocked() || local_recording_press_.load() != 0 ||
+            local_input_press_.load() != 0 ||
+            local_physical_boundary_.load() != local_output_boundary_.load())
+            return false;
         uint32_t empty = 0;
-        return id != 0 && timer_output_owner_.compare_exchange_strong(empty, id);
+        if (!timer_output_owner_.compare_exchange_strong(empty, id))
+            return false;
+        // The physical button fence is deliberately lock-free. Recheck it after
+        // the claim so an edge arriving during admission retains input priority.
+        if (local_recording_press_.load() != 0 || local_input_press_.load() != 0 ||
+            local_physical_boundary_.load() != local_output_boundary_.load()) {
+            timer_output_owner_.compare_exchange_strong(id, 0);
+            return false;
+        }
+        return true;
     }
     bool ReleaseTimerOutput(uint32_t id) {
         return id != 0 && timer_output_owner_.compare_exchange_strong(id, 0);

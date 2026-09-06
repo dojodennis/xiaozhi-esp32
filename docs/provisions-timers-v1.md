@@ -32,8 +32,13 @@ The start, sentence_start and stop identities must match. Stop is network end,
 not audible completion. Each received binary retains its original transport
 session; a delayed callback from an older session cannot attach to a new alarm.
 
-The player reserves a nonwrapping high-half local output ID. Ordinary
-notifications use the low half. AudioService checks the reservation at enqueue
+The player reserves a nonwrapping high-half local output ID only after admission.
+Admission rechecks the actual queues, in-flight work, DMA and physical capture
+fence. A busy or racing attempt is refused without claiming output, resetting
+queues/generation, changing the active state, or releasing another owner. The
+refused attempt discards its incoming audio and waits for an actual output drain
+before a failed receipt; an acknowledgement only removes its own durable record.
+Ordinary notifications use the low half. AudioService checks the reservation at enqueue
 and again after output activation, preserving its physical capture fence.
 Completion additionally requires every announced packet to be received, hashed,
 submitted and observed in the exact codec-write progress sequence. Timer decoding

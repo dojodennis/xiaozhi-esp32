@@ -8,7 +8,7 @@ void Player::Initialize(Hooks hooks) {
     hooks_ = std::move(hooks);
     if (psa_crypto_init() != PSA_SUCCESS) {
         fault_ = occupied_ = true;
-        hooks_.claim(owner_);
+        claimed_ = hooks_.claim(owner_);
         return;
     }
     const auto loaded = store_.Load(record_);
@@ -30,11 +30,15 @@ void Player::Fail(Outcome outcome) {
     if (requested_ == Outcome::Unknown)
         requested_ = outcome;
     packets_.clear();
-    cancel_pending_ = true;
+    cancel_pending_ = claimed_;
 }
 bool Player::Fenced() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return occupied_ || fault_;
+}
+bool Player::OwnsOutput() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return claimed_;
 }
 Snapshot Player::GetSnapshot() const {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -175,17 +179,11 @@ void Player::Service(const std::string& session, bool negotiated, bool ready, ui
     std::lock_guard<std::mutex> lock(mutex_);
     if (!occupied_ || fault_)
         return;
-    if (!claimed_) {
-        claimed_ = hooks_.claim(owner_);
-        if (!claimed_) {
-            fault_ = true;
-            return;
-        }
-    }
     if (!persisted_) {
         if (!store_.Save(record_)) {
             fault_ = true;
-            hooks_.cancel();
+            if (claimed_)
+                hooks_.cancel();
             return;
         }
         persisted_ = true;
@@ -194,10 +192,12 @@ void Player::Service(const std::string& session, bool negotiated, bool ready, ui
         if (press != press_ || !negotiated || session != record_.alarm.session_id)
             Fail(Outcome::Interrupted);
         if (!admitted_ && requested_ == Outcome::Unknown) {
-            if (!ready)
+            if (!ready || !hooks_.claim(owner_)) {
+                // Refusal owns no speaker/capture work. Preserve the prior
+                // queues, generation and state while awaiting actual drain.
                 Fail(Outcome::Failed);
-            else {
-                admitted_ = true;
+            } else {
+                claimed_ = admitted_ = true;
                 deadline_us_ = now_us + 45000000;
                 hooks_.cancel();
                 hooks_.began();
@@ -232,13 +232,14 @@ void Player::Service(const std::string& session, bool negotiated, bool ready, ui
                 return;
             }
             record_ = closed;
-            hooks_.ended();
+            if (claimed_)
+                hooks_.ended();
         }
     }
     if (record_.outcome == Outcome::Unknown)
         return;
     if (ack_pending_) {
-        if (!store_.Erase(record_) || !hooks_.release(owner_)) {
+        if (!store_.Erase(record_) || (claimed_ && !hooks_.release(owner_))) {
             fault_ = true;
             return;
         }
