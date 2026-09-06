@@ -54,6 +54,7 @@ public:
     const Record& Get() const { return record_; }
     bool Faulted() const { return fault_; }
     bool Start(const VoiceId& id, const VoiceId& conversation);
+    bool ReplaceEmpty(const VoiceId& previous, const VoiceId& id, const VoiceId& conversation);
     bool Stop();
     bool Resume();
     bool RequestReceipt();
@@ -71,6 +72,7 @@ private:
     bool Commit(const Record& next);
 };
 bool ParseReply(const cJSON* value, const std::string& transport_session, Reply& output);
+bool CanRetireEmpty(const Record& record);
 std::string ControlJson(const Record& record, const std::string& transport_session);
 std::string RecordJson(const Record& record);
 bool ParseRecord(const std::string& text, Record& record);

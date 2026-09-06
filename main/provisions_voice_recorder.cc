@@ -133,7 +133,7 @@ bool VoiceRecorder::PrepareContext(const VoiceContext& context) {
 bool VoiceRecorder::ActivateContext(const VoiceContext& context) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (!context_prepared_ || !(requested_context_ == context))
+        if (dictation_replacing_.load() || !context_prepared_ || !(requested_context_ == context))
             return false;
         context_ = context;
         has_context_.store(true);
@@ -153,12 +153,8 @@ bool VoiceRecorder::UpdateContext(const VoiceContext& context) {
 bool VoiceRecorder::Begin(uint32_t press, uint64_t captured_unix_ms) {
     if (!recording_ || !storage_ready_.load() || !has_context_.load())
         return false;
-    VoiceContext context;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        context = context_;
-    }
-    return recording_->Begin(press, context, captured_unix_ms);
+    std::lock_guard<std::mutex> lock(mutex_);
+    return !dictation_replacing_.load() && recording_->Begin(press, context_, captured_unix_ms);
 }
 bool VoiceRecorder::Append(uint32_t press, const int16_t* pcm, size_t frames, size_t channels) {
     const bool appended = recording_ && recording_->Append(press, pcm, frames, channels);

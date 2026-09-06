@@ -337,6 +337,21 @@ bool Journal::Start(const VoiceId& id, const VoiceId& conversation) {
     next.pending = Action::Start;
     return Commit(next);
 }
+bool CanRetireEmpty(const Record& record) {
+    return Valid(record) && record.state != State::Empty && record.pending == Action::None &&
+           !record.stop_requested && record.count == 0;
+}
+bool Journal::ReplaceEmpty(const VoiceId& previous, const VoiceId& id,
+                           const VoiceId& conversation) {
+    if (fault_ || record_.id != previous || id == previous ||
+        conversation == record_.conversation_id || !CanRetireEmpty(record_))
+        return false;
+    Record next;
+    next.id = id;
+    next.conversation_id = conversation;
+    next.pending = Action::Start;
+    return Commit(next);
+}
 bool Journal::Stop() {
     if (fault_ || !HasId(record_.id) ||
         (record_.state == State::Stopped && record_.pending != Action::Resume) ||

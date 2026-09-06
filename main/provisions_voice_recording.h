@@ -49,6 +49,7 @@ public:
     void Finish(const Work& work);
     bool IsRecording(uint32_t press) const;
     bool IsCapped(uint32_t press) const;
+    bool IsIdle() const;
     static bool ValidContext(const VoiceContext& context);
 
 private:

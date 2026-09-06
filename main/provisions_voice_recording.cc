@@ -133,4 +133,9 @@ bool VoiceRecording::IsCapped(uint32_t press) const {
         return buffer.press == press && buffer.capped;
     });
 }
+bool VoiceRecording::IsIdle() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return std::all_of(buffers_.begin(), buffers_.end(),
+                       [](const Buffer& buffer) { return buffer.state == State::Empty; });
+}
 }  // namespace provisions

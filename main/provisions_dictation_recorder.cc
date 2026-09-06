@@ -46,11 +46,74 @@ dictation::Record VoiceRecorder::DictationRecord() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return dictation_snapshot_;
 }
+bool VoiceRecorder::CanReplaceEmptyDictationLocked(const VoiceId& conversation) const {
+    return recording_ && storage_ready_.load() && !dictation_error_.load() &&
+           !dictation_busy_.load() && !dictation_replacing_.load() && has_context_.load() &&
+           context_.conversation_id == conversation &&
+           dictation_snapshot_.conversation_id != conversation &&
+           dictation::CanRetireEmpty(dictation_snapshot_) && pending_count_.load() == 0 &&
+           dictation_command_ == dictation::Action::None && !dictation_stop_requested_ &&
+           !dictation_reply_ && !dictation_requested_press_ && !dictation_ready_press_ &&
+           recording_->IsIdle();
+}
+bool VoiceRecorder::CanReplaceEmptyDictation(const VoiceId& conversation) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return CanReplaceEmptyDictationLocked(conversation);
+}
+bool VoiceRecorder::RequestEmptyDictationReplacement(const VoiceId& conversation) {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!CanReplaceEmptyDictationLocked(conversation))
+            return false;
+        dictation_replacing_.store(true);
+        dictation_input_blocked_.store(true);
+        dictation_command_ = dictation::Action::Start;
+        dictation_command_conversation_ = conversation;
+        dictation_replace_previous_ = dictation_snapshot_.id;
+        dictation_snapshot_.authorized = false;
+    }
+    Wake();
+    return true;
+}
+bool VoiceRecorder::ReplaceEmptyDictation(const VoiceId& previous, const VoiceId& conversation) {
+    // This worker is the only outbox/journal writer. Admission and assignment
+    // activation stay closed during inspection and the single replacement commit.
+    if (dictation_retry_work_ || dictation_missing_parts_ || !outbox_.journal() ||
+        dictation_journal_.Faulted() || !recording_->IsIdle())
+        return false;
+    for (size_t slot = 0; slot < VoiceOutbox::kSlots; ++slot) {
+        SavedVoiceCapture saved;
+        const auto result = outbox_.journal()->Read(slot, saved);
+        if (result != VoiceStoreResult::Empty) {
+            if (result != VoiceStoreResult::Ok)
+                dictation_error_.store(true);
+            RefreshCount();
+            return false;
+        }
+    }
+    VoiceId id{};
+    if (!outbox_.NewRequestId(id)) {
+        dictation_error_.store(true);
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!dictation_replacing_.load() || !has_context_.load() ||
+            context_.conversation_id != conversation ||
+            requested_context_.conversation_id != conversation || !requested_commit_ ||
+            !context_prepared_ || dictation_stop_requested_ || dictation_requested_press_ ||
+            dictation_ready_press_ || !recording_->IsIdle())
+            return false;
+    }
+    return dictation_journal_.ReplaceEmpty(previous, id, conversation);
+}
 bool VoiceRecorder::RequestDictationControl(dictation::Action action) {
     if (!recording_ || action == dictation::Action::None)
         return false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (dictation_replacing_.load())
+            return false;
         if (action == dictation::Action::Stop)
             dictation_stop_requested_ = true;
         else {
@@ -144,6 +207,7 @@ void VoiceRecorder::ServiceDictation() {
     std::optional<dictation::Reply> reply;
     VoiceContext context;
     VoiceId command_conversation;
+    VoiceId replace_previous;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         command = dictation_command_;
@@ -154,15 +218,21 @@ void VoiceRecorder::ServiceDictation() {
         dictation_reply_.reset();
         context = context_;
         command_conversation = dictation_command_conversation_;
+        replace_previous = dictation_replace_previous_;
+        dictation_replace_previous_ = {};
     }
     bool changed = false, authorized = false;
     // Released/processing holds have already reserved their ordinals. Run after
     // Save so empty taps can withdraw a reservation before Stop freezes the count.
     if (command == dictation::Action::Start && storage_ready_.load() && has_context_.load() &&
         command_conversation == context.conversation_id) {
-        VoiceId id{};
-        if (outbox_.NewRequestId(id))
-            changed = dictation_journal_.Start(id, context.conversation_id) || changed;
+        if (replace_previous != VoiceId{})
+            changed = ReplaceEmptyDictation(replace_previous, command_conversation);
+        else {
+            VoiceId id{};
+            if (outbox_.NewRequestId(id))
+                changed = dictation_journal_.Start(id, context.conversation_id) || changed;
+        }
     } else if (command == dictation::Action::Resume)
         changed = dictation_journal_.Resume() || changed;
     else if (command == dictation::Action::Receipt)
@@ -177,6 +247,14 @@ void VoiceRecorder::ServiceDictation() {
     }
     if (dictation_journal_.Faulted())
         dictation_error_.store(true);
+    if (replace_previous != VoiceId{}) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        // A rejected replacement preserves the old acknowledged authority for
+        // its original assignment. Faults and scope/fresh-edge checks still
+        // prevent input; a successful replacement remains pending Start ACK.
+        dictation_input_blocked_.store(!dictation_journal_.Get().authorized);
+        dictation_replacing_.store(false);
+    }
     if (changed || stop || command != dictation::Action::None || reply)
         PublishDictation();
     if (authorized) {

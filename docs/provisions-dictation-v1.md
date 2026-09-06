@@ -48,6 +48,18 @@ are unchanged. The compact manifest bounds additional storage in the existing
 16KiB NVS partition. If occupied settings leave insufficient capacity, persistence
 fails closed without erasing old audio, timer or settings data.
 
+After authenticated reassignment, a fresh Start may locally retire the previous
+journal only when it was acknowledged, has zero segments and no pending control,
+and every recording buffer, reservation, retry and outbox slot is positively empty.
+The worker closes admission while it checks the actual slots and rechecks the
+requested assignment, then commits one new pending-Start UUID. It does not send
+an old-assignment Stop. Any uncertain phase, occupied/corrupt slot or missing part
+preserves the previous journal and shows recovery. A failed read-back grants no
+input; after reboot, the committed pending UUID, if present, still requires its
+exact Start ACK and a fresh yellow press. Late acknowledgements for the retired
+empty UUID cannot change the new journal. This does not retire backend data or
+provide recovery for a nonempty or uncertain journal.
+
 Only dictation captures use journal header `ORBAUD03`/version 3 (152 bytes). The old
 `ORBAUD02`/version 2 (124 bytes) remains the exact write format for ordinary captures
 and remains readable without rewriting any occupied slot. V3 authenticates purpose,

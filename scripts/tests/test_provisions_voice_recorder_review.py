@@ -74,6 +74,7 @@ PRELUDE = r'''
 #include <chrono>
 #include <condition_variable>
 #include <thread>
+std::function<void()> read_hook;
 '''
 SUPPORT = fixture.PROGRAM.split("int main() {")[0].replace(
     "bytes==VoiceOutbox::kMaxFrameBytes && caps==",
@@ -89,6 +90,7 @@ SUPPORT = SUPPORT.replace('auto requested=*bytes;*bytes=found->second.size();', 
 SUPPORT = SUPPORT.replace('if(state.bad("get_blob"))return ESP_FAIL;', 'std::string scoped=(handle&0x80000000u)?std::string("dictation/")+key:key;key=scoped.c_str();if(state.bad("get_blob"))return ESP_FAIL;')
 SUPPORT = SUPPORT.replace('if(state.bad("set_blob"))return ESP_FAIL;', 'std::string scoped=(handle&0x80000000u)?std::string("dictation/")+key:key;key=scoped.c_str();if(state.bad("set_blob"))return ESP_FAIL;')
 SUPPORT = SUPPORT.replace('aad==108 || aad==16', 'aad==108 || aad==136 || aad==16')
+SUPPORT = SUPPORT.replace('if(state.bad("read")) return ESP_FAIL;', 'if(read_hook){auto hook=std::move(read_hook);hook();}if(state.bad("read")) return ESP_FAIL;')
 SUPPORT = SUPPORT.replace('struct State {', 'struct AdapterState {').replace('State state;', 'AdapterState state;').replace('state=State{};', 'state=AdapterState{};')
 
 WORKER = r'''
@@ -171,7 +173,7 @@ void record(VoiceRecorder& recorder,uint32_t press,uint64_t captured=17887123456
 }
 void replay(VoiceRecorder& recorder){recorder.RequestReplay();drain();}
 void fresh() {
-    assert(!held&&!task);reset();clock_us=0;notices.clear();offered.clear();hold_replay=false;fail_encoder=false;
+    assert(!held&&!task);assert(!read_hook);reset();clock_us=0;notices.clear();offered.clear();hold_replay=false;fail_encoder=false;
 }
 void acknowledge(VoiceRecorder& recorder,const VoiceCaptureReceipt& receipt) {
     assert(recorder.Acknowledge(receipt));drain();
@@ -516,6 +518,7 @@ int main(){normal_cases();context_cases();explicit_retry_cases();queued_retry_sc
 
 PHYSICAL = r"""
 #include "provisions_reply_turn.h"
+#include "provisions_voice_wire.h"
 #include <sys/time.h>
 #include <string_view>
 #define CONFIG_PROVISIONS_LOCAL_CAPTURE 1
@@ -536,11 +539,11 @@ struct Board {Display display;static Board& GetInstance(){static Board board;ret
 int64_t DictationNow(bool trusted){return trusted?1788712345678LL:0;}
 
 struct AudioService {
- std::atomic<uint32_t> local_physical_boundary_{0},local_recording_press_{0},local_output_boundary_{0},local_prepared_press_{0};
+ std::atomic<uint32_t> local_physical_boundary_{0},local_recording_press_{0},local_output_boundary_{0},local_prepared_press_{0},local_input_press_{0};
  std::atomic<bool> service_stopped_{false};std::mutex local_recording_mutex_,audio_queue_mutex_;std::condition_variable audio_queue_cv_;
  uint32_t playback_generation_=0;int event_group_=0;std::vector<int> audio_decode_queue_,audio_playback_queue_;std::string_view local_feedback_;bool local_feedback_active_=false;
  void FenceLocalRecording(uint32_t);void ReleaseLocalRecordingFence(uint32_t);void ReconcileLocalRecording(uint32_t);
- void StartLocalRecording(uint32_t);void StopLocalRecording(uint32_t expected=0);
+ void StartLocalRecording(uint32_t);void StopLocalRecording(uint32_t expected=0);bool IsLocalInputIdle()const;
  void CancelLocalFeedback(){}void CloseVoiceUploadGate(){}void ResetDecoder(){}bool IsLocalRecordingReady(uint32_t press){return local_recording_press_==press;}
 };
 struct Application {
@@ -588,6 +591,122 @@ void dictation_main_consumer_cases(){
  }
  join();
 }
+
+void reassignment_start(Application& app) {
+ auto& recorder=*app.provisions_recorder_;initialize(recorder);authorize(recorder);
+ app.ToggleDictationScreen();app.CloseDictationInputOnMain();app.ServiceDictation();app.HandleDictationControlOnMain();drain();
+ dictation_ack(recorder,dictation::State::Open);app.ServiceDictation();
+}
+void move_assignment(Application& app,int assignment=99){authorize(*app.provisions_recorder_,context(assignment));app.protocol->capture=context(assignment);app.ServiceDictation();}
+void fresh_blue(Application& app){app.DictationButton();app.CloseDictationInputOnMain();app.HandleDictationControlOnMain();drain();app.ServiceDictation();}
+void dictation_reassignment_cases(){
+ fresh();VoiceId old_id,new_id;dictation::Reply old_ack;
+ {
+  Application app;reassignment_start(app);auto& recorder=*app.provisions_recorder_;const auto original=recorder.DictationRecord();old_id=original.id;
+  old_ack.id=old_id;old_ack.action=dictation::Action::Start;old_ack.acknowledged=true;old_ack.state=dictation::State::Open;old_ack.revision=1;old_ack.control_revision=1;old_ack.expires_ms=original.expires_ms;
+  move_assignment(app);assert(Board::GetInstance().display.action=="Start");
+  const auto sent=app.protocol->controls.size();fresh_blue(app);
+  const auto next=recorder.DictationRecord();new_id=next.id;
+  assert(new_id!=old_id&&next.conversation_id==context(99).conversation_id&&next.pending==dictation::Action::Start&&next.count==0);
+  assert(app.protocol->controls.size()==sent+1&&app.protocol->controls.back().find(VoiceIdText(new_id))!=std::string::npos);
+  assert(recorder.AcknowledgeDictation(old_ack));drain();assert(recorder.DictationRecord().id==new_id&&recorder.DictationRecord().pending==dictation::Action::Start);
+  assert(!recorder.CanDictate(1,context(99).conversation_id,1788712345678LL));
+ }
+ join();
+ {
+  Application app;auto& recorder=*app.provisions_recorder_;initialize(recorder);authorize(recorder,context(99));app.protocol->capture=context(99);
+  app.ToggleDictationScreen();app.CloseDictationInputOnMain();app.ServiceDictation();
+  assert(recorder.DictationRecord().id==new_id&&recorder.DictationRecord().pending==dictation::Action::Start);
+  assert(app.protocol->controls.back().find(VoiceIdText(new_id))!=std::string::npos);
+  assert(recorder.AcknowledgeDictation(old_ack));drain();
+  app.StartListening();assert(!app.BeginLocalRecordingOnMain());dictation_ack(recorder,dictation::State::Open);app.ServiceDictation();assert(!app.BeginLocalRecordingOnMain());
+  app.StopListening();app.EndLocalRecordingOnMain();app.StartListening();assert(!app.BeginLocalRecordingOnMain());drain();assert(app.BeginLocalRecordingOnMain());
+  int16_t samples[160]{};app.Samples(2,samples,160,1);app.StopListening();app.EndLocalRecordingOnMain();drain();
+  assert(recorder.DictationRecord().count==1&&recorder.DictationRecord().id==new_id);
+ }
+ join();
+ // Every unresolved phase and any actual recording data preserves A.
+ for(int mode=0;mode<6;++mode){fresh();VoiceId preserved;
+  {
+   Application app;reassignment_start(app);auto& recorder=*app.provisions_recorder_;
+   if(mode==0){assert(recorder.RequestDictationControl(dictation::Action::Stop));drain();}
+   if(mode==1){assert(recorder.RequestDictationControl(dictation::Action::Stop));drain();dictation_ack(recorder,dictation::State::Stopped);assert(recorder.RequestDictationControl(dictation::Action::Resume));drain();}
+   if(mode==2){begin_dictation(recorder,1);}
+   if(mode==3){record(recorder,1);}
+   if(mode==4){assert(recorder.RequestDictationControl(dictation::Action::Receipt));drain();}
+   if(mode==5){begin_dictation(recorder,1);int16_t samples[160]{};assert(recorder.Append(1,samples,160,1));state.fail="write";state.fail_n=0;recorder.Release(1);drain();state.fail.clear();}
+   const auto before=recorder.DictationRecord();preserved=before.id;const auto manifest=state.nvs.at("dictation/journal");const auto raw=state.flash;
+   move_assignment(app);const auto sent=app.protocol->controls.size();fresh_blue(app);
+   assert(recorder.DictationRecord().id==before.id&&state.nvs.at("dictation/journal")==manifest&&state.flash==raw);
+   assert(app.protocol->controls.size()==sent&&Board::GetInstance().display.action=="Recovery");
+  }join();
+  {
+   Application app;auto& recorder=*app.provisions_recorder_;initialize(recorder);authorize(recorder,context(99));app.protocol->capture=context(99);app.ToggleDictationScreen();app.CloseDictationInputOnMain();app.ServiceDictation();fresh_blue(app);
+   assert(recorder.DictationRecord().id==preserved&&app.protocol->controls.empty()&&Board::GetInstance().display.action=="Recovery");
+  }join();
+ }
+ // An uncertain original Start is never an acknowledged empty journal.
+ fresh();{
+  Application app;auto& recorder=*app.provisions_recorder_;initialize(recorder);authorize(recorder);app.ToggleDictationScreen();app.CloseDictationInputOnMain();app.ServiceDictation();app.HandleDictationControlOnMain();drain();
+  old_id=recorder.DictationRecord().id;move_assignment(app);fresh_blue(app);assert(recorder.DictationRecord().id==old_id&&recorder.DictationRecord().pending==dictation::Action::Start);
+ }join();
+ // The microphone can still own an in-flight read after a requested close.
+ fresh();{
+  Application app;reassignment_start(app);auto& recorder=*app.provisions_recorder_;old_id=recorder.DictationRecord().id;move_assignment(app);
+  app.audio_service_.local_input_press_=44;fresh_blue(app);assert(recorder.DictationRecord().id==old_id);app.audio_service_.local_input_press_=0;
+  fresh_blue(app);assert(recorder.DictationRecord().id!=old_id);
+ }join();
+ // A cached zero PendingCount does not substitute for the worker's slot scan.
+ for(int fault=0;fault<3;++fault){fresh();
+  {
+   Application app;reassignment_start(app);auto& recorder=*app.provisions_recorder_;old_id=recorder.DictationRecord().id;move_assignment(app);const auto manifest=state.nvs.at("dictation/journal");
+   if(fault==0)state.flash[tail]=0;
+   if(fault==1){state.fail="read";state.fail_n=0;}
+   if(fault==2)state.bad_readback=true;
+   const auto raw=state.flash;fresh_blue(app);
+   assert(recorder.DictationRecord().id==old_id&&recorder.DictationFaulted()&&state.flash==raw&&!recorder.CanDictate(1,context(99).conversation_id,1788712345678LL));
+   if(fault!=2)assert(state.nvs.at("dictation/journal")==manifest);
+   state.fail.clear();state.bad_readback=false;
+  }join();
+  if(fault==2){{Application app;auto& recorder=*app.provisions_recorder_;initialize(recorder);assert(recorder.DictationRecord().id!=old_id&&recorder.DictationRecord().pending==dictation::Action::Start&&!recorder.DictationRecord().authorized);}join();}
+ }
+
+ // An acknowledged empty A may also be retired by a fresh gesture after reboot.
+ fresh();{
+  Application app;reassignment_start(app);old_id=app.provisions_recorder_->DictationRecord().id;move_assignment(app);
+ }join();{
+  Application app;auto& recorder=*app.provisions_recorder_;initialize(recorder);authorize(recorder,context(99));app.protocol->capture=context(99);app.ToggleDictationScreen();app.CloseDictationInputOnMain();app.ServiceDictation();
+  assert(Board::GetInstance().display.action=="Start");fresh_blue(app);assert(recorder.DictationRecord().id!=old_id&&recorder.DictationRecord().pending==dictation::Action::Start);
+ }join();
+ // A B-to-C request during the actual slot inspection is rechecked before the
+ // new UUID commit. Activation waits until the short replacement gate ends.
+ fresh();{
+  Application app;reassignment_start(app);auto& recorder=*app.provisions_recorder_;old_id=recorder.DictationRecord().id;move_assignment(app);std::thread reassignment;
+  bool prepared=false,activated=false;const auto sent=app.protocol->controls.size();
+  {std::lock_guard<std::mutex> lock(task->mutex);pause_worker=true;}
+  read_hook=[&]{
+   reassignment=std::thread([&]{prepared=recorder.PrepareContext(context(100));if(prepared)activated=recorder.ActivateContext(context(100));});
+   std::unique_lock<std::mutex> lock(task->mutex);assert(task->changed.wait_for(lock,std::chrono::seconds(2),[]{return task->notifications>0;}));
+  };
+  assert(recorder.RequestEmptyDictationReplacement(context(99).conversation_id));
+  {std::lock_guard<std::mutex> lock(task->mutex);pause_worker=false;task->changed.notify_all();}
+  drain();assert(reassignment.joinable());reassignment.join();drain();assert(prepared&&activated&&recorder.DictationRecord().id==old_id);
+  app.protocol->capture=context(100);app.ServiceDictation();assert(app.protocol->controls.size()==sent);
+  fresh_blue(app);assert(recorder.DictationRecord().conversation_id==context(100).conversation_id);
+ }join();
+ // A changed prepared context invalidates the queued B gesture before commit.
+ fresh();{
+  Application app;reassignment_start(app);auto& recorder=*app.provisions_recorder_;old_id=recorder.DictationRecord().id;move_assignment(app);
+  assert(recorder.PrepareContext(context(100)));drain();
+  {std::lock_guard<std::mutex> lock(task->mutex);pause_worker=true;}
+  assert(recorder.RequestEmptyDictationReplacement(context(99).conversation_id));assert(!recorder.Begin(1,1788712345678LL));assert(!recorder.ActivateContext(context(100)));
+  {std::lock_guard<std::mutex> lock(task->mutex);pause_worker=false;task->changed.notify_all();}
+  drain();assert(recorder.DictationRecord().id==old_id);assert(recorder.ActivateContext(context(100)));drain();app.protocol->capture=context(100);app.ServiceDictation();
+  fresh_blue(app);assert(recorder.DictationRecord().conversation_id==context(100).conversation_id&&recorder.DictationRecord().pending==dictation::Action::Start);
+ }join();
+ std::cout<<"Empty-journal reassignment: fresh Start, exact UUID/ACK, all uncertain phases, actual slots/input, readback faults, context changes and restart passed\n";
+}
+
 void dictation_physical_cases(){
  fresh();
  {
@@ -635,11 +754,11 @@ PHYSICAL = PHYSICAL.replace('__SAMPLES__', app_source[opening:end])
 PHYSICAL = PHYSICAL.replace('__FENCE__', method('main/application.h', 'void FenceDictationThrough('))
 PHYSICAL = PHYSICAL.replace('__AUDIO_METHODS__', '\n'.join(method('main/audio/audio_service.cc', signature) for signature in (
     'void AudioService::FenceLocalRecording(', 'void AudioService::ReleaseLocalRecordingFence(',
-    'void AudioService::ReconcileLocalRecording(', 'void AudioService::StartLocalRecording(', 'void AudioService::StopLocalRecording(')))
+    'void AudioService::ReconcileLocalRecording(', 'void AudioService::StartLocalRecording(', 'void AudioService::StopLocalRecording(', 'bool AudioService::IsLocalInputIdle()')))
 PHYSICAL = PHYSICAL.replace('__APP_METHODS__', '\n'.join([
     *[method('main/application.cc', signature) for signature in ('void Application::StartListening()', 'void Application::StopListening()', 'bool Application::BeginLocalRecordingOnMain()', 'void Application::EndLocalRecordingOnMain()')],
     *[method('main/provisions_dictation_application.cc', signature) for signature in ('void Application::ToggleDictationScreen()', 'void Application::DictationButton()', 'void Application::CloseDictationInputOnMain()', 'void Application::HandleDictationControlOnMain()', 'void Application::ServiceDictation()')]]))
-WORKER = WORKER.replace('int main(){', PHYSICAL + '\nint main(){').replace('dictation_cases();}', 'dictation_cases();dictation_physical_cases();dictation_main_consumer_cases();}')
+WORKER = WORKER.replace('int main(){', PHYSICAL + '\nint main(){').replace('dictation_cases();}', 'dictation_cases();dictation_physical_cases();dictation_main_consumer_cases();dictation_reassignment_cases();}')
 
 
 class VoiceRecorderReviewTests(unittest.TestCase):

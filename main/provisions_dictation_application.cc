@@ -55,6 +55,20 @@ void Application::HandleDictationControlOnMain() {
         return;
     const auto r = recorder->DictationRecord();
     using namespace provisions::dictation;
+    auto protocol = GetProtocol();
+    provisions::VoiceContext context;
+    auto* websocket = protocol ? static_cast<WebsocketProtocol*>(protocol.get()) : nullptr;
+    const bool negotiated =
+        websocket && websocket->DictationNegotiated() && websocket->GetCaptureContext(context);
+    if (r.id != provisions::VoiceId{} && !recorder->MatchesConversation(r.conversation_id)) {
+        // A fresh Start may retire only a positively empty acknowledged journal.
+        // Never strand it by queuing an old-assignment Stop under the new scope.
+        if (negotiated && !manual_listening_requested_.load() &&
+            provisions_recording_started_press_ == 0 && audio_service_.IsLocalInputIdle() &&
+            !timer_player_.Fenced())
+            recorder->RequestEmptyDictationReplacement(context.conversation_id);
+        return;
+    }
     if (r.pending == Action::Start || r.pending == Action::Resume ||
         (r.state == State::Open && r.pending != Action::Stop)) {
         recorder->RequestDictationControl(Action::Stop);
@@ -63,10 +77,7 @@ void Application::HandleDictationControlOnMain() {
     if (r.pending != Action::None || recorder->DictationBusy() || recorder->DictationFaulted() ||
         timer_player_.Fenced())
         return;
-    auto protocol = GetProtocol();
-    provisions::VoiceContext context;
-    auto* websocket = protocol ? static_cast<WebsocketProtocol*>(protocol.get()) : nullptr;
-    if (!websocket || !websocket->DictationNegotiated() || !websocket->GetCaptureContext(context))
+    if (!negotiated)
         return;
     if (!recorder->MatchesConversation(context.conversation_id))
         return;
@@ -135,15 +146,25 @@ void Application::ServiceDictation() {
         }
     }
     std::string action = "Pending";
-    if (r.pending == Action::Start || r.pending == Action::Resume ||
-        (r.state == State::Open && r.pending != Action::Stop))
+    const bool foreign =
+        r.id != provisions::VoiceId{} && !recorder->MatchesConversation(r.conversation_id);
+    const bool replace_empty = foreign && negotiated && !manual_listening_requested_.load() &&
+                               audio_service_.IsLocalInputIdle() &&
+                               recorder->CanReplaceEmptyDictation(context.conversation_id);
+    if (foreign)
+        action = replace_empty ? "Start" : "Recovery";
+    else if (r.pending == Action::Start || r.pending == Action::Resume ||
+             (r.state == State::Open && r.pending != Action::Stop))
         action = "Stop";
     else if (r.pending == Action::None && r.state == State::Stopped)
         action = "Resume";
     else if (r.pending == Action::None && (r.state == State::Empty || r.state == State::Reviewed))
         action = "Start";
     std::string status;
-    if (recorder->DictationFaulted())
+    if (foreign)
+        status = replace_empty ? "Assignment changed - ready to start"
+                               : "Previous assignment needs recovery";
+    else if (recorder->DictationFaulted())
         status = "Segment pending - needs recovery";
     else if (r.pending != Action::None)
         status = "Control pending";

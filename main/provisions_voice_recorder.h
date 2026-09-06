@@ -70,10 +70,12 @@ public:
         return has_context_.load() && context_.conversation_id == conversation;
     }
     bool RequestDictationControl(dictation::Action action);
+    bool CanReplaceEmptyDictation(const VoiceId& conversation) const;
+    bool RequestEmptyDictationReplacement(const VoiceId& conversation);
     bool AcknowledgeDictation(const dictation::Reply& reply);
     dictation::Record DictationRecord() const;
     bool DictationFaulted() const { return dictation_error_.load(); }
-    bool DictationBusy() const { return dictation_busy_.load(); }
+    bool DictationBusy() const { return dictation_busy_.load() || dictation_replacing_.load(); }
     bool DictationCapped(uint32_t press) const {
         return press != 0 && dictation_capped_press_.load() == press;
     }
@@ -143,6 +145,10 @@ private:
     uint64_t dictation_captured_ms_ = 0;
     dictation::Action dictation_command_ = dictation::Action::None;
     VoiceId dictation_command_conversation_{};
+    VoiceId dictation_replace_previous_{};
+    std::atomic<bool> dictation_replacing_{false};
+    bool CanReplaceEmptyDictationLocked(const VoiceId& conversation) const;
+    bool ReplaceEmptyDictation(const VoiceId& previous, const VoiceId& conversation);
     bool dictation_stop_requested_ = false;
     std::optional<dictation::Reply> dictation_reply_;
     std::optional<VoiceRecording::Work> dictation_retry_work_;
