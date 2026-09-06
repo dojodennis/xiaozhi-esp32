@@ -16,6 +16,7 @@
 #endif
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
 #include <sys/time.h>
+#include "provisions_voice_feedback.h"
 #include "provisions_voice_wire.h"
 #endif
 
@@ -1523,9 +1524,17 @@ void Application::HandleVoiceRecordingResult(provisions::VoiceRecorder::Result r
               !manual_listening_requested_.load();
     if (result == Result::Saved) {
         if (current) {
-            audio_service_.PlaySound(Lang::Sounds::OGG_SUCCESS);
             auto protocol = GetProtocol();
-            if (!protocol || !protocol->IsAudioChannelOpened())
+            const bool offline = !protocol || !protocol->IsAudioChannelOpened();
+            bool queued = false;
+            {
+                std::lock_guard<std::mutex> lock(provisions_recording_control_mutex_);
+                if (provisions_physical_press_.IsCurrent(press) &&
+                    !manual_listening_requested_.load())
+                    queued = audio_service_.PlayLocalFeedback(offline ? provisions::feedback::kSaved
+                                                                      : Lang::Sounds::OGG_SUCCESS);
+            }
+            if (offline && queued)
                 Board::GetInstance().GetDisplay()->SetChatMessage(
                     "assistant", "Saved on Orbit. I'll sync when connected.");
         }
@@ -1533,8 +1542,10 @@ void Application::HandleVoiceRecordingResult(provisions::VoiceRecorder::Result r
             recorder->RequestReplay();
     } else if (result == Result::Failed && current) {
         SetDeviceState(kDeviceStateIdle);
-        Alert("Couldn't save", "I couldn't save that. Please repeat it.", "cancel",
-              Lang::Sounds::OGG_EXCLAMATION);
+        Alert("Couldn't save", "I couldn't save that. Please repeat it.", "cancel", {});
+        std::lock_guard<std::mutex> lock(provisions_recording_control_mutex_);
+        if (provisions_physical_press_.IsCurrent(press) && !manual_listening_requested_.load())
+            audio_service_.PlayLocalFeedback(provisions::feedback::kFailed);
     } else if (result == Result::NeedsAttention && !manual_listening_requested_.load()) {
         Board::GetInstance().GetDisplay()->SetChatMessage(
             "system", "Recording kept on Orbit. Check recordings.");
@@ -1793,6 +1804,7 @@ void Application::StartListening() {
     }
     manual_listening_requested_.store(true, std::memory_order_release);
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    audio_service_.CancelLocalFeedback();
     if (auto protocol = GetProtocol())
         static_cast<WebsocketProtocol*>(protocol.get())->InterruptStoredRecording();
     auto recorder = std::atomic_load(&provisions_recorder_);

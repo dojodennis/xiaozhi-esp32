@@ -19,6 +19,193 @@ def method(source, signature):
 
 
 class LocalCaptureIntegrationReview(unittest.TestCase):
+    def test_saved_failure_feedback_is_exact_current_and_cancelled_before_next_capture(self):
+        source = (ROOT / "main/application.cc").read_text()
+        handlers = "\n".join(method(source, signature) for signature in (
+            "void Application::StartListening()",
+            "void Application::StopListening()",
+            "void Application::HandleVoiceRecordingResult(",
+        ))
+        program = r'''
+#include <atomic>
+#include <cassert>
+#include <chrono>
+#include <condition_variable>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <string_view>
+#include <sys/time.h>
+#include <thread>
+#include <vector>
+#include "provisions_reply_turn.h"
+#define CONFIG_PROVISIONS_LOCAL_CAPTURE 1
+#define CONFIG_PROVISIONS_GATEWAY_REQUIRED 1
+#define MAIN_EVENT_START_LISTENING 1
+#define MAIN_EVENT_STOP_LISTENING 2
+constexpr int kDeviceStateIdle=0;
+void xEventGroupSetBits(int,int){}
+namespace Lang {namespace Sounds {constexpr std::string_view OGG_SUCCESS="success tone";}}
+namespace provisions {
+namespace feedback {
+constexpr std::string_view kSaved="Saved on Orbit. I'll sync when connected.";
+constexpr std::string_view kFailed="I couldn't save that. Please repeat it.";
+}
+struct VoiceRecorder {
+    enum class Result {Saved,Failed,NeedsAttention,Synced,ContextReady};
+    bool allow_begin=true;unsigned begun=0,released=0,replays=0;
+    std::function<void()> before_begin;
+    bool Begin(uint32_t press,uint64_t){if(before_begin)before_begin();if(!allow_begin)return false;begun=press;return true;}
+    void Release(uint32_t press){released=press;}
+    void RequestReplay(){++replays;}
+};
+}
+struct Display {
+    std::string role,text,status;
+    void SetChatMessage(const char* r,const char* t){role=r;text=t;}
+    void SetStatus(const char* value){status=value;}
+};
+struct Board {
+    Display display;
+    static Board& GetInstance(){static Board board;return board;}
+    Display* GetDisplay(){return &display;}
+};
+struct WebsocketProtocol {
+    bool open=false;std::function<void()> before_open;
+    bool IsAudioChannelOpened(){if(before_open){auto callback=std::move(before_open);callback();}return open;}
+    void InterruptStoredRecording(){}
+};
+struct AudioService {
+    unsigned cancels=0,playing=0,mic=0;bool allow_feedback=true;
+    std::string pending;std::vector<std::string> feedback;
+    std::function<void()> on_play;
+    void CancelLocalFeedback(){++cancels;pending.clear();}
+    void StartLocalRecording(uint32_t press){assert(pending.empty());mic=press;}
+    void StopLocalRecording(uint32_t expected=0){if(expected==0||mic==expected)mic=0;}
+    void CloseVoiceUploadGate(){}
+    bool PlayLocalFeedback(std::string_view sound){
+        assert(mic==0);if(on_play)on_play();if(!allow_feedback)return false;
+        ++playing;pending=std::string(sound);feedback.emplace_back(sound);return true;
+    }
+};
+struct Application {
+    std::mutex provisions_recording_control_mutex_;
+    ProvisionsReplyTurn provisions_physical_press_;
+    std::atomic<bool> manual_listening_requested_{false},has_server_time_{false};
+    std::atomic<bool> provisions_recording_failed_{false},provisions_recording_saving_{false},provisions_recording_local_{false};
+    std::shared_ptr<provisions::VoiceRecorder> provisions_recorder_=std::make_shared<provisions::VoiceRecorder>();
+    std::shared_ptr<WebsocketProtocol> protocol=std::make_shared<WebsocketProtocol>();
+    AudioService audio_service_;int event_group_=0,state=0;
+    std::vector<std::function<void()>> scheduled;
+    std::string alert_status,alert_text,alert_sound;
+    Application(){Board::GetInstance().display={};}
+    std::shared_ptr<WebsocketProtocol> GetProtocol(){return protocol;}
+    int GetDeviceState(){return state;}void SetDeviceState(int value){state=value;}
+    const char* GetProvisionsIdleStatus(){return "status";}
+    void Schedule(std::function<void()> fn){scheduled.push_back(std::move(fn));}
+    void Drain(){auto pending=std::move(scheduled);scheduled.clear();for(auto& fn:pending)fn();}
+    void Alert(const char* status,const char* text,const char*,std::string_view sound){
+        alert_status=status;alert_text=text;alert_sound=std::string(sound);
+    }
+    void StartListening();void StopListening();
+    void HandleVoiceRecordingResult(provisions::VoiceRecorder::Result,uint32_t);
+};
+''' + handlers + r'''
+using Result=provisions::VoiceRecorder::Result;
+struct Signal {
+    std::mutex mutex;std::condition_variable changed;bool set=false;
+    void Send(){std::lock_guard<std::mutex> lock(mutex);set=true;changed.notify_all();}
+    void Wait(){std::unique_lock<std::mutex> lock(mutex);assert(changed.wait_for(lock,std::chrono::seconds(2),[&]{return set;}));}
+};
+int main(){
+    for(bool online:{false,true}) {
+        Application app;app.protocol->open=online;
+        app.audio_service_.pending="old cue";
+        app.provisions_recorder_->before_begin=[&]{
+            assert(app.audio_service_.cancels==1&&app.audio_service_.pending.empty());
+        };
+        app.StartListening();app.provisions_recorder_->before_begin={};
+        assert(app.audio_service_.mic==1&&app.audio_service_.feedback.empty());
+        app.StopListening();assert(app.audio_service_.feedback.empty()&&app.provisions_recording_saving_);
+        app.HandleVoiceRecordingResult(Result::ContextReady,0);
+        assert(app.audio_service_.feedback.empty()); // No success without a Saved result.
+        app.HandleVoiceRecordingResult(Result::Saved,1);
+        assert(!app.provisions_recording_saving_&&app.provisions_recording_local_);
+        assert(app.provisions_recorder_->replays==1&&app.audio_service_.feedback.size()==1);
+        assert(app.audio_service_.feedback.back()==(online?Lang::Sounds::OGG_SUCCESS:provisions::feedback::kSaved));
+        if(!online)assert(Board::GetInstance().display.text==provisions::feedback::kSaved);
+        app.HandleVoiceRecordingResult(Result::Synced,1);
+        assert(!app.provisions_recording_local_&&app.audio_service_.feedback.size()==1);
+        app.StartListening();assert(app.audio_service_.pending.empty()&&app.audio_service_.mic==2);
+        app.HandleVoiceRecordingResult(Result::Saved,1);
+        app.HandleVoiceRecordingResult(Result::Failed,1);
+        assert(app.audio_service_.mic==2&&app.manual_listening_requested_&&app.audio_service_.feedback.size()==1);
+        assert(!app.provisions_recording_failed_&&app.alert_text.empty());
+        assert(app.provisions_recorder_->replays==2); // A stale saved record can still sync silently.
+    }
+    {
+        Application app;app.provisions_recorder_->allow_begin=false;app.audio_service_.pending="old cue";
+        app.StartListening();assert(app.audio_service_.pending.empty()&&app.audio_service_.mic==0);
+        assert(app.scheduled.size()==1&&!app.manual_listening_requested_&&app.provisions_recording_failed_);
+        assert(app.audio_service_.feedback.empty());app.Drain();
+        assert(app.alert_status=="Couldn't save"&&app.alert_text==provisions::feedback::kFailed);
+        assert(app.alert_sound.empty()&&app.audio_service_.feedback.size()==1);
+        assert(app.audio_service_.feedback.back()==provisions::feedback::kFailed);
+        assert(app.provisions_recorder_->replays==0&&!app.provisions_recording_local_);
+    }
+    {
+        Application app;app.StartListening();
+        app.HandleVoiceRecordingResult(Result::Failed,1);
+        assert(app.audio_service_.mic==0&&!app.manual_listening_requested_);
+        assert(app.provisions_recording_failed_&&app.audio_service_.feedback.back()==provisions::feedback::kFailed);
+        app.StartListening();assert(app.audio_service_.mic==2&&app.audio_service_.pending.empty());
+    }
+    {
+        Application app;app.provisions_recorder_->allow_begin=false;app.StartListening();
+        app.provisions_recorder_->allow_begin=true;app.StartListening();app.Drain();
+        assert(app.audio_service_.mic==2&&app.manual_listening_requested_);
+        assert(app.audio_service_.feedback.empty()&&app.alert_text.empty()); // Failed prior Begin cannot interrupt its successor.
+    }
+    {
+        Application app;app.StartListening();app.StopListening();
+        app.protocol->before_open=[&]{app.StartListening();};
+        app.HandleVoiceRecordingResult(Result::Saved,1);
+        assert(app.audio_service_.mic==2&&app.manual_listening_requested_);
+        assert(app.audio_service_.feedback.empty()&&Board::GetInstance().display.text.empty());
+    }
+    {
+        Application app;app.StartListening();app.StopListening();app.audio_service_.allow_feedback=false;
+        app.HandleVoiceRecordingResult(Result::Saved,1);
+        assert(app.provisions_recording_local_&&app.provisions_recorder_->replays==1);
+        assert(app.audio_service_.feedback.empty()&&Board::GetInstance().display.text.empty());
+    }
+    {
+        Application app;app.StartListening();app.StopListening();
+        Signal enqueuing,finish_enqueue,press_attempted;std::atomic<bool> press_finished{false};
+        app.audio_service_.on_play=[&]{enqueuing.Send();finish_enqueue.Wait();};
+        std::thread result([&]{app.HandleVoiceRecordingResult(Result::Saved,1);});enqueuing.Wait();
+        std::thread press([&]{press_attempted.Send();app.StartListening();press_finished=true;});
+        press_attempted.Wait();std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        assert(!press_finished); // Enqueue and Cancel/Begin share the physical control gate.
+        finish_enqueue.Send();result.join();press.join();
+        assert(app.audio_service_.mic==2&&app.audio_service_.pending.empty());
+        assert(app.manual_listening_requested_&&app.provisions_recorder_->begun==2);
+        assert(app.audio_service_.feedback.size()==1&&app.audio_service_.cancels==2);
+    }
+}
+'''
+        with tempfile.TemporaryDirectory(prefix="orbit-local-feedback-integration-review-") as folder:
+            path, binary = Path(folder) / "review.cc", Path(folder) / "review"
+            path.write_text(program)
+            compiled = subprocess.run([shutil.which("c++"), "-std=c++17", "-pthread",
+                                       "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
+                                       "-I", str(ROOT / "main"), str(path), "-o", str(binary)],
+                                      capture_output=True, text=True)
+            self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_disconnected_callback_pins_protocol_and_rejects_old_generation(self):
         source = (ROOT / "main/protocols/websocket_protocol.cc").read_text()
         callback = method(source, "websocket->OnDisconnected(") + ");"
@@ -192,6 +379,7 @@ struct AudioService {
     std::atomic<bool> service_stopped_{false};int event_group_=0;
     void StartLocalRecording(uint32_t);void StopLocalRecording(uint32_t expected_press=0);
     void CloseVoiceUploadGate(){}
+    void CancelLocalFeedback(){}
 };
 struct WebsocketProtocol {
     unsigned interruptions=0;

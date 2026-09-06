@@ -1096,6 +1096,9 @@ endif()
 set(MAIN_PRIV_REQUIRES_EXTRA "")
 if(CONFIG_PROVISIONS_LOCAL_CAPTURE)
     list(APPEND MAIN_PRIV_REQUIRES_EXTRA tcp_transport)
+    set(PROVISIONS_FEEDBACK_SOUNDS
+        "assets/provisions/saved_on_orbit.ogg"
+        "assets/provisions/could_not_save.ogg")
 endif()
 if(BOARD_TYPE STREQUAL "m5stack-stick-s3")
     list(APPEND MAIN_PRIV_REQUIRES_EXTRA
@@ -1120,7 +1123,7 @@ if(CONFIG_BOARD_TYPE_ESP32_P4_FUNCTION_EV_BOARD)
     )
 endif()
 idf_component_register(SRCS ${SOURCES}
-                    EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS}
+                    EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS} ${PROVISIONS_FEEDBACK_SOUNDS}
                     INCLUDE_DIRS ${INCLUDE_DIRS}
                     WHOLE_ARCHIVE
                     PRIV_REQUIRES

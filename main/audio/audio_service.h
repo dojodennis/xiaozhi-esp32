@@ -165,6 +165,12 @@ public:
     bool PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait = false);
     std::unique_ptr<AudioStreamPacket> PopPacketFromSendQueue();
     void PlaySound(const std::string_view& sound);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    // Embedded sounds only: keep their storage alive through playback. These
+    // controls never demux, decode, wait for capacity or write to the codec.
+    bool PlayLocalFeedback(const std::string_view& sound);
+    void CancelLocalFeedback();
+#endif
     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
     void ResetDecoder();
     void SetModelsList(srmodel_list_t* models_list);
@@ -210,6 +216,13 @@ private:
     bool output_in_flight_ = false;
     bool playback_drained_notified_ = true;
     uint32_t playback_generation_ = 0;
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    std::string_view local_feedback_;
+    size_t local_feedback_offset_ = 0;
+    bool local_feedback_active_ = false;
+    OggDemuxer local_feedback_demuxer_;
+    void FillLocalFeedbackLocked();
+#endif
     // For server AEC
     std::deque<uint32_t> timestamp_queue_;
 

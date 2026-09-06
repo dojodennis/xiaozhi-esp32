@@ -94,6 +94,25 @@ gateway endpoint remain required. The other profiles keep their existing
 transport. Public-client tests exercise partial/error/WANT writes, stalled
 connect/read/upgrade, bounded queues, fragmentation and disposal from callbacks.
 
+## Spoken local feedback
+
+After a verified save, a connected device plays the receipt tone. Without an
+authenticated connection it says, "Saved on Orbit. I'll sync when connected."
+Failed capture or persistence says, "I couldn't save that. Please repeat it."
+The failure indicator remains visible. These two embedded clips use the same
+`gpt-4o-mini-tts`/`coral` voice as the deployed gateway; their text, encoding and
+hashes are recorded in `main/assets/provisions/voice-feedback.json`. They need no
+network connection to play and are included only in the local-capture profile.
+
+The main task publishes a static asset reference. The existing codec task
+demuxes one compressed packet at a time into the bounded playback queue. A new
+physical press cancels the pending feedback before starting capture; stale save
+callbacks cannot queue it again. The output driver may already be writing one
+60 ms PCM frame, so the acoustic interruption bound still needs device testing.
+Stop, decoder reset and normal drain clear feedback state. A provider
+transcription check on both encoded clips recovered the expected wording; this
+is a software asset check, not microphone/speaker acceptance.
+
 ## Validation and activation boundary
 
 The host suite compiles the actual journal, ESP adapter, PCM ownership and wire
@@ -102,9 +121,9 @@ restart, interrupted writes, corrupt/full storage, exact metadata, stale receipt
 nonce faults and rapid press/release interleavings. The canonical ESP-IDF 6.0.2
 StopWatch bench profile builds, including both WebSocket and MQTT protocol code.
 
-This candidate has not been installed. The remaining release work is local
-spoken feedback and the recording-repair
-experience, coordinated gateway/backend activation, and physical acceptance.
+This candidate has not been installed. The remaining release work is the
+recording-repair experience, coordinated gateway/backend activation, and
+physical acceptance.
 The device must demonstrate real microphone
 recognition and speaker clarity, power loss at each save/cache boundary, full
 storage, repeated presses during reconnection, restart replay, and truthful
