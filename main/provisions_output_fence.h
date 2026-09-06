@@ -12,7 +12,14 @@ constexpr uint64_t kMaximumInteger = 9007199254740991ULL;
 constexpr size_t kManifestBytes = 224;
 using Manifest = std::array<uint8_t, kManifestBytes>;
 
-enum class Phase : uint8_t { Owned = 1, DrainedPendingCommit = 2, Terminal = 3 };
+enum class Phase : uint8_t {
+    Owned = 1,
+    DrainedPendingCommit = 2,
+    Terminal = 3,
+    AbortUnacquiredUnclosed = 4,
+    AbortUnacquiredDrainedPendingCommit = 5
+};
+enum class Origin : uint8_t { Normal = 0, AbortUnacquired = 1 };
 struct Identity {
     std::string device_id, checkpoint_sha256, lease_id, playback_id;
     std::string request_id, route_epoch, device_connection_id;
@@ -26,17 +33,18 @@ struct PhoneReceipt {
 struct Record {
     Identity identity;
     Phase phase = Phase::Owned;
+    Origin origin = Origin::Normal;
     PhoneReceipt receipt;
     std::string backend_commit_id;
 };
-enum class Command { Acquire, Release, CloseCommit };
+enum class Command { Acquire, Release, CloseCommit, AbortUnacquired };
 struct Message {
     Command command = Command::Acquire;
     Identity identity;
     PhoneReceipt receipt;
     std::string backend_commit_id;
 };
-enum class Result { Denied, RecoveryRequired, Acquired, DrainPending, Released };
+enum class Result { Denied, RecoveryRequired, Acquired, DrainPending, Released, AbortPending };
 struct Reply {
     Result result = Result::Denied;
     std::string json;
@@ -87,11 +95,21 @@ public:
     virtual bool OpenAfterTerminal(const Identity& identity) = 0;
 };
 
+// Bound only by the future authenticated gateway/observed-receipt adapter. No raw-JSON default.
+class AbortAuthority {
+public:
+    virtual ~AbortAuthority() = default;
+    virtual bool Allows(const Identity& identity, const PhoneReceipt& receipt) = 0;
+};
+
 // Core only: no protocol advertisement/runtime binding. Construct before any I/O admission;
 // invoke on a serialized worker, never an ESP_TIMER callback. Hooks must not reenter this core.
+// Abort requests require the registered observed stopped event plus validated original grant;
+// a caller-supplied no-start literal is not authority. Runtime authentication remains unbound.
 class Core {
 public:
-    Core(Store& store, Physical& physical, std::string device_id);
+    Core(Store& store, Physical& physical, std::string device_id,
+         AbortAuthority* abort_authority = nullptr);
     bool Hydrate();
     Reply Handle(std::string_view text);
     bool GateOpen() const;
@@ -104,6 +122,7 @@ private:
     Store& store_;
     Physical& physical_;
     const std::string device_id_;
+    AbortAuthority* const abort_authority_;
     mutable std::mutex mutex_;
     Record record_;
     bool loaded_ = false, gate_open_ = false;

@@ -7,7 +7,7 @@ namespace provisions::output_fence {
 namespace {
 constexpr const char* kNamespace = "orbit_of_v1";
 constexpr const char* kKey = "owner";
-constexpr uint8_t kMagic[] = {'O', 'R', 'F', 'E', 'N', 'C', '0', '1'};
+constexpr uint8_t kMagic[] = {'O', 'R', 'F', 'E', 'N', 'C', '0', '2'};
 void Put(Manifest& bytes, size_t offset, uint64_t value, size_t count) {
     for (size_t i = 0; i < count; ++i)
         bytes[offset + i] = static_cast<uint8_t>(value >> (8 * i));
@@ -54,29 +54,73 @@ uint32_t Crc(const Manifest& bytes) {
 bool ValidRecord(const Record& record) {
     if (!ValidIdentity(record.identity))
         return false;
-    if (record.phase == Phase::Owned)
-        return SameReceipt(record.receipt, {}) && record.backend_commit_id.empty();
+    if (record.origin == Origin::Normal) {
+        if (record.phase == Phase::Owned)
+            return SameReceipt(record.receipt, {}) && record.backend_commit_id.empty();
+        if (record.phase != Phase::DrainedPendingCommit && record.phase != Phase::Terminal)
+            return false;
+    } else if (record.origin == Origin::AbortUnacquired) {
+        if (record.receipt.completed || record.receipt.has_started ||
+            (record.phase != Phase::AbortUnacquiredUnclosed &&
+             record.phase != Phase::AbortUnacquiredDrainedPendingCommit &&
+             record.phase != Phase::Terminal))
+            return false;
+    } else
+        return false;
     if (!ValidReceipt(record.receipt))
         return false;
-    if (record.phase == Phase::DrainedPendingCommit)
-        return record.backend_commit_id.empty();
-    return record.phase == Phase::Terminal && ValidId(record.backend_commit_id);
+    return record.phase == Phase::Terminal ? ValidId(record.backend_commit_id)
+                                           : record.backend_commit_id.empty();
 }
 bool Transition(const Record& before, const Record& after) {
     if (SameIdentity(before.identity, after.identity)) {
+        if (before.origin != after.origin)
+            return false;
         if (before.phase == after.phase)
             return SameReceipt(before.receipt, after.receipt) &&
                    before.backend_commit_id == after.backend_commit_id;
-        return (before.phase == Phase::Owned && after.phase == Phase::DrainedPendingCommit) ||
-               (before.phase == Phase::DrainedPendingCommit && after.phase == Phase::Terminal &&
-                SameReceipt(before.receipt, after.receipt));
+        if (before.origin == Origin::Normal && before.phase == Phase::Owned &&
+            after.phase == Phase::DrainedPendingCommit)
+            return true;
+        if (!SameReceipt(before.receipt, after.receipt))
+            return false;
+        return (before.phase == Phase::DrainedPendingCommit && after.phase == Phase::Terminal) ||
+               (before.phase == Phase::AbortUnacquiredUnclosed &&
+                after.phase == Phase::AbortUnacquiredDrainedPendingCommit) ||
+               (before.phase == Phase::AbortUnacquiredDrainedPendingCommit &&
+                after.phase == Phase::Terminal);
     }
     const auto& old = before.identity;
     const auto& next = after.identity;
-    return before.phase == Phase::Terminal && after.phase == Phase::Owned &&
+    return before.phase == Phase::Terminal &&
+           ((after.phase == Phase::Owned && after.origin == Origin::Normal) ||
+            (after.phase == Phase::AbortUnacquiredUnclosed &&
+             after.origin == Origin::AbortUnacquired)) &&
            old.device_id == next.device_id && next.fence_epoch > old.fence_epoch &&
            next.checkpoint_sha256 != old.checkpoint_sha256 && next.playback_id != old.playback_id &&
            (next.lease_id != old.lease_id || next.sequence > old.sequence);
+}
+Store::LoadResult LoadBytes(Manifest& bytes) {
+    nvs_handle_t handle;
+    const auto opened = nvs_open(kNamespace, NVS_READONLY, &handle);
+    if (opened == ESP_ERR_NVS_NOT_FOUND)
+        return Store::LoadResult::Missing;
+    if (opened != ESP_OK)
+        return Store::LoadResult::Fault;
+    size_t size = 0;
+    auto status = nvs_get_blob(handle, kKey, nullptr, &size);
+    if (status == ESP_ERR_NVS_NOT_FOUND) {
+        nvs_close(handle);
+        return Store::LoadResult::Missing;
+    }
+    if (status != ESP_OK || size != bytes.size()) {
+        nvs_close(handle);
+        return Store::LoadResult::Fault;
+    }
+    status = nvs_get_blob(handle, kKey, bytes.data(), &size);
+    nvs_close(handle);
+    return status == ESP_OK && size == bytes.size() ? Store::LoadResult::Present
+                                                    : Store::LoadResult::Fault;
 }
 }  // namespace
 bool EncodeRecord(const Record& record, Manifest& bytes) {
@@ -87,6 +131,7 @@ bool EncodeRecord(const Record& record, Manifest& bytes) {
     bytes[8] = static_cast<uint8_t>(record.phase);
     bytes[9] = record.receipt.completed;
     bytes[10] = record.receipt.has_started;
+    bytes[11] = static_cast<uint8_t>(record.origin);
     const auto& id = record.identity;
     Put(bytes, 12, id.fence_epoch, 8);
     Put(bytes, 20, id.sequence, 8);
@@ -107,13 +152,15 @@ bool EncodeRecord(const Record& record, Manifest& bytes) {
     return true;
 }
 bool DecodeRecord(const Manifest& bytes, Record& output) {
-    if (!std::equal(std::begin(kMagic), std::end(kMagic), bytes.begin()) || bytes[9] > 1 ||
-        bytes[10] > 1 || bytes[11] != 0 || Get(bytes, 220, 4) != Crc(bytes) ||
+    if (!std::equal(std::begin(kMagic), std::end(kMagic) - 1, bytes.begin()) ||
+        (bytes[7] != '1' && bytes[7] != '2') || bytes[9] > 1 || bytes[10] > 1 ||
+        (bytes[7] == '1' && bytes[11] != 0) || Get(bytes, 220, 4) != Crc(bytes) ||
         std::any_of(bytes.begin() + 200, bytes.begin() + 220,
                     [](uint8_t byte) { return byte != 0; }))
         return false;
     Record record;
     record.phase = static_cast<Phase>(bytes[8]);
+    record.origin = bytes[7] == '1' ? Origin::Normal : static_cast<Origin>(bytes[11]);
     record.receipt.completed = bytes[9];
     record.receipt.has_started = bytes[10];
     auto& id = record.identity;
@@ -139,28 +186,11 @@ bool DecodeRecord(const Manifest& bytes, Record& output) {
     return true;
 }
 Store::LoadResult NvsStore::Load(Record& record) {
-    nvs_handle_t handle;
-    const auto opened = nvs_open(kNamespace, NVS_READONLY, &handle);
-    if (opened == ESP_ERR_NVS_NOT_FOUND)
-        return LoadResult::Missing;
-    if (opened != ESP_OK)
-        return LoadResult::Fault;
-    size_t size = 0;
-    auto status = nvs_get_blob(handle, kKey, nullptr, &size);
-    if (status == ESP_ERR_NVS_NOT_FOUND) {
-        nvs_close(handle);
-        return LoadResult::Missing;
-    }
     Manifest bytes;
-    if (status != ESP_OK || size != bytes.size()) {
-        nvs_close(handle);
-        return LoadResult::Fault;
-    }
-    status = nvs_get_blob(handle, kKey, bytes.data(), &size);
-    nvs_close(handle);
-    return status == ESP_OK && size == bytes.size() && DecodeRecord(bytes, record)
-               ? LoadResult::Present
-               : LoadResult::Fault;
+    const auto found = LoadBytes(bytes);
+    if (found != LoadResult::Present)
+        return found;
+    return DecodeRecord(bytes, record) ? LoadResult::Present : LoadResult::Fault;
 }
 bool NvsStore::CompareExchange(const Record& expected, const Record& desired) {
     static std::mutex namespace_mutex;
@@ -180,7 +210,7 @@ bool NvsStore::CompareExchange(const Record& expected, const Record& desired) {
     const bool written = nvs_set_blob(handle, kKey, after.data(), after.size()) == ESP_OK &&
                          nvs_commit(handle) == ESP_OK;
     nvs_close(handle);
-    return written && Load(prior) == LoadResult::Present && EncodeRecord(prior, actual) &&
-           actual == after;
+    return written && LoadBytes(actual) == LoadResult::Present && actual == after &&
+           DecodeRecord(actual, prior);
 }
 }  // namespace provisions::output_fence

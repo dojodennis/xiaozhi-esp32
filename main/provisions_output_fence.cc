@@ -22,8 +22,11 @@ bool SameReceipt(const PhoneReceipt& a, const PhoneReceipt& b) {
            a.started_at_ms == b.started_at_ms && a.stopped_at_ms == b.stopped_at_ms &&
            a.drained_at_ms == b.drained_at_ms;
 }
-Core::Core(Store& store, Physical& physical, std::string device_id)
-    : store_(store), physical_(physical), device_id_(std::move(device_id)) {
+Core::Core(Store& store, Physical& physical, std::string device_id, AbortAuthority* abort_authority)
+    : store_(store),
+      physical_(physical),
+      device_id_(std::move(device_id)),
+      abort_authority_(abort_authority) {
     physical_.BlockAll();
 }
 bool Core::Hydrate() {
@@ -84,6 +87,46 @@ Reply Core::Handle(std::string_view text) {
     if (!loaded_)
         return {Result::RecoveryRequired, {}};
     const auto& incoming = message.identity;
+    if (message.command == Command::AbortUnacquired) {
+        if (!abort_authority_ || !abort_authority_->Allows(incoming, message.receipt))
+            return {};
+        const bool retry =
+            record_.origin == Origin::AbortUnacquired && SameIdentity(record_.identity, incoming);
+        if (retry) {
+            if ((record_.phase != Phase::AbortUnacquiredUnclosed &&
+                 record_.phase != Phase::AbortUnacquiredDrainedPendingCommit) ||
+                !SameReceipt(record_.receipt, message.receipt))
+                return {};
+        } else {
+            if (record_.phase != Phase::Terminal ||
+                incoming.fence_epoch <= record_.identity.fence_epoch ||
+                incoming.checkpoint_sha256 == record_.identity.checkpoint_sha256 ||
+                incoming.playback_id == record_.identity.playback_id ||
+                (incoming.lease_id == record_.identity.lease_id &&
+                 incoming.sequence <= record_.identity.sequence))
+                return {};
+            physical_.BlockAll();
+            gate_open_ = false;
+            Record next;
+            next.identity = incoming;
+            next.origin = Origin::AbortUnacquired;
+            next.phase = Phase::AbortUnacquiredUnclosed;
+            // The first CAS freezes the entire no-start fact and rejects delayed acquire,
+            // including while physical closure remains unknown and across reboot.
+            next.receipt = message.receipt;
+            if (!Persist(next))
+                return {Result::RecoveryRequired, {}};
+        }
+        if (!Closed())
+            return Respond(Result::RecoveryRequired);
+        if (record_.phase == Phase::AbortUnacquiredUnclosed) {
+            Record next = record_;
+            next.phase = Phase::AbortUnacquiredDrainedPendingCommit;
+            if (!Persist(next))
+                return {Result::RecoveryRequired, {}};
+        }
+        return Respond(Closed() ? Result::AbortPending : Result::RecoveryRequired);
+    }
     if (message.command == Command::Acquire) {
         if (record_.phase == Phase::Owned && SameIdentity(record_.identity, incoming))
             return Respond(Closed() ? Result::Acquired : Result::RecoveryRequired);
@@ -104,7 +147,9 @@ Reply Core::Handle(std::string_view text) {
         return Respond(Closed() ? Result::Acquired : Result::RecoveryRequired);
     }
     if (message.command == Command::Release) {
-        if (!SameRelease(record_.identity, incoming) || record_.phase == Phase::Terminal)
+        if (record_.origin != Origin::Normal ||
+            (record_.phase != Phase::Owned && record_.phase != Phase::DrainedPendingCommit) ||
+            !SameRelease(record_.identity, incoming))
             return {};
         if (record_.phase == Phase::DrainedPendingCommit &&
             !SameReceipt(record_.receipt, message.receipt))
@@ -120,7 +165,10 @@ Reply Core::Handle(std::string_view text) {
         }
         return Respond(Closed() ? Result::DrainPending : Result::RecoveryRequired);
     }
-    if (!SameCommon(record_.identity, incoming) || record_.phase == Phase::Owned)
+    if (!SameCommon(record_.identity, incoming) ||
+        (record_.phase != Phase::DrainedPendingCommit &&
+         record_.phase != Phase::AbortUnacquiredDrainedPendingCommit &&
+         record_.phase != Phase::Terminal))
         return {};
     if (record_.phase == Phase::Terminal) {
         if (record_.backend_commit_id != message.backend_commit_id)

@@ -189,6 +189,21 @@ bool ParseMessage(std::string_view text, Message& output) {
                 Number(Field(root, "drained_at_ms"), 0, kMaximumInteger,
                        message.receipt.drained_at_ms) &&
                 ValidReceipt(message.receipt);
+    } else if (valid && Literal(Field(root, "type"), "output_fence_v1.abort_unacquired")) {
+        message.command = Command::AbortUnacquired;
+        valid = Keys(root, {"type", "version", "device_id", "fence_epoch", "checkpoint_sha256",
+                            "lease_id", "sequence", "playback_id", "request_id",
+                            "response_revision", "route_epoch", "device_connection_id", "completed",
+                            "started_at_ms", "stopped_at_ms", "drained_at_ms"}) &&
+                Response(root, message.identity) &&
+                Id(Field(root, "device_connection_id"), message.identity.device_connection_id) &&
+                cJSON_IsFalse(Field(root, "completed")) &&
+                cJSON_IsNull(Field(root, "started_at_ms")) &&
+                Number(Field(root, "stopped_at_ms"), 0, kMaximumInteger,
+                       message.receipt.stopped_at_ms) &&
+                Number(Field(root, "drained_at_ms"), 0, kMaximumInteger,
+                       message.receipt.drained_at_ms) &&
+                ValidReceipt(message.receipt);
     } else if (valid && Literal(Field(root, "type"), "output_fence_v1.close_commit")) {
         message.command = Command::CloseCommit;
         valid = Keys(root, {"type", "version", "device_id", "fence_epoch", "checkpoint_sha256",
@@ -203,10 +218,11 @@ bool ParseMessage(std::string_view text, Message& output) {
 }
 std::string ReplyJson(Result result, const Identity& id) {
     if (!ValidIdentity(id) || (result != Result::Acquired && result != Result::DrainPending &&
-                               result != Result::Released))
+                               result != Result::Released && result != Result::AbortPending))
         return {};
     const char* action = result == Result::Acquired       ? "acquired"
                          : result == Result::DrainPending ? "drain_pending"
+                         : result == Result::AbortPending ? "abort_pending"
                                                           : "released";
     std::string json = "{\"type\":\"output_fence_v1." + std::string(action) +
                        "\",\"version\":1,\"device_id\":\"" + id.device_id +
@@ -217,6 +233,10 @@ std::string ReplyJson(Result result, const Identity& id) {
     if (result == Result::Acquired)
         return json +
                "\"capture_closed\":true,\"prior_output_drained\":true,\"fallback_disabled\":true}";
+    if (result == Result::AbortPending)
+        return json +
+               "\"acquire_rejected\":true,\"physical_drained\":true,\"physical_state\":\"DRAINED_"
+               "PENDING_COMMIT\"}";
     if (result == Result::DrainPending)
         return json + "\"physical_drained\":true,\"physical_state\":\"DRAINED_PENDING_COMMIT\"}";
     return json +
