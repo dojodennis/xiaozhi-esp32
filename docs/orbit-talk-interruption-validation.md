@@ -30,7 +30,40 @@ Matching gateway `27512a7` passes 882 tests, Ruff and strict mypy.
 A successful build does not prove microphone/speaker acoustics or the user's
 end-to-end experience.
 
-The matching gateway must be deployed first. Device installation must retain the
-existing signing identity and use the verified app-only recovery process; never
-flash the generated merged image. Current deployment/device evidence will be
-added here after validation.
+The exact bench-profile build now passes with the accepted `dependencies.lock`.
+Its generated SDK configuration and partition table match the installed build
+byte for byte. The accepted crest, motion, display and board source also match.
+The signed-update check is retained. The separate default-profile artifact was
+rejected and was never installed.
+
+## Installed application
+
+Gateway `27512a7` was deployed first and remains healthy. On the connected
+StopWatch, only the application at `0x20000` was written: 3,018,752 bytes, SHA256
+`be5ed6110713a28d3f59217eda9ba72d4b4560923179e0f1d7e55d08d30cc512`.
+Source is `e8cb600` (implementation `d938601`), version 2.4.8, ESP-IDF 6.0.2.
+The existing trusted RSA signature verified before installation.
+
+Before writing, the full 16 MB recovery matched the device. After the app-only
+write and its data-hash check, a separate full-device verification matched all
+16,777,216 expected bytes, SHA256
+`97721bb9a9b0b3e8fe4c3bb51bce5619f9b458b71d0137d8325ce9eae26f7c69`.
+Bootloader, partitions, NVS, OTA selector, assets and eFuses remain unchanged.
+The reversible bench security flags remain zero; no eFuse was written.
+
+A 25-second passive USB observation confirmed Wi-Fi, network connection,
+authenticated gateway, activation completion and idle. No microphone was
+activated and no raw logs were saved. The existing optional model-partition
+warning remains; no other error subsystem appeared. Free internal SRAM remained
+at least 140,563 bytes in the captured samples, with a boot minimum of 124,563.
+
+Local artifacts are archived under
+`~/.codex/device-builds/provisions-kitchen-helper/2026-09-06/stopwatch-2.4.8-talk-d938601`.
+Private pre/post full-flash recovery images are retained separately under the
+same date in `device-backups`. Never publish those recovery images or flash the
+generated merged build. The prior app requires its paired compatible gateway;
+restore the accepted app before rolling the service back to `99d7a7d`.
+
+Physical microphone/speaker use, actual Talk interruption under acoustic input,
+and signed-in owning-app acceptance remain unproved. This installed repair does
+not complete offline capture, stable product descriptions or cross-app dialogue.
