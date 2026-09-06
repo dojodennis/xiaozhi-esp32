@@ -6,8 +6,8 @@
 
 namespace provisions {
 namespace {
-constexpr uint8_t kMagic[8] = {'O', 'R', 'B', 'A', 'U', 'D', '0', '1'};
-constexpr size_t kAuthenticatedBytes = 88;
+constexpr uint8_t kMagic[8] = {'O', 'R', 'B', 'A', 'U', 'D', '0', '2'};
+constexpr size_t kAuthenticatedBytes = 108;
 uint64_t Get(const uint8_t* p, size_t bytes) {
     uint64_t result = 0;
     for (size_t i = 0; i < bytes; ++i)
@@ -21,9 +21,15 @@ void Put(uint8_t* p, uint64_t value, size_t bytes) {
 bool Nonzero(const uint8_t* p, size_t size) {
     return std::any_of(p, p + size, [](uint8_t value) { return value != 0; });
 }
+bool ValidMetadata(const VoiceCapture& capture) {
+    return Nonzero(capture.request_id.data(), 16) && Nonzero(capture.conversation_id.data(), 16) &&
+           capture.captured_unix_ms <= 253402300799999ULL && capture.source_revision <= 999999999 &&
+           (Nonzero(capture.source_request_id.data(), 16) || capture.source_revision == 0);
+}
 bool Same(const VoiceCapture& a, const VoiceCapture& b) {
     return a.request_id == b.request_id && a.conversation_id == b.conversation_id &&
-           a.captured_unix_ms == b.captured_unix_ms && a.packet_count == b.packet_count;
+           a.captured_unix_ms == b.captured_unix_ms && a.packet_count == b.packet_count &&
+           a.source_request_id == b.source_request_id && a.source_revision == b.source_revision;
 }
 bool Overlaps(VoiceBytes input, const uint8_t* buffer, size_t size) {
     const auto a = reinterpret_cast<uintptr_t>(input.data);
@@ -78,16 +84,18 @@ VoiceStoreResult VoiceOutbox::Read(size_t slot, SavedVoiceCapture& output) {
     std::copy_n(header.data() + 40, 16, capture.conversation_id.begin());
     capture.captured_unix_ms = Get(header.data() + 56, 8);
     capture.packet_count = Get(header.data() + 64, 4);
+    std::copy_n(header.data() + 76, 16, capture.source_request_id.begin());
+    capture.source_revision = Get(header.data() + 92, 4);
     const uint64_t sequence = Get(header.data() + 16, 8);
-    if (std::memcmp(header.data(), kMagic, 8) != 0 || Get(header.data() + 8, 4) != 1 || bytes < 3 ||
-        bytes > kMaxFrameBytes || sequence == 0 || !Nonzero(capture.request_id.data(), 16) ||
-        !Nonzero(capture.conversation_id.data(), 16) || Get(header.data() + 68, 4) != 16000 ||
-        Get(header.data() + 72, 4) != 60 || !Nonzero(header.data() + 76, 12))
+    if (std::memcmp(header.data(), kMagic, 8) != 0 || Get(header.data() + 8, 4) != 2 || bytes < 3 ||
+        bytes > kMaxFrameBytes || sequence == 0 || !ValidMetadata(capture) ||
+        Get(header.data() + 68, 4) != 16000 || Get(header.data() + 72, 4) != 60 ||
+        !Nonzero(header.data() + 96, 12))
         return VoiceStoreResult::Corrupt;
     if (!flash_.Read(offset + kBodyOffset, cipher_buffer_, bytes))
         return VoiceStoreResult::IoError;
-    if (!cipher_.Open(header.data() + 76, {header.data(), kAuthenticatedBytes},
-                      {cipher_buffer_, bytes}, header.data() + 88, plain_buffer_)) {
+    if (!cipher_.Open(header.data() + 96, {header.data(), kAuthenticatedBytes},
+                      {cipher_buffer_, bytes}, header.data() + 108, plain_buffer_)) {
         std::memset(plain_buffer_, 0, bytes);
         return VoiceStoreResult::Corrupt;
     }
@@ -102,9 +110,7 @@ VoiceStoreResult VoiceOutbox::Read(size_t slot, SavedVoiceCapture& output) {
 VoiceStoreResult VoiceOutbox::Save(const VoiceCapture& capture, VoiceBytes frames,
                                    SavedVoiceCapture& output) {
     output = {};
-    if (!BuffersReady() || !Nonzero(capture.request_id.data(), 16) ||
-        !Nonzero(capture.conversation_id.data(), 16) ||
-        !ValidFrames(frames, capture.packet_count) ||
+    if (!BuffersReady() || !ValidMetadata(capture) || !ValidFrames(frames, capture.packet_count) ||
         Overlaps(frames, cipher_buffer_, buffer_bytes_) ||
         Overlaps(frames, plain_buffer_, buffer_bytes_))
         return VoiceStoreResult::Invalid;
@@ -135,7 +141,7 @@ VoiceStoreResult VoiceOutbox::Save(const VoiceCapture& capture, VoiceBytes frame
         return VoiceStoreResult::Invalid;
     std::array<uint8_t, kHeaderBytes> header{};
     std::copy_n(kMagic, 8, header.begin());
-    Put(header.data() + 8, 1, 4);
+    Put(header.data() + 8, 2, 4);
     Put(header.data() + 12, frames.size, 4);
     Put(header.data() + 16, sequence + 1, 8);
     std::copy(capture.request_id.begin(), capture.request_id.end(), header.begin() + 24);
@@ -144,9 +150,12 @@ VoiceStoreResult VoiceOutbox::Save(const VoiceCapture& capture, VoiceBytes frame
     Put(header.data() + 64, capture.packet_count, 4);
     Put(header.data() + 68, 16000, 4);
     Put(header.data() + 72, 60, 4);
-    if (!cipher_.NextNonce(header.data() + 76) || !Nonzero(header.data() + 76, 12) ||
-        !cipher_.Seal(header.data() + 76, {header.data(), kAuthenticatedBytes}, frames,
-                      cipher_buffer_, header.data() + 88))
+    std::copy(capture.source_request_id.begin(), capture.source_request_id.end(),
+              header.begin() + 76);
+    Put(header.data() + 92, capture.source_revision, 4);
+    if (!cipher_.NextNonce(header.data() + 96) || !Nonzero(header.data() + 96, 12) ||
+        !cipher_.Seal(header.data() + 96, {header.data(), kAuthenticatedBytes}, frames,
+                      cipher_buffer_, header.data() + 108))
         return VoiceStoreResult::CryptoError;
     const size_t offset = available * kSlotBytes;
     if (!flash_.Erase(offset, kSlotBytes) ||

@@ -18,6 +18,8 @@ struct VoiceCapture {
     VoiceId conversation_id{};
     uint64_t captured_unix_ms = 0;  // Zero means the device had no trusted clock.
     uint32_t packet_count = 0;
+    VoiceId source_request_id{};  // All-zero means no prior presented answer.
+    uint32_t source_revision = 0;
 };
 struct SavedVoiceCapture {
     VoiceCapture capture;
@@ -53,7 +55,7 @@ public:
     static constexpr size_t kMaxPackets = 167;
     static constexpr size_t kMaxPacketBytes = 2048;
     static constexpr size_t kMaxFrameBytes = kMaxPackets * (2 + kMaxPacketBytes);
-    static constexpr size_t kHeaderBytes = 104;
+    static constexpr size_t kHeaderBytes = 124;
 
     VoiceOutbox(VoiceFlash& flash, VoiceCipher& cipher, uint8_t* cipher_buffer,
                 uint8_t* plain_buffer, size_t buffer_bytes);

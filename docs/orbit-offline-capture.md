@@ -4,7 +4,8 @@
 
 The StopWatch has a bounded journal for four recordings of up to 167 Opus packets
 (16 kHz mono, 60 ms, at most 2048 bytes per packet). It stores the original request
-and conversation IDs, capture time when known, and framed audio. It never evicts
+and conversation IDs, the exact prior answer ID/revision, capture time when known,
+and framed audio. It never evicts
 an older recording to make room. Full storage, malformed audio, unavailable keys,
 and flash failures return explicit failure results.
 
@@ -16,7 +17,10 @@ asset modes and runtime asset downloads are disabled for this profile so they
 cannot erase saved recordings.
 
 Each record uses AES-256-GCM through the ESP-IDF 6 PSA API. IDs, lengths, sequence,
-codec details, time and nonce are authenticated alongside encrypted audio. A
+codec details, time, prior answer reference and nonce are authenticated alongside
+encrypted audio. Format v2 has a 124-byte header; unsupported versions remain
+quarantined. The earlier v1 storage-only checkpoint was never instantiated or
+installed, so there are no deployed v1 recordings to migrate. A
 separate NVS key survives credential rotation. First creation requires an explicit
 authenticated-context decision and an entirely erased journal region. Existing
 keys open offline. A committed, independently read-back NVS counter supplies

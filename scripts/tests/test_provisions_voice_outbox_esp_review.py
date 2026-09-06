@@ -229,7 +229,7 @@ int setup(psa_aead_operation_t* op,psa_key_id_t id,unsigned alg,bool encrypt) {
 int psa_aead_encrypt_setup(psa_aead_operation_t* op,psa_key_id_t id,unsigned alg){return setup(op,id,alg,true);}
 int psa_aead_decrypt_setup(psa_aead_operation_t* op,psa_key_id_t id,unsigned alg){return setup(op,id,alg,false);}
 int psa_aead_set_lengths(psa_aead_operation_t* op,size_t aad,size_t bytes){
-    assert(op->ctx && aad==88 && bytes<=VoiceOutbox::kMaxFrameBytes);return state.bad("lengths")?-1:0;
+    assert(op->ctx && aad==108 && bytes<=VoiceOutbox::kMaxFrameBytes);return state.bad("lengths")?-1:0;
 }
 int psa_aead_set_nonce(psa_aead_operation_t* op,const uint8_t* nonce,size_t size) {
     assert(size==12);if(state.bad("nonce"))return -1;
@@ -337,12 +337,12 @@ int main() {
     // Nonces are consumed once, including encryption or persistence failures.
     reset();
     {EspVoiceOutbox box;assert(box.Initialize(true));assert(save(box,1,out)==VoiceStoreResult::Ok);
-      assert(memcmp(state.flash.data()+tail+76,"ORB1\1\0\0\0\0\0\0\0",12)==0);
+      assert(memcmp(state.flash.data()+tail+96,"ORB1\1\0\0\0\0\0\0\0",12)==0);
       auto counter=state.nvs.at("nonce_v1");int commits=state.calls["commit"];
       assert(save(box,1,out)==VoiceStoreResult::Ok);
       assert(state.nvs.at("nonce_v1")==counter && state.calls["commit"]==commits);}
     {EspVoiceOutbox box;assert(box.Initialize());assert(save(box,2,out)==VoiceStoreResult::Ok);
-      assert(memcmp(state.flash.data()+tail+VoiceOutbox::kSlotBytes+76,"ORB1\2\0\0\0\0\0\0\0",12)==0);}
+      assert(memcmp(state.flash.data()+tail+VoiceOutbox::kSlotBytes+96,"ORB1\2\0\0\0\0\0\0\0",12)==0);}
     for(const std::string operation:{"open","get_u64","set_u64","commit"}) {
         reset();
         {EspVoiceOutbox box;assert(box.Initialize(true));state.calls.clear();state.fail=operation;
@@ -353,11 +353,11 @@ int main() {
     {EspVoiceOutbox box;assert(box.Initialize(true));state.calls.clear();state.bad_counter_readback=true;
       assert(save(box,1,out)==VoiceStoreResult::CryptoError);no_initial_writes();
       state.bad_counter_readback=false;assert(save(box,1,out)==VoiceStoreResult::Ok);
-      assert(state.flash[tail+80]==2);}
+      assert(state.flash[tail+100]==2);}
     reset();
     {EspVoiceOutbox box;assert(box.Initialize(true));state.calls.clear();state.fail="update";
       assert(save(box,1,out)==VoiceStoreResult::CryptoError);no_initial_writes();
-      state.fail.clear();assert(save(box,1,out)==VoiceStoreResult::Ok);assert(state.flash[tail+80]==2);}
+      state.fail.clear();assert(save(box,1,out)==VoiceStoreResult::Ok);assert(state.flash[tail+100]==2);}
     // Lost counter permits reading old ciphertext, but cannot authorize another nonce.
     state.nvs.erase("nonce_v1");state.calls.clear();state.writes=state.erases=0;
     {EspVoiceOutbox box;assert(box.Initialize());assert(box.journal()->Read(0,out)==VoiceStoreResult::Ok);

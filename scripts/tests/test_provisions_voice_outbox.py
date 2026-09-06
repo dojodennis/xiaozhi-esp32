@@ -93,6 +93,7 @@ struct Buffers {
 VoiceCapture capture(int id = 1, int conversation = 2) {
     VoiceCapture value;
     value.request_id[0] = id; value.conversation_id[0] = conversation;
+    value.source_request_id[0] = 7; value.source_revision = 12;
     value.packet_count = 2; value.captured_unix_ms = 1788679000123ULL;
     return value;
 }
@@ -112,11 +113,16 @@ int main() {
     assert(box.Save(capture(1,3),bytes(frames),saved) == VoiceStoreResult::Conflict);
     auto changed = frames; changed.back() ^= 1;
     assert(box.Save(capture(),bytes(changed),saved) == VoiceStoreResult::Conflict);
+    auto changed_source = capture(); ++changed_source.source_request_id[0];
+    assert(box.Save(changed_source,bytes(frames),saved) == VoiceStoreResult::Conflict);
+    changed_source = capture(); ++changed_source.source_revision;
+    assert(box.Save(changed_source,bytes(frames),saved) == VoiceStoreResult::Conflict);
     auto changed_time = capture(); ++changed_time.captured_unix_ms;
     assert(box.Save(changed_time,bytes(frames),saved) == VoiceStoreResult::Conflict);
     Buffers restarted_buffers;
     VoiceOutbox restarted(flash,cipher,restarted_buffers.a.data(),restarted_buffers.b.data(),restarted_buffers.a.size());
     assert(restarted.Read(0,saved) == VoiceStoreResult::Ok);
+    assert(saved.capture.source_request_id == capture().source_request_id && saved.capture.source_revision == 12);
     assert(saved.capture.request_id == capture().request_id && saved.capture.conversation_id == capture().conversation_id);
     assert(saved.frames.size == frames.size() && memcmp(saved.frames.data,frames.data(),frames.size()) == 0);
     assert(restarted.RemoveAfterReceipt(0,capture().request_id,capture(1,3).conversation_id) == VoiceStoreResult::Conflict);
@@ -140,7 +146,7 @@ int main() {
         assert(std::equal(torn.data.begin(),torn.data.begin()+VoiceOutbox::kSlotBytes,stable_image.begin()));
     }
     // Metadata, nonce, tag and ciphertext tampering must fail authentication.
-    for (size_t offset : {size_t(16),size_t(24),size_t(40),size_t(56),size_t(76),size_t(88),VoiceOutbox::kBodyOffset}) {
+    for (size_t offset : {size_t(16),size_t(24),size_t(40),size_t(56),size_t(76),size_t(92),size_t(96),size_t(108),VoiceOutbox::kBodyOffset}) {
         Flash bad; bad.data = stable_image; bad.data[offset] ^= 1;
         VoiceOutbox damaged(bad,cipher,buffers.a.data(),buffers.b.data(),buffers.a.size());
         assert(damaged.Read(0,saved) == VoiceStoreResult::Corrupt);
