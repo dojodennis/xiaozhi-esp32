@@ -12,11 +12,12 @@
 #include <cstdint>
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
 #include "provisions_voice_recorder.h"
+#include "provisions_websocket.h"
 #endif
 
 #define WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT (1 << 0)
 
-class WebsocketProtocol : public Protocol {
+class WebsocketProtocol : public Protocol, public std::enable_shared_from_this<WebsocketProtocol> {
 public:
     WebsocketProtocol();
     ~WebsocketProtocol();
@@ -37,17 +38,24 @@ public:
     // Run on the application's bounded network task, never the button/audio task.
     bool SendStoredRecording(const provisions::VoiceReplay& replay, bool deferred,
                              const std::function<bool()>& current);
+    void InterruptStoredRecording();
     bool IsTransportBusy() const { return operation_owner_.load() != nullptr; }
 #endif
 
 private:
     EventGroupHandle_t event_group_handle_;
-    std::shared_ptr<WebSocket> websocket_;
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    using Connection = ProvisionsWebSocket;
+#else
+    using Connection = WebSocket;
+#endif
+    std::shared_ptr<Connection> websocket_;
     int version_ = 1;
     std::atomic<uint32_t> connection_generation_{0};
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
     std::atomic<TaskHandle_t> operation_owner_{nullptr};
     std::atomic<bool> close_requested_{false};
+    std::atomic<bool> upload_active_{false};
     std::atomic<bool> capture_enabled_{false};
     mutable std::mutex capture_context_mutex_;
     provisions::VoiceContext capture_context_{};

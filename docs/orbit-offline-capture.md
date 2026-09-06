@@ -76,6 +76,24 @@ backend intake/context routes. A legacy gateway cannot initialize this recorder.
 Keep the existing installed firmware until the coordinated backend/gateway
 activation is validated. CoreS3 and generic profiles retain their streaming path.
 
+## Network stalls and cancellation
+
+Local capture uses the ESP-IDF WebSocket framing and TLS transport through a
+single I/O worker. Main-task controls enter a queue of at most four pending
+frames; handshake and upload workers wait for actual transmission results.
+Partial writes continue only the unsent bytes under one three-second deadline.
+Connect and HTTP upgrade share an eight-second deadline, although the underlying
+DNS resolver can exceed that deadline before returning. The caller cancels its
+wait after twenty seconds. A new Talk press cancels an active upload immediately;
+only the I/O worker can dispose its TLS handles after the pending operation exits.
+
+Incoming text is capped at 8 KiB and binary at 2 KiB, including fragmented
+messages. A stalled frame read has a 500 ms bound; an unfinished message has a
+five-second deadline. Authentication, trusted certificates and the compiled
+gateway endpoint remain required. The other profiles keep their existing
+transport. Public-client tests exercise partial/error/WANT writes, stalled
+connect/read/upgrade, bounded queues, fragmentation and disposal from callbacks.
+
 ## Validation and activation boundary
 
 The host suite compiles the actual journal, ESP adapter, PCM ownership and wire
@@ -84,11 +102,10 @@ restart, interrupted writes, corrupt/full storage, exact metadata, stale receipt
 nonce faults and rapid press/release interleavings. The canonical ESP-IDF 6.0.2
 StopWatch bench profile builds, including both WebSocket and MQTT protocol code.
 
-This candidate has not been installed. The remaining release work is finite
-TLS-send/cancellation handling, local spoken feedback and the recording-repair
+This candidate has not been installed. The remaining release work is local
+spoken feedback and the recording-repair
 experience, coordinated gateway/backend activation, and physical acceptance.
-The vendor TLS sender can still loop on WANT_WRITE without a deadline; moving it
-off the main/input tasks does not establish a finite network-stall bound. The device must demonstrate real microphone
+The device must demonstrate real microphone
 recognition and speaker clarity, power loss at each save/cache boundary, full
 storage, repeated presses during reconnection, restart replay, and truthful
 feedback when storage or speech processing fails. Software tests do not establish

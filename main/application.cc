@@ -1793,6 +1793,8 @@ void Application::StartListening() {
     }
     manual_listening_requested_.store(true, std::memory_order_release);
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    if (auto protocol = GetProtocol())
+        static_cast<WebsocketProtocol*>(protocol.get())->InterruptStoredRecording();
     auto recorder = std::atomic_load(&provisions_recorder_);
     const uint32_t press = provisions_physical_press_.id();
     uint64_t captured_ms = 0;

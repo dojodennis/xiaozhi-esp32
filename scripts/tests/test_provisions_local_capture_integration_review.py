@@ -19,6 +19,121 @@ def method(source, signature):
 
 
 class LocalCaptureIntegrationReview(unittest.TestCase):
+    def test_disconnected_callback_pins_protocol_and_rejects_old_generation(self):
+        source = (ROOT / "main/protocols/websocket_protocol.cc").read_text()
+        callback = method(source, "websocket->OnDisconnected(") + ");"
+        program = r'''
+#include <atomic>
+#include <cassert>
+#include <functional>
+#include <memory>
+#define CONFIG_PROVISIONS_LOCAL_CAPTURE 1
+#define CONFIG_PROVISIONS_GATEWAY_REQUIRED 1
+#define ESP_LOGI(...) ((void)0)
+#define WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT 1
+namespace Lang {namespace Strings {constexpr const char* SERVER_NOT_CONNECTED="closed";}}
+int events=0;
+void xEventGroupSetBits(int,int){++events;}
+struct Connection {
+    std::function<void()> disconnected;
+    void OnDisconnected(std::function<void()> fn){disconnected=std::move(fn);}
+};
+struct WebsocketProtocol:std::enable_shared_from_this<WebsocketProtocol> {
+    bool& destroyed;
+    explicit WebsocketProtocol(bool& value):destroyed(value){}
+    ~WebsocketProtocol(){destroyed=true;}
+    std::atomic<unsigned> connection_generation_{1};
+    std::atomic<bool> gateway_authenticated_{true},gateway_hello_pending_{true};
+    int event_group_handle_=1,errors=0;
+    std::function<void()> on_audio_channel_closed_;
+    void SetError(const char*){++errors;}
+    void Install(std::shared_ptr<Connection> websocket){
+        const unsigned connection_generation=connection_generation_.load();
+''' + callback + r'''
+    }
+};
+int main(){
+    bool destroyed=false;int closed=0;
+    auto wire=std::make_shared<Connection>();
+    auto protocol=std::make_shared<WebsocketProtocol>(destroyed);
+    protocol->on_audio_channel_closed_=[&]{++closed;};protocol->Install(wire);
+    protocol->connection_generation_=2;wire->disconnected();
+    assert(closed==0&&events==0&&protocol->gateway_authenticated_);
+    // After final protocol disposal, a surviving I/O state must be inert.
+    protocol.reset();assert(destroyed);wire->disconnected();assert(closed==0&&events==0);
+    destroyed=false;protocol=std::make_shared<WebsocketProtocol>(destroyed);
+    protocol->on_audio_channel_closed_=[&]{
+        ++closed;protocol.reset();assert(!destroyed); // Callback owns the final temporary pin.
+    };
+    protocol->Install(wire);wire->disconnected();
+    assert(destroyed&&closed==1&&events==1);
+    wire->disconnected();assert(closed==1&&events==1);
+}
+'''
+        with tempfile.TemporaryDirectory(prefix="orbit-callback-pin-review-") as folder:
+            path, binary = Path(folder) / "review.cc", Path(folder) / "review"
+            path.write_text(program)
+            compiled = subprocess.run([shutil.which("c++"), "-std=c++17", "-pthread",
+                                       "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
+                                       str(path), "-o", str(binary)], capture_output=True, text=True)
+            self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_main_control_cannot_become_sync_when_upload_acquires_between_checks(self):
+        source = (ROOT / "main/protocols/websocket_protocol.cc").read_text()
+        handler = method(source, "bool WebsocketProtocol::SendText(const std::string& text)")
+        program = r'''
+#include <atomic>
+#include <cassert>
+#include <functional>
+#include <memory>
+#include <string>
+#define CONFIG_PROVISIONS_LOCAL_CAPTURE 1
+#define CONFIG_PROVISIONS_GATEWAY_REQUIRED 1
+#define ESP_LOGE(...) ((void)0)
+namespace Lang {namespace Strings {constexpr const char* SERVER_ERROR="error";}}
+using TaskHandle_t=void*;
+TaskHandle_t caller=reinterpret_cast<void*>(1);
+TaskHandle_t xTaskGetCurrentTaskHandle(){return caller;}
+struct Connection {
+    std::function<void()> during_connected;
+    int sync=0,queued=0;bool connected=true;
+    bool IsConnected(){if(during_connected)during_connected();return connected;}
+    bool Send(const std::string&){++sync;return true;}
+    bool SendAsync(const std::string&){++queued;return true;}
+};
+struct WebsocketProtocol {
+    std::atomic<TaskHandle_t> operation_owner_{nullptr};
+    std::shared_ptr<Connection> websocket_=std::make_shared<Connection>();
+    void SetError(const char*){}
+    bool SendText(const std::string&);
+};
+''' + handler + r'''
+int main(){
+    // IsConnected sits between the initial owner gate and delivery selection
+    // in the actual handler. Ownership can change here on a real upload task.
+    WebsocketProtocol race;
+    race.websocket_->during_connected=[&]{race.operation_owner_.store(reinterpret_cast<void*>(2));};
+    race.SendText("abort");
+    assert(race.websocket_->sync==0); // Rejecting or queuing is safe; blocking is not.
+    WebsocketProtocol idle;assert(idle.SendText("ping"));
+    assert(idle.websocket_->queued==1&&idle.websocket_->sync==0);
+    WebsocketProtocol owned;owned.operation_owner_.store(caller);assert(owned.SendText("start"));
+    assert(owned.websocket_->sync==1&&owned.websocket_->queued==0);
+    WebsocketProtocol other;other.operation_owner_.store(reinterpret_cast<void*>(2));
+    assert(!other.SendText("abort"));assert(other.websocket_->sync==0&&other.websocket_->queued==0);
+}
+'''
+        with tempfile.TemporaryDirectory(prefix="orbit-control-owner-review-") as folder:
+            path, binary = Path(folder) / "review.cc", Path(folder) / "review"
+            path.write_text(program)
+            compiled = subprocess.run([shutil.which("c++"), "-std=c++17", "-pthread",
+                                       str(path), "-o", str(binary)], capture_output=True, text=True)
+            self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_release_and_new_press_while_prior_begin_is_running(self):
         application = (ROOT / "main/application.cc").read_text()
         audio = (ROOT / "main/audio/audio_service.cc").read_text()
@@ -78,11 +193,17 @@ struct AudioService {
     void StartLocalRecording(uint32_t);void StopLocalRecording(uint32_t expected_press=0);
     void CloseVoiceUploadGate(){}
 };
+struct WebsocketProtocol {
+    unsigned interruptions=0;
+    void InterruptStoredRecording(){++interruptions;}
+};
 struct Application {
     ProvisionsReplyTurn provisions_physical_press_;
     std::atomic<bool> manual_listening_requested_{false},has_server_time_{false};
     std::atomic<bool> provisions_recording_failed_{false},provisions_recording_saving_{false},provisions_recording_local_{false};
     std::shared_ptr<provisions::VoiceRecorder> provisions_recorder_=std::make_shared<provisions::VoiceRecorder>();
+    std::shared_ptr<WebsocketProtocol> protocol_=std::make_shared<WebsocketProtocol>();
+    std::shared_ptr<WebsocketProtocol> GetProtocol(){return protocol_;}
     AudioService audio_service_;int event_group_=0;
 ''' + mutexes + r'''
     void Schedule(std::function<void()>){ }
@@ -98,11 +219,13 @@ int main(){
         std::thread second([&]{second_started.signal();app.StopListening();if(start_new)app.StartListening();second_finished.signal();});
         second_started.wait();second_finished.wait_briefly();begin_release.signal();first.join();second.join();
         if(start_new) {
+            assert(app.protocol_->interruptions==2);
             assert(app.manual_listening_requested_.load());
             assert(app.provisions_physical_press_.id()==2);
             assert(app.audio_service_.local_recording_press_.load()==2);
             assert(app.provisions_recorder_->core.IsRecording(2));
         } else {
+            assert(app.protocol_->interruptions==1);
             assert(!app.manual_listening_requested_.load());
             assert(app.audio_service_.local_recording_press_.load()==0);
             assert(!app.provisions_recorder_->core.IsRecording(1));
@@ -128,6 +251,7 @@ int main(){
             "bool WebsocketProtocol::BeginOperation()",
             "void WebsocketProtocol::EndOperation()",
             "void WebsocketProtocol::CloseAudioChannel(bool send_goodbye)",
+            "void WebsocketProtocol::InterruptStoredRecording()",
             "bool WebsocketProtocol::SendStoredRecording(",
         ))
         program = r"""
@@ -155,23 +279,28 @@ std::string VoiceCaptureStart(const VoiceReplay&,const std::string&,uint32_t tur
 }
 struct Observed {
     std::vector<std::string> frames;TaskHandle_t disposal=nullptr;
+    unsigned closes=0;bool connected=true;
     std::function<void(const std::string&)> during_send;
 };
 struct WebSocket {
     Observed& seen;explicit WebSocket(Observed& value):seen(value){}
     ~WebSocket(){seen.disposal=current_task;}
-    bool Send(const std::string& text){seen.frames.push_back(text);if(seen.during_send)seen.during_send(text);return true;}
+    void Close(){++seen.closes;seen.connected=false;}
+    bool Send(const std::string& text){if(!seen.connected)return false;seen.frames.push_back(text);if(seen.during_send)seen.during_send(text);return seen.connected;}
     bool Send(const void*,size_t,bool){return Send("binary");}
 };
 struct WebsocketProtocol {
+    using Connection=WebSocket;
     std::atomic<TaskHandle_t> operation_owner_{nullptr};
+    std::atomic<bool> upload_active_{false};
     std::atomic<bool> close_requested_{false},gateway_authenticated_{true},capture_enabled_{true},gateway_hello_pending_{false};
     std::atomic<uint32_t> connection_generation_{1};
     std::shared_ptr<WebSocket> websocket_;
     ProvisionsReplyTurn voice_turn_;int event_group_handle_=0;
     bool BeginOperation();void EndOperation();void CloseAudioChannel(bool send_goodbye=false);
+    void InterruptStoredRecording();
     bool SendStoredRecording(const provisions::VoiceReplay&,bool,const std::function<bool()>&);
-    bool IsAudioChannelOpened(){return gateway_authenticated_.load() && std::atomic_load(&websocket_)!=nullptr;}
+    bool IsAudioChannelOpened(){auto ws=std::atomic_load(&websocket_);return gateway_authenticated_.load() && ws && ws->seen.connected;}
     bool GetCaptureContext(provisions::VoiceContext& out){out.conversation_id[0]=1;return capture_enabled_.load();}
     uint32_t voice_turn_id(){return voice_turn_.id();}
     std::string session_id(){return "session";}
@@ -188,6 +317,7 @@ int main(){
         assert(seen.frames.size()==4 && seen.frames[0]=="start:1:live" && seen.frames[1]=="binary" && seen.frames[2]=="binary");
         assert(seen.frames[3].find("\"stop\"")!=std::string::npos);assert(p.voice_turn_.IsCurrent(1));
         assert(p.operation_owner_.load()==nullptr);
+        assert(!p.upload_active_.load());
     }
     {
         Observed seen;WebsocketProtocol p;p.websocket_=std::make_shared<WebSocket>(seen);bool current=true;
@@ -196,6 +326,7 @@ int main(){
         assert(seen.frames.size()==3 && seen.frames[1]=="binary");
         assert(seen.frames[2].find("\"abort\"")!=std::string::npos);
         assert(!p.voice_turn_.IsCurrent(1) && p.operation_owner_.load()==nullptr);
+        assert(!p.upload_active_.load());
     }
     {
         Observed seen;WebsocketProtocol p;p.websocket_=std::make_shared<WebSocket>(seen);
@@ -207,6 +338,7 @@ int main(){
         assert(!p.SendStoredRecording(replay,false,[]{return true;}));
         assert(seen.frames.size()==2 && seen.frames[1]=="binary");
         assert(seen.disposal==reinterpret_cast<void*>(1));assert(!p.websocket_);
+        assert(seen.closes==1&&!p.upload_active_.load());
         assert(!p.voice_turn_.IsCurrent(1) && p.operation_owner_.load()==nullptr);
     }
     {
@@ -217,6 +349,21 @@ int main(){
         current_task=reinterpret_cast<void*>(1);p.EndOperation();
         assert(p.SendStoredRecording(replay,true,[]{return true;}));
         assert(seen.frames.front()=="start:1:deferred");
+    }
+    {
+        Observed seen;WebsocketProtocol p;p.websocket_=std::make_shared<WebSocket>(seen);
+        p.InterruptStoredRecording();assert(seen.closes==0); // Idle control preserves the connection.
+        seen.during_send=[&](const std::string& text){if(text=="binary"){
+            assert(p.upload_active_.load());current_task=reinterpret_cast<void*>(2);
+            p.InterruptStoredRecording();assert(seen.closes==1&&seen.disposal==nullptr);
+            current_task=reinterpret_cast<void*>(1);
+        }};
+        assert(!p.SendStoredRecording(replay,false,[]{return true;}));
+        assert(seen.frames.size()==2&&seen.frames[1]=="binary");
+        assert(!p.voice_turn_.IsCurrent(1)&&!p.upload_active_.load()&&p.operation_owner_.load()==nullptr);
+        // No stop frame can commit this partial upload; the immutable recording
+        // remains the caller's property for an exact-ID retry after reconnect.
+        assert(replay.frames==frames&&replay.bytes==sizeof(frames)&&frames[2]==0xaa&&frames[5]==0xbb);
     }
 }
 """

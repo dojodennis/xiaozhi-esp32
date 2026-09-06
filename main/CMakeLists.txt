@@ -886,7 +886,7 @@ if(PROVISIONS_STOPWATCH_PROFILE)
         "provisions_voice_outbox.cc" "provisions_voice_outbox_esp.cc")
     if(CONFIG_PROVISIONS_LOCAL_CAPTURE)
         list(APPEND SOURCES "provisions_voice_recording.cc" "provisions_voice_recorder.cc"
-            "provisions_voice_wire.cc")
+            "provisions_voice_wire.cc" "protocols/provisions_websocket.cc")
     endif()
 endif()
 
@@ -1094,6 +1094,9 @@ if(CONFIG_IDF_TARGET_ESP32S3
 endif()
 
 set(MAIN_PRIV_REQUIRES_EXTRA "")
+if(CONFIG_PROVISIONS_LOCAL_CAPTURE)
+    list(APPEND MAIN_PRIV_REQUIRES_EXTRA tcp_transport)
+endif()
 if(BOARD_TYPE STREQUAL "m5stack-stick-s3")
     list(APPEND MAIN_PRIV_REQUIRES_EXTRA
         m5stack__m5pm1

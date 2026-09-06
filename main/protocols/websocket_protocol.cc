@@ -27,7 +27,7 @@ WebsocketProtocol::WebsocketProtocol() { event_group_handle_ = xEventGroupCreate
 
 WebsocketProtocol::~WebsocketProtocol() {
     connection_generation_.fetch_add(1);
-    std::atomic_store(&websocket_, std::shared_ptr<WebSocket>{});
+    std::atomic_store(&websocket_, std::shared_ptr<Connection>{});
     vEventGroupDelete(event_group_handle_);
 }
 
@@ -43,8 +43,8 @@ bool WebsocketProtocol::Start() {
 bool WebsocketProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
     const auto websocket = std::atomic_load(&websocket_);
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
-    if (operation_owner_.load() != nullptr &&
-        operation_owner_.load() != xTaskGetCurrentTaskHandle())
+    const auto owner = operation_owner_.load();
+    if (owner != nullptr && owner != xTaskGetCurrentTaskHandle())
         return false;
 #endif
     if (websocket == nullptr || !websocket->IsConnected()) {
@@ -81,15 +81,22 @@ bool WebsocketProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
 bool WebsocketProtocol::SendText(const std::string& text) {
     const auto websocket = std::atomic_load(&websocket_);
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
-    if (operation_owner_.load() != nullptr &&
-        operation_owner_.load() != xTaskGetCurrentTaskHandle())
+    const auto owner = operation_owner_.load();
+    if (owner != nullptr && owner != xTaskGetCurrentTaskHandle())
         return false;
 #endif
     if (websocket == nullptr || !websocket->IsConnected()) {
         return false;
     }
 
-    if (!websocket->Send(text)) {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    // Main-task heartbeats/abort controls only enter a bounded queue. Bulk
+    // upload and handshake callers wait for the I/O worker's actual result.
+    const bool sent = owner == nullptr ? websocket->SendAsync(text) : websocket->Send(text);
+#else
+    const bool sent = websocket->Send(text);
+#endif
+    if (!sent) {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
         ESP_LOGE(TAG, "Failed to send text frame");
 #else
@@ -123,11 +130,11 @@ void WebsocketProtocol::CloseAudioChannel(bool send_goodbye) {
 #endif
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
     capture_enabled_.store(false);
-    // Socket shutdown can wait for its network task. Defer destruction to the
-    // current network operation, or the next reconnect worker.
     close_requested_.store(true);
+    if (auto websocket = std::atomic_load(&websocket_))
+        websocket->Close();
 #else
-    std::atomic_store(&websocket_, std::shared_ptr<WebSocket>{});
+    std::atomic_store(&websocket_, std::shared_ptr<Connection>{});
 #endif
 }
 
@@ -156,7 +163,7 @@ bool WebsocketProtocol::OpenAudioChannel() {
     if (!BeginOperation())
         return false;
     if (close_requested_.exchange(false))
-        std::atomic_store(&websocket_, std::shared_ptr<WebSocket>{});
+        std::atomic_store(&websocket_, std::shared_ptr<Connection>{});
     const bool opened = OpenAudioChannelImpl();
     if (!opened) {
         gateway_authenticated_.store(false);
@@ -204,8 +211,12 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
 
     error_occurred_ = false;
 
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    const auto websocket = std::make_shared<Connection>();
+#else
     auto network = Board::GetInstance().GetNetwork();
-    const std::shared_ptr<WebSocket> websocket = network->CreateWebSocket(1);
+    const std::shared_ptr<Connection> websocket = network->CreateWebSocket(1);
+#endif
     std::atomic_store(&websocket_, websocket);
     if (websocket == nullptr) {
         ESP_LOGE(TAG, "Failed to create websocket");
@@ -235,7 +246,13 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
     websocket->SetHeader("X-Provisions-Firmware-Version", esp_app_get_description()->version);
 #endif
 
-    websocket->OnData([this, connection_generation](const char* data, size_t len, bool binary) {
+    websocket->OnData([this, connection_generation, owner = weak_from_this()](
+                          const char* data, size_t len, bool binary) {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        const auto keep_alive = owner.lock();
+        if (!keep_alive)
+            return;
+#endif
         if (connection_generation != connection_generation_.load()) {
             return;
         }
@@ -381,7 +398,12 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
 #endif
     });
 
-    websocket->OnDisconnected([this, connection_generation]() {
+    websocket->OnDisconnected([this, connection_generation, owner = weak_from_this()]() {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        const auto keep_alive = owner.lock();
+        if (!keep_alive)
+            return;
+#endif
         if (connection_generation != connection_generation_.load()) {
             return;
         }
@@ -592,6 +614,12 @@ void WebsocketProtocol::RejectServerHello(const char* message) {
 #endif
 
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
+void WebsocketProtocol::InterruptStoredRecording() {
+    if (upload_active_.load()) {
+        if (auto websocket = std::atomic_load(&websocket_))
+            websocket->Close();
+    }
+}
 bool WebsocketProtocol::BeginOperation() {
     TaskHandle_t empty = nullptr;
     return operation_owner_.compare_exchange_strong(empty, xTaskGetCurrentTaskHandle());
@@ -600,7 +628,7 @@ void WebsocketProtocol::EndOperation() {
     if (close_requested_.exchange(false)) {
         gateway_authenticated_.store(false);
         capture_enabled_.store(false);
-        std::atomic_store(&websocket_, std::shared_ptr<WebSocket>{});
+        std::atomic_store(&websocket_, std::shared_ptr<Connection>{});
     }
     operation_owner_.store(nullptr);
 }
@@ -626,6 +654,7 @@ bool WebsocketProtocol::SendStoredRecording(const provisions::VoiceReplay& repla
                                             const std::function<bool()>& current) {
     if (!BeginOperation())
         return false;
+    upload_active_.store(true);
     const auto generation = connection_generation_.load();
     const auto websocket = std::atomic_load(&websocket_);
     provisions::VoiceContext context;
@@ -673,6 +702,7 @@ bool WebsocketProtocol::SendStoredRecording(const provisions::VoiceReplay& repla
     }
     if (!ok)
         voice_turn_.Invalidate();
+    upload_active_.store(false);
     EndOperation();
     return ok;
 }
