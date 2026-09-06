@@ -24,6 +24,9 @@
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
 #include "provisions_tts_turn.h"
 #endif
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+#include "provisions_voice_recorder.h"
+#endif
 
 // Main event bits
 #define MAIN_EVENT_SCHEDULE (1 << 0)
@@ -136,7 +139,13 @@ private:
 
     std::mutex mutex_;
     std::deque<std::function<void()>> main_tasks_;
-    std::unique_ptr<Protocol> protocol_;
+    std::shared_ptr<Protocol> protocol_;
+    std::shared_ptr<Protocol> GetProtocol() const { return std::atomic_load(&protocol_); }
+    void SetProtocol(std::shared_ptr<Protocol> protocol) {
+        auto previous = std::atomic_exchange(&protocol_, std::move(protocol));
+        if (previous)
+            previous->CloseAudioChannel();
+    }
     EventGroupHandle_t event_group_ = nullptr;
     esp_timer_handle_t clock_timer_handle_ = nullptr;
     DeviceStateMachine state_machine_;
@@ -150,7 +159,7 @@ private:
 
     std::function<void(const std::string&)> mcp_broadcast_callback_;
 
-    bool has_server_time_ = false;
+    std::atomic<bool> has_server_time_{false};
     bool aborted_ = false;
     bool assets_version_checked_ = false;
     bool play_popup_on_listening_ =
@@ -172,6 +181,17 @@ private:
     int provisions_response_ticks_ = 0;
     int provisions_reconnect_wait_ticks_ = 0;
     int provisions_reconnect_attempts_ = 0;
+#endif
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    std::mutex provisions_recording_control_mutex_;
+    std::shared_ptr<provisions::VoiceRecorder> provisions_recorder_;
+    std::atomic<bool> provisions_recording_failed_{false};
+    std::atomic<bool> provisions_recording_saving_{false};
+    std::atomic<bool> provisions_recording_local_{false};
+    std::atomic<bool> provisions_network_busy_{false};
+    void HandleVoiceRecordingResult(provisions::VoiceRecorder::Result result, uint32_t press);
+    void SendVoiceRecording(std::shared_ptr<const provisions::VoiceReplay> replay);
+    void ReconnectVoiceGateway();
 #endif
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;

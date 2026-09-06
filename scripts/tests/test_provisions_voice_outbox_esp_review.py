@@ -101,6 +101,7 @@ PROGRAM = r'''
 #include <iostream>
 #include <limits>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 using namespace provisions;
@@ -229,7 +230,7 @@ int setup(psa_aead_operation_t* op,psa_key_id_t id,unsigned alg,bool encrypt) {
 int psa_aead_encrypt_setup(psa_aead_operation_t* op,psa_key_id_t id,unsigned alg){return setup(op,id,alg,true);}
 int psa_aead_decrypt_setup(psa_aead_operation_t* op,psa_key_id_t id,unsigned alg){return setup(op,id,alg,false);}
 int psa_aead_set_lengths(psa_aead_operation_t* op,size_t aad,size_t bytes){
-    assert(op->ctx && aad==108 && bytes<=VoiceOutbox::kMaxFrameBytes);return state.bad("lengths")?-1:0;
+    assert(op->ctx && (aad==108 || aad==16) && bytes<=VoiceOutbox::kMaxFrameBytes);return state.bad("lengths")?-1:0;
 }
 int psa_aead_set_nonce(psa_aead_operation_t* op,const uint8_t* nonce,size_t size) {
     assert(size==12);if(state.bad("nonce"))return -1;
@@ -397,6 +398,49 @@ int main() {
       state.fail.clear();assert(box.journal()->Read(0,out)==VoiceStoreResult::Ok);
     }
     assert(state.keys.empty() && state.active_ops==0);
+
+    // Opaque UUIDs consume a nonce even with no journal rows, across empty-journal boots.
+    reset();VoiceId request_id{};request_id.fill(255);
+    {EspVoiceOutbox unopened;assert(!unopened.NewRequestId(request_id));assert(request_id==VoiceId{});}
+    assert(state.nvs.empty());no_initial_writes();
+    std::set<VoiceId> ids;
+    for(int boot=0;boot<4;boot++) {
+        EspVoiceOutbox box;assert(box.Initialize(boot==0));
+        for(int i=0;i<32;i++) {
+            assert(box.NewRequestId(request_id));assert(request_id!=VoiceId{});
+            assert((request_id[6]&0xf0)==0x40 && (request_id[8]&0xc0)==0x80);
+            assert(ids.insert(request_id).second);
+        }
+    }
+    assert(state.randoms==1);no_initial_writes();
+    {EspVoiceOutbox box;assert(box.Initialize());
+      assert(box.NewRequestId(request_id));assert(ids.insert(request_id).second);
+      auto item=capture(1);item.request_id=request_id;
+      assert(box.journal()->Save(item,{frame,sizeof(frame)},out)==VoiceStoreResult::Ok);
+      assert(out.capture.request_id==request_id);
+      assert(state.flash[tail+100]==130); // IDs used 1..129; encrypted recording uses 130.
+      assert(box.journal()->RemoveAfterReceipt(out.slot,item.request_id,item.conversation_id)==VoiceStoreResult::Ok);}
+    {EspVoiceOutbox box;assert(box.Initialize());assert(box.NewRequestId(request_id));assert(ids.insert(request_id).second);}
+    assert(state.randoms==1);
+    for(const std::string operation:{"open","get_u64","set_u64","commit","crypto_init","import","setup","update","finish","destroy"}) {
+        reset();
+        {EspVoiceOutbox box;assert(box.Initialize(true));state.calls.clear();state.fail=operation;
+          request_id.fill(255);assert(!box.NewRequestId(request_id));assert(request_id==VoiceId{});
+          no_initial_writes();assert(state.keys.empty() && state.active_ops==0);
+          state.fail.clear();assert(box.NewRequestId(request_id));assert(request_id!=VoiceId{});}
+    }
+    reset();
+    {EspVoiceOutbox box;assert(box.Initialize(true));state.calls.clear();state.bad_counter_readback=true;
+      request_id.fill(255);assert(!box.NewRequestId(request_id));assert(request_id==VoiceId{});
+      state.bad_counter_readback=false;assert(box.NewRequestId(request_id));
+      assert(state.nvs.at("nonce_v1")[0]==2);no_initial_writes();}
+    state.nvs.erase("nonce_v1");
+    {EspVoiceOutbox box;assert(box.Initialize());request_id.fill(255);
+      assert(!box.NewRequestId(request_id));assert(request_id==VoiceId{});}
+    state.nvs["nonce_v1"]=std::vector<uint8_t>(8,255);
+    {EspVoiceOutbox box;assert(box.Initialize());request_id.fill(255);
+      assert(!box.NewRequestId(request_id));assert(request_id==VoiceId{});}
+    no_initial_writes();
     std::cout<<"ESP adapter bounds, persistence, restart, and fault cases passed\n";
 }
 '''

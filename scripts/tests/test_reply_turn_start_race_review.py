@@ -89,6 +89,7 @@ class ReplyTurnStartRaceReview(unittest.TestCase):
             bool play_popup_on_listening_ = false;
             Protocol protocol;
             Protocol* protocol_ = &protocol;
+            Protocol* GetProtocol() { return protocol_; }
             Audio audio_service_;
         ''' + interrupted + r'''
             State GetDeviceState() { return state; }

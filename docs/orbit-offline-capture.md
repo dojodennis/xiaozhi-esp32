@@ -37,18 +37,59 @@ This is application-level audio encryption. The reversible bench configuration
 has no flash or NVS encryption, so a physical full-flash dump also contains the
 key. This change enables no irreversible security flags.
 
+## Device capture and replay
+
+The StopWatch profile now instantiates the journal. Its physical Talk edges own
+raw microphone capture independently of Wi-Fi: two preallocated PCM buffers each
+hold up to ten seconds of 16 kHz mono audio. The input task copies at most ten
+milliseconds per callback. Releasing a press freezes its buffer while the next
+press can use the other buffer. Overflow, an empty press or unavailable storage
+reports failure; it never acknowledges a partial recording as saved.
+
+A dedicated worker encodes the released buffer into Opus, assigns a nonce-derived
+request UUID, persists it, verifies it and clears the PCM. The receipt cue occurs
+only after that verified local save. UUIDs remain distinct across offline boots,
+including after every journal slot has been acknowledged and erased. Raw input
+bypasses the streaming AFE/VAD pipeline; recognition quality still requires the
+physical acoustic comparison below.
+
+A separate bounded network task transmits immutable recordings and reconnects.
+New presses cancel old narration/uploads without blocking local microphone
+capture. Replays retain the original IDs, timestamp, answer reference and framed
+SHA-256. Only the first offer can be a foreground answer; later offers are silent
+and no more frequent than once per thirty seconds. The backend separately bounds
+transcription attempts. A needs-attention response keeps the recording locally.
+Every receipt is checked against the complete capture envelope and actual digest
+before erasure, including receipts arriving after a newer Talk press.
+
+The authenticated gateway supplies assignment and answer context. Before a new
+caption can be presented, the worker writes and verifies an `ORP1` pending cache;
+the network callback waits at most one second. The main caption handler activates
+that context and queues the final `ORC1` commit. Boot accepts only a committed
+cache. A failed update therefore cannot silently restore the previous answer
+reference. Cache writes have three attempts spaced thirty seconds apart; a fresh
+authenticated context can reopen that bounded retry window. No flash operation
+runs on the button, input or main task.
+
+The profile requires the negotiated `audio_capture` gateway feature and matching
+backend intake/context routes. A legacy gateway cannot initialize this recorder.
+Keep the existing installed firmware until the coordinated backend/gateway
+activation is validated. CoreS3 and generic profiles retain their streaming path.
+
 ## Validation and activation boundary
 
-All 148 host tests pass. The host suite compiles the actual journal with OpenSSL AES-GCM under ASan/UBSan.
-It checks restart, every short-record write cut, tampering, corrupt-slot quarantine,
-full capacity, lost/stale receipts, conflicting retries and storage failures.
-Independent regressions compile the actual ESP adapter and boot entry point with
-hardware stubs, exercise the maximum 342,350-byte recording and PSA failure
-cleanup, and verify NVS preservation in both Provisions and generic profiles.
-The canonical ESP-IDF 6.0.2 bench profile builds successfully.
+The host suite compiles the actual journal, ESP adapter, PCM ownership and wire
+parser with fault-injected dependencies, OpenSSL AES-GCM and ASan/UBSan. It checks
+restart, interrupted writes, corrupt/full storage, exact metadata, stale receipts,
+nonce faults and rapid press/release interleavings. The canonical ESP-IDF 6.0.2
+StopWatch bench profile builds, including both WebSocket and MQTT protocol code.
 
-The journal is not yet instantiated by the application and this commit writes no
-device storage. Microphone ownership, authenticated context caching, reconnect
-replay, server durable receipts, honest local feedback and physical power-loss
-acceptance still need integration. Do not advertise offline capture or install
-this checkpoint as a completed voice release.
+This candidate has not been installed. The remaining release work is finite
+TLS-send/cancellation handling, local spoken feedback and the recording-repair
+experience, coordinated gateway/backend activation, and physical acceptance.
+The vendor TLS sender can still loop on WANT_WRITE without a deadline; moving it
+off the main/input tasks does not establish a finite network-stall bound. The device must demonstrate real microphone
+recognition and speaker clarity, power loss at each save/cache boundary, full
+storage, repeated presses during reconnection, restart replay, and truthful
+feedback when storage or speech processing fails. Software tests do not establish
+those physical results.

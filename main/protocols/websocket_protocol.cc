@@ -6,6 +6,9 @@
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
 #include "provisions_endpoint_policy.h"
 #endif
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+#include "provisions_voice_wire.h"
+#endif
 
 #include <esp_log.h>
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
@@ -24,7 +27,7 @@ WebsocketProtocol::WebsocketProtocol() { event_group_handle_ = xEventGroupCreate
 
 WebsocketProtocol::~WebsocketProtocol() {
     connection_generation_.fetch_add(1);
-    websocket_.reset();
+    std::atomic_store(&websocket_, std::shared_ptr<WebSocket>{});
     vEventGroupDelete(event_group_handle_);
 }
 
@@ -38,7 +41,13 @@ bool WebsocketProtocol::Start() {
 }
 
 bool WebsocketProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
-    if (websocket_ == nullptr || !websocket_->IsConnected()) {
+    const auto websocket = std::atomic_load(&websocket_);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    if (operation_owner_.load() != nullptr &&
+        operation_owner_.load() != xTaskGetCurrentTaskHandle())
+        return false;
+#endif
+    if (websocket == nullptr || !websocket->IsConnected()) {
         return false;
     }
 
@@ -53,7 +62,7 @@ bool WebsocketProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
         bp2->payload_size = htonl(packet->payload.size());
         memcpy(bp2->payload, packet->payload.data(), packet->payload.size());
 
-        return websocket_->Send(serialized.data(), serialized.size(), true);
+        return websocket->Send(serialized.data(), serialized.size(), true);
     } else if (version_ == 3) {
         std::string serialized;
         serialized.resize(sizeof(BinaryProtocol3) + packet->payload.size());
@@ -63,18 +72,24 @@ bool WebsocketProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
         bp3->payload_size = htons(packet->payload.size());
         memcpy(bp3->payload, packet->payload.data(), packet->payload.size());
 
-        return websocket_->Send(serialized.data(), serialized.size(), true);
+        return websocket->Send(serialized.data(), serialized.size(), true);
     } else {
-        return websocket_->Send(packet->payload.data(), packet->payload.size(), true);
+        return websocket->Send(packet->payload.data(), packet->payload.size(), true);
     }
 }
 
 bool WebsocketProtocol::SendText(const std::string& text) {
-    if (websocket_ == nullptr || !websocket_->IsConnected()) {
+    const auto websocket = std::atomic_load(&websocket_);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    if (operation_owner_.load() != nullptr &&
+        operation_owner_.load() != xTaskGetCurrentTaskHandle())
+        return false;
+#endif
+    if (websocket == nullptr || !websocket->IsConnected()) {
         return false;
     }
 
-    if (!websocket_->Send(text)) {
+    if (!websocket->Send(text)) {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
         ESP_LOGE(TAG, "Failed to send text frame");
 #else
@@ -88,11 +103,12 @@ bool WebsocketProtocol::SendText(const std::string& text) {
 }
 
 bool WebsocketProtocol::IsAudioChannelOpened() const {
+    const auto websocket = std::atomic_load(&websocket_);
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-    return websocket_ != nullptr && websocket_->IsConnected() && gateway_authenticated_.load() &&
+    return gateway_authenticated_.load() && websocket != nullptr && websocket->IsConnected() &&
            !error_occurred_ && !IsGatewayHeartbeatExpired();
 #else
-    return websocket_ != nullptr && websocket_->IsConnected() && !error_occurred_ && !IsTimeout();
+    return websocket != nullptr && websocket->IsConnected() && !error_occurred_ && !IsTimeout();
 #endif
 }
 
@@ -100,19 +116,31 @@ void WebsocketProtocol::CloseAudioChannel(bool send_goodbye) {
     (void)send_goodbye;  // Websocket doesn't need to send goodbye message
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     gateway_authenticated_.store(false);
+    connection_generation_.fetch_add(1);
     if (gateway_hello_pending_.exchange(false)) {
         xEventGroupSetBits(event_group_handle_, WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT);
     }
 #endif
-    websocket_.reset();
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    capture_enabled_.store(false);
+    // Socket shutdown can wait for its network task. Defer destruction to the
+    // current network operation, or the next reconnect worker.
+    close_requested_.store(true);
+#else
+    std::atomic_store(&websocket_, std::shared_ptr<WebSocket>{});
+#endif
 }
 
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
 bool WebsocketProtocol::SendGatewayHeartbeat() {
-    if (!IsAudioChannelOpened() || session_id_.empty()) {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    if (IsTransportBusy())
+        return true;
+#endif
+    if (!IsAudioChannelOpened() || this->session_id().empty()) {
         return false;
     }
-    return SendText("{\"session_id\":\"" + session_id_ + "\",\"type\":\"ping\"}");
+    return SendText("{\"session_id\":\"" + this->session_id() + "\",\"type\":\"ping\"}");
 }
 
 bool WebsocketProtocol::IsGatewayHeartbeatExpired() const {
@@ -124,6 +152,25 @@ bool WebsocketProtocol::IsGatewayHeartbeatExpired() const {
 #endif
 
 bool WebsocketProtocol::OpenAudioChannel() {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    if (!BeginOperation())
+        return false;
+    if (close_requested_.exchange(false))
+        std::atomic_store(&websocket_, std::shared_ptr<WebSocket>{});
+    const bool opened = OpenAudioChannelImpl();
+    if (!opened) {
+        gateway_authenticated_.store(false);
+        capture_enabled_.store(false);
+    }
+    EndOperation();
+    return opened && IsAudioChannelOpened();
+}
+
+bool WebsocketProtocol::OpenAudioChannelImpl() {
+    capture_enabled_.store(false);
+    if (close_requested_.load())
+        return false;
+#endif
     const uint32_t connection_generation = connection_generation_.fetch_add(1) + 1;
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     std::string url = ProvisionsEndpointPolicy::WebsocketUrl();
@@ -133,7 +180,7 @@ bool WebsocketProtocol::OpenAudioChannel() {
     gateway_authenticated_.store(false);
     gateway_hello_pending_.store(false);
     last_gateway_activity_us_.store(0);
-    session_id_.clear();
+    SetSessionId({});
     xEventGroupClearBits(event_group_handle_, WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT);
     if (!ProvisionsEndpointPolicy::IsAllowedWebsocketUrl(url)) {
         ESP_LOGE(TAG, "Compiled Provisions WebSocket endpoint was rejected");
@@ -158,8 +205,9 @@ bool WebsocketProtocol::OpenAudioChannel() {
     error_occurred_ = false;
 
     auto network = Board::GetInstance().GetNetwork();
-    websocket_ = network->CreateWebSocket(1);
-    if (websocket_ == nullptr) {
+    const std::shared_ptr<WebSocket> websocket = network->CreateWebSocket(1);
+    std::atomic_store(&websocket_, websocket);
+    if (websocket == nullptr) {
         ESP_LOGE(TAG, "Failed to create websocket");
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
         SetError(Lang::Strings::SERVER_NOT_CONNECTED);
@@ -169,25 +217,25 @@ bool WebsocketProtocol::OpenAudioChannel() {
 
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     token = "Bearer " + token;
-    websocket_->SetHeader("Authorization", token.c_str());
+    websocket->SetHeader("Authorization", token.c_str());
 #else
     if (!token.empty()) {
         // If token not has a space, add "Bearer " prefix
         if (token.find(" ") == std::string::npos) {
             token = "Bearer " + token;
         }
-        websocket_->SetHeader("Authorization", token.c_str());
+        websocket->SetHeader("Authorization", token.c_str());
     }
 #endif
-    websocket_->SetHeader("Protocol-Version", std::to_string(version_).c_str());
-    websocket_->SetHeader("Device-Id", SystemInfo::GetMacAddress().c_str());
-    websocket_->SetHeader("Client-Id", Board::GetInstance().GetUuid().c_str());
+    websocket->SetHeader("Protocol-Version", std::to_string(version_).c_str());
+    websocket->SetHeader("Device-Id", SystemInfo::GetMacAddress().c_str());
+    websocket->SetHeader("Client-Id", Board::GetInstance().GetUuid().c_str());
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-    websocket_->SetHeader("X-Provisions-Boot-Id", SystemInfo::GetBootId().c_str());
-    websocket_->SetHeader("X-Provisions-Firmware-Version", esp_app_get_description()->version);
+    websocket->SetHeader("X-Provisions-Boot-Id", SystemInfo::GetBootId().c_str());
+    websocket->SetHeader("X-Provisions-Firmware-Version", esp_app_get_description()->version);
 #endif
 
-    websocket_->OnData([this, connection_generation](const char* data, size_t len, bool binary) {
+    websocket->OnData([this, connection_generation](const char* data, size_t len, bool binary) {
         if (connection_generation != connection_generation_.load()) {
             return;
         }
@@ -289,7 +337,7 @@ bool WebsocketProtocol::OpenAudioChannel() {
                 } else {
                     auto message_session = cJSON_GetObjectItem(root, "session_id");
                     if (!cJSON_IsString(message_session) ||
-                        session_id_ != message_session->valuestring) {
+                        this->session_id() != message_session->valuestring) {
                         gateway_authenticated_.store(false);
                         SetError("Invalid gateway message session");
                         cJSON_Delete(root);
@@ -333,7 +381,7 @@ bool WebsocketProtocol::OpenAudioChannel() {
 #endif
     });
 
-    websocket_->OnDisconnected([this, connection_generation]() {
+    websocket->OnDisconnected([this, connection_generation]() {
         if (connection_generation != connection_generation_.load()) {
             return;
         }
@@ -354,11 +402,11 @@ bool WebsocketProtocol::OpenAudioChannel() {
     gateway_hello_pending_.store(true);
 #endif
     ESP_LOGI(TAG, "Connecting to websocket server: %s with version: %d", url.c_str(), version_);
-    if (!websocket_->Connect(url.c_str())) {
+    if (!websocket->Connect(url.c_str())) {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
         gateway_hello_pending_.store(false);
 #endif
-        ESP_LOGE(TAG, "Failed to connect to websocket server, code=%d", websocket_->GetLastError());
+        ESP_LOGE(TAG, "Failed to connect to websocket server, code=%d", websocket->GetLastError());
         SetError(Lang::Strings::SERVER_NOT_CONNECTED);
         return false;
     }
@@ -386,7 +434,7 @@ bool WebsocketProtocol::OpenAudioChannel() {
     }
     if (error_occurred_
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-        || !gateway_authenticated_.load() || websocket_ == nullptr || !websocket_->IsConnected()
+        || !gateway_authenticated_.load() || websocket == nullptr || !websocket->IsConnected()
 #endif
     ) {
         return false;
@@ -416,6 +464,9 @@ std::string WebsocketProtocol::GetHelloMessage() {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     cJSON_AddBoolToObject(features, "mcp", false);
     cJSON_AddBoolToObject(features, "turn_ids", true);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    cJSON_AddBoolToObject(features, "audio_capture", true);
+#endif
 #else
     cJSON_AddBoolToObject(features, "mcp", true);
 #endif
@@ -486,9 +537,24 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
         return;
     }
 
-    session_id_ = session_id->valuestring;
+    SetSessionId(session_id->valuestring);
     server_sample_rate_ = sample_rate->valueint;
     server_frame_duration_ = frame_duration->valueint;
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    auto capture_feature = cJSON_GetObjectItemCaseSensitive(provisions, "audio_capture");
+    auto capture_context = cJSON_GetObjectItemCaseSensitive(provisions, "capture_context");
+    ::provisions::VoiceContext context;
+    if (!cJSON_IsTrue(capture_feature) ||
+        !::provisions::ParseVoiceContext(capture_context, context)) {
+        RejectServerHello("Local capture is unavailable at this gateway");
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(capture_context_mutex_);
+        capture_context_ = context;
+        capture_enabled_.store(true);
+    }
+#endif
     gateway_authenticated_.store(true);
     gateway_hello_pending_.store(false);
     last_gateway_activity_us_.store(esp_timer_get_time());
@@ -496,8 +562,8 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
 #else
     auto session_id = cJSON_GetObjectItem(root, "session_id");
     if (cJSON_IsString(session_id)) {
-        session_id_ = session_id->valuestring;
-        ESP_LOGI(TAG, "Session ID: %s", session_id_.c_str());
+        SetSessionId(session_id->valuestring);
+        ESP_LOGI(TAG, "Session ID: %s", this->session_id().c_str());
     }
 
     auto audio_params = cJSON_GetObjectItem(root, "audio_params");
@@ -522,5 +588,92 @@ void WebsocketProtocol::RejectServerHello(const char* message) {
     gateway_hello_pending_.store(false);
     SetError(message);
     xEventGroupSetBits(event_group_handle_, WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT);
+}
+#endif
+
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+bool WebsocketProtocol::BeginOperation() {
+    TaskHandle_t empty = nullptr;
+    return operation_owner_.compare_exchange_strong(empty, xTaskGetCurrentTaskHandle());
+}
+void WebsocketProtocol::EndOperation() {
+    if (close_requested_.exchange(false)) {
+        gateway_authenticated_.store(false);
+        capture_enabled_.store(false);
+        std::atomic_store(&websocket_, std::shared_ptr<WebSocket>{});
+    }
+    operation_owner_.store(nullptr);
+}
+bool WebsocketProtocol::GetCaptureContext(provisions::VoiceContext& context) const {
+    if (!capture_enabled_.load() || !gateway_authenticated_.load())
+        return false;
+    std::lock_guard<std::mutex> lock(capture_context_mutex_);
+    context = capture_context_;
+    return true;
+}
+bool WebsocketProtocol::AcceptCaptureContext(const provisions::VoiceContext& context,
+                                             bool reassignment) {
+    if (!capture_enabled_.load() || !gateway_authenticated_.load() ||
+        !provisions::VoiceRecording::ValidContext(context))
+        return false;
+    std::lock_guard<std::mutex> lock(capture_context_mutex_);
+    if (!reassignment && context.conversation_id != capture_context_.conversation_id)
+        return false;
+    capture_context_ = context;
+    return true;
+}
+bool WebsocketProtocol::SendStoredRecording(const provisions::VoiceReplay& replay, bool deferred,
+                                            const std::function<bool()>& current) {
+    if (!BeginOperation())
+        return false;
+    const auto generation = connection_generation_.load();
+    const auto websocket = std::atomic_load(&websocket_);
+    provisions::VoiceContext context;
+    bool ok = current && current() && IsAudioChannelOpened() && GetCaptureContext(context) &&
+              replay.capture.conversation_id == context.conversation_id &&
+              replay.bytes <= provisions::VoiceOutbox::kMaxFrameBytes && replay.frames != nullptr &&
+              voice_turn_.Begin();
+    const uint32_t turn = voice_turn_id();
+    const std::string session = this->session_id();
+    auto still_current = [&]() {
+        return generation == connection_generation_.load() && gateway_authenticated_.load() &&
+               current();
+    };
+    bool started = false;
+    if (ok) {
+        const auto start = provisions::VoiceCaptureStart(replay, session, turn, deferred);
+        ok = !start.empty() && still_current() && SendText(start);
+        started = ok;
+    }
+    size_t offset = 0, count = 0;
+    while (ok && offset < replay.bytes) {
+        if (offset + 2 > replay.bytes) {
+            ok = false;
+            break;
+        }
+        const size_t bytes =
+            replay.frames[offset] | (static_cast<size_t>(replay.frames[offset + 1]) << 8);
+        offset += 2;
+        if (bytes == 0 || bytes > 2048 || bytes > replay.bytes - offset) {
+            ok = false;
+            break;
+        }
+        ok = still_current() && websocket && websocket->Send(replay.frames + offset, bytes, true);
+        offset += bytes;
+        ++count;
+    }
+    ok = ok && count == replay.capture.packet_count && still_current();
+    if (ok) {
+        ok = SendText(
+            "{\"session_id\":\"" + session +
+            "\",\"type\":\"listen\",\"state\":\"stop\",\"turn_id\":" + std::to_string(turn) + "}");
+    } else if (started && generation == connection_generation_.load() &&
+               gateway_authenticated_.load()) {
+        SendText("{\"session_id\":\"" + session + "\",\"type\":\"abort\"}");
+    }
+    if (!ok)
+        voice_turn_.Invalidate();
+    EndOperation();
+    return ok;
 }
 #endif

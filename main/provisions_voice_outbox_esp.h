@@ -17,6 +17,9 @@ public:
     // Existing keys open offline. First creation requires an authenticated
     // context after radio setup, which also supplies hardware RNG entropy.
     bool Initialize(bool allow_key_creation = false);
+    // Consume the same durable nonce counter for an independent opaque request
+    // ID. This remains unique across offline boots and emptied journals.
+    bool NewRequestId(VoiceId& output);
     VoiceOutbox* journal() { return journal_.get(); }
     static constexpr size_t kAssetLimit = 6 * 1024 * 1024;
 

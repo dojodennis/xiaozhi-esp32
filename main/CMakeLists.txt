@@ -884,6 +884,10 @@ if(PROVISIONS_STOPWATCH_PROFILE)
     set(BOARD_NAME "${PROVISIONS_STOPWATCH_BOARD_NAME}")
     list(APPEND SOURCES "provisions_endpoint_policy.cc"
         "provisions_voice_outbox.cc" "provisions_voice_outbox_esp.cc")
+    if(CONFIG_PROVISIONS_LOCAL_CAPTURE)
+        list(APPEND SOURCES "provisions_voice_recording.cc" "provisions_voice_recorder.cc"
+            "provisions_voice_wire.cc")
+    endif()
 endif()
 
 if(NOT BOARD_DIR AND NOT CMAKE_BUILD_EARLY_EXPANSION)

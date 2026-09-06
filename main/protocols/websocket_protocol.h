@@ -1,15 +1,18 @@
 #ifndef _WEBSOCKET_PROTOCOL_H_
 #define _WEBSOCKET_PROTOCOL_H_
 
-
 #include "protocol.h"
 
-#include <web_socket.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
+#include <freertos/task.h>
+#include <web_socket.h>
 
 #include <atomic>
 #include <cstdint>
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+#include "provisions_voice_recorder.h"
+#endif
 
 #define WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT (1 << 0)
 
@@ -28,12 +31,30 @@ public:
     bool SendGatewayHeartbeat();
     bool IsGatewayHeartbeatExpired() const;
 #endif
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    bool GetCaptureContext(provisions::VoiceContext& context) const;
+    bool AcceptCaptureContext(const provisions::VoiceContext& context, bool reassignment = false);
+    // Run on the application's bounded network task, never the button/audio task.
+    bool SendStoredRecording(const provisions::VoiceReplay& replay, bool deferred,
+                             const std::function<bool()>& current);
+    bool IsTransportBusy() const { return operation_owner_.load() != nullptr; }
+#endif
 
 private:
     EventGroupHandle_t event_group_handle_;
-    std::unique_ptr<WebSocket> websocket_;
+    std::shared_ptr<WebSocket> websocket_;
     int version_ = 1;
     std::atomic<uint32_t> connection_generation_{0};
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    std::atomic<TaskHandle_t> operation_owner_{nullptr};
+    std::atomic<bool> close_requested_{false};
+    std::atomic<bool> capture_enabled_{false};
+    mutable std::mutex capture_context_mutex_;
+    provisions::VoiceContext capture_context_{};
+    bool BeginOperation();
+    void EndOperation();
+    bool OpenAudioChannelImpl();
+#endif
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     std::atomic<bool> gateway_authenticated_{false};
     std::atomic<bool> gateway_hello_pending_{false};

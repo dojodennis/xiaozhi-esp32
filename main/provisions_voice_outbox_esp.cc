@@ -198,6 +198,28 @@ bool EspVoiceOutbox::Erase(size_t offset, size_t size) {
     return partition_ && InRegion(offset, size) && offset % 4096 == 0 && size % 4096 == 0 &&
            esp_partition_erase_range(partition_, kAssetLimit + offset, size) == ESP_OK;
 }
+bool EspVoiceOutbox::NewRequestId(VoiceId& output) {
+    output = {};
+    if (journal_ == nullptr)
+        return false;
+    // A fresh AES-GCM counter value gives an opaque, independent UUID without
+    // requiring radio entropy on an offline boot. This nonce is never reused
+    // for the recording; Save consumes its own next counter value.
+    constexpr uint8_t domain[16] = {'O', 'r', 'b', 'i', 't', ' ', 'r', 'e',
+                                    'q', 'u', 'e', 's', 't', ' ', 'v', '1'};
+    uint8_t nonce[12]{};
+    uint8_t tag[16]{};
+    const uint8_t plain[16]{};
+    if (!NextNonce(nonce) ||
+        !Seal(nonce, {domain, sizeof(domain)}, {plain, sizeof(plain)}, output.data(), tag)) {
+        output = {};
+        return false;
+    }
+    output[6] = (output[6] & 0x0f) | 0x40;
+    output[8] = (output[8] & 0x3f) | 0x80;
+    return true;
+}
+
 bool EspVoiceOutbox::NextNonce(uint8_t nonce[12]) {
     // Uniqueness does not depend on radio entropy during an offline cold boot.
     // A committed counter may be skipped on failure, but is never reused.

@@ -56,7 +56,7 @@ void Protocol::SetError(const std::string& message) {
 }
 
 void Protocol::SendAbortSpeaking(AbortReason reason) {
-    std::string message = "{\"session_id\":\"" + session_id_ + "\",\"type\":\"abort\"";
+    std::string message = "{\"session_id\":\"" + this->session_id() + "\",\"type\":\"abort\"";
     if (reason == kAbortReasonWakeWordDetected) {
         message += ",\"reason\":\"wake_word_detected\"";
     }
@@ -65,7 +65,7 @@ void Protocol::SendAbortSpeaking(AbortReason reason) {
 }
 
 void Protocol::SendWakeWordDetected(const std::string& wake_word) {
-    std::string json = "{\"session_id\":\"" + session_id_ +
+    std::string json = "{\"session_id\":\"" + this->session_id() +
                        "\",\"type\":\"listen\",\"state\":\"detect\",\"text\":\"" + wake_word +
                        "\"}";
     SendText(json);
@@ -78,7 +78,7 @@ void Protocol::SendStartListening(ListeningMode mode) {
         return;
     }
 #endif
-    std::string message = "{\"session_id\":\"" + session_id_ + "\"";
+    std::string message = "{\"session_id\":\"" + this->session_id() + "\"";
     message += ",\"type\":\"listen\",\"state\":\"start\"";
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     message += ",\"turn_id\":" + std::to_string(voice_turn_id());
@@ -102,7 +102,7 @@ void Protocol::SendStartListening(ListeningMode mode) {
 
 void Protocol::SendStopListening() {
     std::string message =
-        "{\"session_id\":\"" + session_id_ + "\",\"type\":\"listen\",\"state\":\"stop\"";
+        "{\"session_id\":\"" + this->session_id() + "\",\"type\":\"listen\",\"state\":\"stop\"";
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     message += ",\"turn_id\":" + std::to_string(voice_turn_id());
 #endif
@@ -111,8 +111,8 @@ void Protocol::SendStopListening() {
 }
 
 void Protocol::SendMcpMessage(const std::string& payload) {
-    std::string message =
-        "{\"session_id\":\"" + session_id_ + "\",\"type\":\"mcp\",\"payload\":" + payload + "}";
+    std::string message = "{\"session_id\":\"" + this->session_id() +
+                          "\",\"type\":\"mcp\",\"payload\":" + payload + "}";
     SendText(message);
 }
 

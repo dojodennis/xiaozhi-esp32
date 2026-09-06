@@ -35,6 +35,7 @@ class OrbitTalkInterruptionTests(unittest.TestCase):
             Audio audio_service_;
             Protocol protocol;
             Protocol* protocol_ = &protocol;
+            Protocol* GetProtocol() { return protocol_; }
             int aborts = 0;
             int invalidations = 0;
             bool ProvisionsReplyInterrupted() { return true; }
