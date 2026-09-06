@@ -18,7 +18,23 @@ std::string third(std::string text){text=newer(text);text=number(text,"fence_epo
 bool json_equal(const std::string& a,const std::string& b){auto x=cJSON_Parse(a.c_str()),y=cJSON_Parse(b.c_str());assert(x&&y);bool same=cJSON_Compare(x,y,true);cJSON_Delete(x);cJSON_Delete(y);return same;}
 '''
 CASES = r'''
- if(mode=="abort_wire"){
+ if(mode=="json_whitespace"||mode=="non_json_controls"){
+  for(const auto& text:{acquire,release_message,abort_message,close_commit}){
+   const std::vector<size_t> positions={0,1,text.find(':')+1,text.find(',')+1,text.size()-1,text.size()};
+   for(unsigned char c=0;c<=32;++c){
+    const bool allowed=c==' '||c=='\t'||c=='\n'||c=='\r';
+    if(allowed!=(mode=="json_whitespace"))continue;
+    for(auto at:positions){auto input=text;input.insert(at,1,static_cast<char>(c));Message message;assert(ParseMessage(input,message)==allowed);}
+    if(mode=="non_json_controls")continue;
+    // JSON whitespace is still forbidden as a raw character inside quoted strings.
+    if(c<32){auto input=text;input.insert(text.find('"')+1,1,static_cast<char>(c));Message message;assert(!ParseMessage(input,message));}
+   }
+   if(mode=="non_json_controls"){
+    for(unsigned char c=0;c<32;++c){auto input=text;input.insert(text.find('"')+1,1,static_cast<char>(c));Message message;assert(!ParseMessage(input,message));}
+    auto escaped=text;escaped.insert(text.find('"')+1,"\\u0000");Message message;assert(!ParseMessage(escaped,message));
+   }
+  }
+ }else if(mode=="abort_wire"){
   auto m=parse(abort_message);assert(m.command==Command::AbortUnacquired&&!m.receipt.completed&&!m.receipt.has_started);
   assert(json_equal(ReplyJson(Result::AbortPending,m.identity),abort_pending));
  }else if(mode=="abort_authority"){
@@ -108,6 +124,8 @@ class AbortOutputFenceTests(unittest.TestCase):
 
     run_case = base.OutputFenceTests.run_case
 
+    def test_all_commands_accept_only_json_whitespace_outside_strings(self): self.run_case("json_whitespace")
+    def test_all_commands_reject_non_json_controls_and_quoted_controls(self): self.run_case("non_json_controls")
     def test_abort_wire_exact_reply(self): self.run_case("abort_wire")
     def test_abort_requires_registered_grant_and_receipt_authority(self): self.run_case("abort_authority")
     def test_first_cas_freezes_entire_receipt_before_drain_and_retries(self): self.run_case("abort_receipt_freeze")

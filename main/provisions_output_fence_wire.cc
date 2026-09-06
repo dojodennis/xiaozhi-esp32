@@ -60,7 +60,9 @@ bool Budget(std::string_view text) {
     unsigned depth = 0;
     for (size_t i = 0; i < text.size(); ++i) {
         const unsigned char c = text[i];
-        if (c == 0)
+        // cJSON accepts every byte <= 0x20 as whitespace; JSON permits only these three
+        // control bytes outside strings (plus space). Keep all raw string controls invalid.
+        if (c == 0 || (!quoted && c < 32 && c != '\t' && c != '\n' && c != '\r'))
             return false;
         if (quoted) {
             if (c < 32)
