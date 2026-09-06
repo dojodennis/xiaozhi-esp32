@@ -2761,7 +2761,14 @@ void Application::HandleTimerOutputEnded() {
         manual_listening_requested_.load(std::memory_order_acquire) ||
         !audio_service_.IsLocalInputIdle() || !audio_service_.IsPlaybackIdle())
         return;
-    Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+    auto& board = Board::GetInstance();
+    board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+    // The physical edge runs on ESP_TIMER_TASK and can land after the checks
+    // above but before the power write completes. Repair that last-writer race.
+    if (GetDeviceState() != kDeviceStateIdle ||
+        manual_listening_requested_.load(std::memory_order_acquire) ||
+        !audio_service_.IsLocalInputIdle() || !audio_service_.IsPlaybackIdle())
+        board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
 }
 
 void Application::InitializeTimers() {

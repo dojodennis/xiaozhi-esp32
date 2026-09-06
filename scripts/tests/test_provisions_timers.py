@@ -369,18 +369,19 @@ int main(){OrbitCrestDisplay display;display.SetTimerText("7 • 0:10 Pasta");as
         program = r"""
 #include <atomic>
 #include <cassert>
+#include <functional>
 enum DeviceState {kDeviceStateIdle,kDeviceStateListening,kDeviceStateSpeaking,kDeviceStateNotifying};
 enum class PowerSaveLevel {LOW_POWER,PERFORMANCE};
-struct Board {int low_power=0;static Board& GetInstance(){static Board b;return b;}void SetPowerSaveLevel(PowerSaveLevel level){assert(level==PowerSaveLevel::LOW_POWER);++low_power;}};
+struct Board {int low_power=0,performance=0;PowerSaveLevel level=PowerSaveLevel::PERFORMANCE;std::function<void()> before_low;static Board& GetInstance(){static Board b;return b;}void SetPowerSaveLevel(PowerSaveLevel next){if(next==PowerSaveLevel::LOW_POWER){if(before_low)before_low();++low_power;}else{++performance;}level=next;}};
 struct AudioService {bool playback_idle=true,input_idle=true;bool IsPlaybackIdle(){return playback_idle;}bool IsLocalInputIdle(){return input_idle;}};
 struct Application {DeviceState state=kDeviceStateNotifying;bool transition=true,talk_on_transition=false,output_on_transition=false,reply_on_transition=false;int transitions=0;std::atomic<bool> manual_listening_requested_{false};AudioService audio_service_;
  DeviceState GetDeviceState()const{return state;}bool SetDeviceState(DeviceState next){++transitions;if(!transition)return false;state=next;if(talk_on_transition)manual_listening_requested_=true;if(output_on_transition)audio_service_.playback_idle=false;if(reply_on_transition)state=kDeviceStateSpeaking;return true;}
  void HandleTimerOutputEnded();
 };
 __HANDLER__
-void reset_board(){Board::GetInstance().low_power=0;}
+void reset_board(){auto& board=Board::GetInstance();board.low_power=board.performance=0;board.level=PowerSaveLevel::PERFORMANCE;board.before_low={};}
 int main(){
- {reset_board();Application app;app.HandleTimerOutputEnded();assert(app.state==kDeviceStateIdle&&app.transitions==1&&Board::GetInstance().low_power==1);}
+ {reset_board();Application app;app.HandleTimerOutputEnded();assert(app.state==kDeviceStateIdle&&app.transitions==1&&Board::GetInstance().low_power==1&&Board::GetInstance().performance==0&&Board::GetInstance().level==PowerSaveLevel::LOW_POWER);}
  {reset_board();Application app;app.manual_listening_requested_=true;app.HandleTimerOutputEnded();assert(app.state==kDeviceStateNotifying&&app.transitions==0&&Board::GetInstance().low_power==0);}
  {reset_board();Application app;app.audio_service_.input_idle=false;app.HandleTimerOutputEnded();assert(app.state==kDeviceStateNotifying&&app.transitions==0&&Board::GetInstance().low_power==0);}
  {reset_board();Application app;app.audio_service_.playback_idle=false;app.HandleTimerOutputEnded();assert(app.state==kDeviceStateNotifying&&app.transitions==0&&Board::GetInstance().low_power==0);}
@@ -389,6 +390,8 @@ int main(){
  {reset_board();Application app;app.talk_on_transition=true;app.HandleTimerOutputEnded();assert(app.state==kDeviceStateIdle&&app.transitions==1&&Board::GetInstance().low_power==0);}
  {reset_board();Application app;app.output_on_transition=true;app.HandleTimerOutputEnded();assert(app.state==kDeviceStateIdle&&app.transitions==1&&Board::GetInstance().low_power==0);}
  {reset_board();Application app;app.reply_on_transition=true;app.HandleTimerOutputEnded();assert(app.state==kDeviceStateSpeaking&&app.transitions==1&&Board::GetInstance().low_power==0);}
+ {reset_board();Application app;Board::GetInstance().before_low=[&]{app.manual_listening_requested_=true;};app.HandleTimerOutputEnded();assert(app.state==kDeviceStateIdle&&app.transitions==1&&Board::GetInstance().low_power==1&&Board::GetInstance().performance==1&&Board::GetInstance().level==PowerSaveLevel::PERFORMANCE);}
+ {reset_board();Application app;Board::GetInstance().before_low=[&]{app.audio_service_.playback_idle=false;};app.HandleTimerOutputEnded();assert(app.state==kDeviceStateIdle&&app.transitions==1&&Board::GetInstance().low_power==1&&Board::GetInstance().performance==1&&Board::GetInstance().level==PowerSaveLevel::PERFORMANCE);}
 }
 """
         run_cpp(program.replace("__HANDLER__", handler))
