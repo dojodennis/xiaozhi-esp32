@@ -6,6 +6,12 @@ namespace provisions::timers {
 Player::Player(Store& store) : store_(store) {}
 Player::~Player() { psa_hash_abort(&digest_); }
 
+void Player::ClearPreparationIntent() {
+    preparation_intent_session_.clear();
+    preparation_intent_lease_.clear();
+    preparation_intent_press_ = 0;
+}
+
 void Player::Initialize(Hooks hooks) {
     std::lock_guard<std::mutex> lock(mutex_);
     hooks_ = std::move(hooks);
@@ -67,8 +73,10 @@ bool Player::StageAlarm(Alarm alarm, uint32_t press) {
 
 bool Player::Fenced() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    // Permit-only recovery never owns the speaker and never blocks Talk.
-    return occupied_ || fault_;
+    // Durable recovery blocks publication without owning the microphone or
+    // speaker. A physical press may still be captured locally and replayed
+    // after the exact recovery ACK clears this slot.
+    return slot_.state != DurableState::Empty || fault_;
 }
 
 bool Player::OwnsOutput() const {
@@ -125,7 +133,31 @@ bool Player::OnJson(const cJSON* root, const std::string& session, bool negotiat
         const auto action = cJSON_GetObjectItemCaseSensitive(root, "action");
         if (!cJSON_IsString(action))
             return false;
-        if (std::strcmp(action->valuestring, "snapshot") == 0) {
+        if (std::strcmp(action->valuestring, "prepare_alarm") == 0) {
+            std::string lease_id;
+            if (fault_ || !ParsePreparationRequest(root, session, lease_id))
+                return false;
+            if (slot_.state == DurableState::Empty) {
+                if (!preparation_intent_lease_.empty() &&
+                    (preparation_intent_lease_ != lease_id ||
+                     preparation_intent_session_ != session))
+                    return false;
+                if (preparation_intent_lease_.empty()) {
+                    preparation_intent_lease_ = std::move(lease_id);
+                    preparation_intent_session_ = session;
+                    preparation_intent_press_ = press;
+                }
+            } else if (slot_.state == DurableState::Prepared && slot_.lease_id == lease_id) {
+                if (!alarm_pending_ && !abandon_pending_) {
+                    // An exact request retry proves no new owner. Make the main
+                    // task resend the same already-durable preparation immediately.
+                    recovery_sent_session_.clear();
+                    recovery_last_send_us_ = 0;
+                }
+            } else {
+                return false;
+            }
+        } else if (std::strcmp(action->valuestring, "snapshot") == 0) {
             Snapshot parsed;
             if (!ParseSnapshot(root, parsed) || parsed.session_id != session)
                 return false;
@@ -146,6 +178,15 @@ bool Player::OnJson(const cJSON* root, const std::string& session, bool negotiat
                 return false;
             StageAlarm(std::move(alarm), press);
         } else if (std::strcmp(action->valuestring, "abandon_preparation") == 0) {
+            if (slot_.state == DurableState::Empty && !preparation_intent_lease_.empty() &&
+                preparation_intent_session_ == session &&
+                MatchesRecoveryRequest(root, "abandon_preparation", preparation_intent_lease_,
+                                       session)) {
+                ClearPreparationIntent();
+                if (hooks_.wake)
+                    hooks_.wake();
+                return true;
+            }
             if ((slot_.state != DurableState::Prepared &&
                  slot_.state != DurableState::NoStartPending &&
                  slot_.state != DurableState::Alarm) ||
@@ -176,6 +217,9 @@ bool Player::OnJson(const cJSON* root, const std::string& session, bool negotiat
 
 bool Player::OnAudio(const std::vector<uint8_t>& packet, const std::string& source_session) {
     std::lock_guard<std::mutex> lock(mutex_);
+    // Gateway holder/send-lock ordering forbids ordinary narration until the
+    // exact no-start ACK is ordered. Any binary observed here is therefore
+    // stale timer output and must not fall through to ordinary playback.
     if (slot_.state == DurableState::NoStartPending)
         return true;
     const Record* active = occupied_ ? &record_ : alarm_pending_ ? &pending_record_ : nullptr;
@@ -227,6 +271,7 @@ void Player::OnError(uint32_t id) {
 void Player::OnDisconnected() {
     std::lock_guard<std::mutex> lock(mutex_);
     snapshot_ = {};
+    ClearPreparationIntent();
     if (occupied_ || alarm_pending_)
         Fail(Outcome::Interrupted);
     else if (slot_.state == DurableState::Prepared)
@@ -242,16 +287,24 @@ void Player::Service(const std::string& session, bool negotiated, bool ready, ui
         return;
 
     if (slot_.state == DurableState::Empty) {
-        if (!negotiated || !ready || session.empty())
+        if (preparation_intent_lease_.empty())
             return;
-        DurableSlot prepared{
-            DurableState::Prepared, hooks_.new_lease ? hooks_.new_lease() : NewLeaseId(), {}};
+        if (!negotiated || session.empty() || session != preparation_intent_session_ ||
+            press != preparation_intent_press_) {
+            ClearPreparationIntent();
+            return;
+        }
+        if (!ready)
+            return;
+        DurableSlot prepared{DurableState::Prepared, preparation_intent_lease_, {}};
         if (!store_.Transition(slot_, prepared)) {
+            ClearPreparationIntent();
             fault_ = true;
             return;
         }
         slot_ = std::move(prepared);
         prepared_press_ = press;
+        ClearPreparationIntent();
         preparation_uncertain_ = abandon_pending_ = ack_pending_ = false;
         recovery_sent_session_.clear();
         recovery_last_send_us_ = 0;

@@ -47,6 +47,9 @@ struct Recorder {
     bool IsReady(){return ready;}bool HasContext(){return context;}unsigned PendingCount(){return 1;}
 };
 struct Application {
+    bool dictation=false;int controls=0;
+    bool IsDictationScreen()const{return dictation;}void ToggleDictationScreen(){dictation=!dictation;}void DictationButton(){++controls;}
+
     std::atomic<bool> manual_listening_requested_{false},provisions_network_busy_{false},provisions_response_pending_{false};
     std::atomic<bool> provisions_recording_failed_{false},provisions_recording_saving_{false};
     std::shared_ptr<Recorder> provisions_recorder_=std::make_shared<Recorder>();
@@ -61,8 +64,9 @@ struct Application {
     void StopListening(){manual_listening_requested_=false;state=kDeviceStateIdle;}
 };
 struct Button {
-    std::function<void()> press,release,long_press,click;
+    std::function<void()> press,release,long_press,click,double_click;
     void OnPressDown(std::function<void()> fn){press=std::move(fn);}void OnPressUp(std::function<void()> fn){release=std::move(fn);}
+    void OnDoubleClick(std::function<void()> fn){double_click=std::move(fn);}
     void OnLongPress(std::function<void()> fn){long_press=std::move(fn);}void OnClick(std::function<void()> fn){click=std::move(fn);}
 };
 struct Volume {int value=50;int output_volume(){return value;}void SetOutputVolume(int next){value=next;}};
@@ -95,6 +99,10 @@ int main(){
     app.provisions_recorder_->pending=true;assert(std::string(app.GetProvisionsIdleStatus())=="Retry queued");
     app.provisions_recorder_->pending=false;app.provisions_recorder_->can_retry=false;assert(std::string(app.GetProvisionsIdleStatus())=="Recording kept");
     board.button2_.long_press();app.Drain();assert(Board::GetInstance().display.text=="No saved recording is ready to retry.");
+    const auto volume_before=board.volume.value;const auto retries_before=app.provisions_recorder_->retries;
+    board.button2_.double_click();app.Drain();assert(app.dictation&&app.controls==0&&board.volume.value==volume_before);
+    board.button2_.click();board.button2_.long_press();app.Drain();assert(app.controls==1&&app.provisions_recorder_->retries==retries_before&&board.volume.value==volume_before);
+    board.button2_.double_click();assert(!app.dictation&&app.controls==1);
     app.provisions_recorder_.reset();board.button2_.long_press();app.Drain();assert(Board::GetInstance().display.text=="No saved recording is ready to retry.");
 }
 '''

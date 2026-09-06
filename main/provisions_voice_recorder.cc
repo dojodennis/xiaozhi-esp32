@@ -47,7 +47,9 @@ bool Digest(VoiceBytes input, std::array<uint8_t, 32>& digest) {
 bool SameCapture(const VoiceCapture& a, const VoiceCapture& b) {
     return a.request_id == b.request_id && a.conversation_id == b.conversation_id &&
            a.source_request_id == b.source_request_id && a.source_revision == b.source_revision &&
-           a.captured_unix_ms == b.captured_unix_ms && a.packet_count == b.packet_count;
+           a.captured_unix_ms == b.captured_unix_ms && a.packet_count == b.packet_count &&
+           a.purpose == b.purpose && a.dictation_session_id == b.dictation_session_id &&
+           a.chunk_sequence == b.chunk_sequence && a.sample_count == b.sample_count;
 }
 }  // namespace
 VoiceReplay::~VoiceReplay() {
@@ -131,7 +133,7 @@ bool VoiceRecorder::PrepareContext(const VoiceContext& context) {
 bool VoiceRecorder::ActivateContext(const VoiceContext& context) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (!context_prepared_ || !(requested_context_ == context))
+        if (dictation_replacing_.load() || !context_prepared_ || !(requested_context_ == context))
             return false;
         context_ = context;
         has_context_.store(true);
@@ -151,15 +153,20 @@ bool VoiceRecorder::UpdateContext(const VoiceContext& context) {
 bool VoiceRecorder::Begin(uint32_t press, uint64_t captured_unix_ms) {
     if (!recording_ || !storage_ready_.load() || !has_context_.load())
         return false;
-    VoiceContext context;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        context = context_;
-    }
-    return recording_->Begin(press, context, captured_unix_ms);
+    std::lock_guard<std::mutex> lock(mutex_);
+    return !dictation_replacing_.load() && recording_->Begin(press, context_, captured_unix_ms);
 }
 bool VoiceRecorder::Append(uint32_t press, const int16_t* pcm, size_t frames, size_t channels) {
-    return recording_ && recording_->Append(press, pcm, frames, channels);
+    const bool appended = recording_ && recording_->Append(press, pcm, frames, channels);
+    if (appended && recording_->IsCapped(press)) {
+        dictation_capped_press_.store(press);
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            dictation_closed_through_ = std::max(dictation_closed_through_, press);
+        }
+        Wake();
+    }
+    return appended;
 }
 void VoiceRecorder::Fail(uint32_t press) {
     if (recording_) {
@@ -169,6 +176,10 @@ void VoiceRecorder::Fail(uint32_t press) {
     }
 }
 void VoiceRecorder::Release(uint32_t press) {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        dictation_closed_through_ = std::max(dictation_closed_through_, press);
+    }
     if (recording_) {
         recording_->Release(press);
         Wake();
@@ -256,6 +267,8 @@ bool VoiceRecorder::Encode(const VoiceRecording::Work& work, VoiceCapture& captu
     std::array<int16_t, 960> input{};
     std::array<uint8_t, 2048> output{};
     capture = work.capture;
+    if (capture.IsDictation())
+        capture.sample_count = work.samples;
     capture.packet_count = 0;
     size_t opus_bytes = 0;
     for (size_t offset = 0; ok && offset < work.samples + kCaptureTailSamples;
@@ -292,14 +305,33 @@ void VoiceRecorder::Save(const VoiceRecording::Work& work) {
     VoiceCapture capture;
     SavedVoiceCapture saved;
     size_t bytes = 0;
-    bool ok = storage_ready_.load() && Encode(work, capture, bytes) &&
-              outbox_.NewRequestId(capture.request_id) &&
-              outbox_.journal()->Save(capture, {frames_, bytes}, saved) == VoiceStoreResult::Ok;
+    bool manifest = true;
+    if (work.capture.IsDictation()) {
+        capture = work.capture;
+        capture.sample_count = work.samples;
+        manifest = work.samples == 0 ? dictation_journal_.AbandonEmpty(capture.request_id)
+                                     : dictation_journal_.Seal(capture);
+    }
+    const bool empty_dictation = work.capture.IsDictation() && work.samples == 0 && manifest;
+    bool ok = empty_dictation ||
+              (manifest && storage_ready_.load() && Encode(work, capture, bytes) &&
+               (capture.IsDictation() || outbox_.NewRequestId(capture.request_id)) &&
+               outbox_.journal()->Save(capture, {frames_, bytes}, saved) == VoiceStoreResult::Ok);
+    if (!ok && work.capture.IsDictation()) {
+        // Preserve the Processing PCM and its durable ordinal for a later write.
+        // A pending Stop counts this reservation even before the raw part syncs.
+        mbedtls_platform_zeroize(frames_, VoiceOutbox::kMaxFrameBytes);
+        dictation_retry_work_ = work;
+        dictation_retry_after_ = esp_timer_get_time() + kRetryDelayUs;
+        dictation_error_.store(true);
+        PublishDictation();
+        return;
+    }
     // No other task may touch Processing memory; clear it before freeing its lease.
     mbedtls_platform_zeroize(pcm_[work.slot], VoiceRecording::kMaxSamples * sizeof(int16_t));
     mbedtls_platform_zeroize(frames_, VoiceOutbox::kMaxFrameBytes);
     recording_->Finish(work);
-    if (ok) {
+    if (ok && !empty_dictation) {
         presses_[saved.slot] = work.press;
         retry_after_[saved.slot] = 0;
         attention_[saved.slot] = false;
@@ -308,7 +340,18 @@ void VoiceRecorder::Save(const VoiceRecording::Work& work) {
         retry_used_[saved.slot] = retry_pending_[saved.slot] = false;
     }
     RefreshCount();
-    notify_(ok ? Result::Saved : Result::Failed, work.press);
+    if (work.capture.IsDictation()) {
+        dictation_busy_.store(false);
+        dictation_error_.store(false);
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            dictation_ready_press_ = 0;
+        }
+        PublishDictation();
+        if (!empty_dictation)
+            RequestReplay();
+    } else
+        notify_(ok ? Result::Saved : Result::Failed, work.press);
 }
 void VoiceRecorder::RefreshCount() {
     unsigned count = 0;
@@ -405,7 +448,9 @@ void VoiceRecorder::PrepareReplay() {
     replay_->slot = selected;
     replay_->bytes = saved.frames.size;
     replay_->retry_token = retry_pending_[selected] ? retry_tokens_[selected] : VoiceId{};
-    replay_->press = retry_pending_[selected] || offered_[selected] ? 0 : presses_[selected];
+    replay_->press = saved.capture.IsDictation() || retry_pending_[selected] || offered_[selected]
+                         ? 0
+                         : presses_[selected];
     if (!Digest(saved.frames, replay_->digest))
         return;
     std::memcpy(replay_->frames, saved.frames.data, saved.frames.size);
@@ -425,6 +470,15 @@ void VoiceRecorder::ApplyReceipt(const VoiceCaptureReceipt& receipt) {
         if (!Digest(saved.frames, digest) || digest != receipt.digest)
             return;
         if (receipt.durable) {
+            if (saved.capture.IsDictation() && !dictation_journal_.Terminal(saved.capture)) {
+                dictation_error_.store(true);
+                PublishDictation();
+                return;
+            }
+            if (saved.capture.IsDictation())
+                dictation_error_.store(dictation_missing_parts_ ||
+                                       dictation_retry_work_.has_value() ||
+                                       dictation_journal_.Faulted());
             if (outbox_.journal()->RemoveAfterReceipt(slot, receipt.capture.request_id,
                                                       receipt.capture.conversation_id) ==
                 VoiceStoreResult::Ok) {
@@ -432,7 +486,10 @@ void VoiceRecorder::ApplyReceipt(const VoiceCaptureReceipt& receipt) {
                 retry_tokens_[slot] = {};
                 retry_used_[slot] = retry_pending_[slot] = false;
                 RefreshCount();
-                notify_(Result::Synced, presses_[slot]);
+                if (saved.capture.IsDictation())
+                    PublishDictation();
+                else
+                    notify_(Result::Synced, presses_[slot]);
             }
         } else if (receipt.retry_used) {
             if (!HasId(receipt.retry_token) ||
@@ -468,6 +525,33 @@ void VoiceRecorder::Run() {
         }
     }
     storage_ready_.store(outbox_.Initialize(false));
+    dictation_error_.store(!dictation_journal_.Initialize());
+    // A reserved ordinal without a committed raw part is an interrupted write,
+    // never an empty or successfully synced segment after a restart.
+    std::array<bool, dictation::kMaximumSegments> dictation_present{};
+    if (outbox_.journal()) {
+        for (size_t slot = 0; slot < VoiceOutbox::kSlots; ++slot) {
+            SavedVoiceCapture saved;
+            if (outbox_.journal()->Read(slot, saved) != VoiceStoreResult::Ok ||
+                !saved.capture.IsDictation())
+                continue;
+            const auto& record = dictation_journal_.Get();
+            if (saved.capture.dictation_session_id != record.id ||
+                saved.capture.chunk_sequence >= record.count ||
+                !dictation_journal_.Seal(saved.capture)) {
+                dictation_missing_parts_ = true;
+                dictation_error_.store(true);
+            } else
+                dictation_present[saved.capture.chunk_sequence] = true;
+        }
+    }
+    for (uint32_t i = 0; i < dictation_journal_.Get().count; ++i)
+        if (!dictation_journal_.Get().segments[i].terminal && !dictation_present[i]) {
+            dictation_missing_parts_ = true;
+            dictation_error_.store(true);
+        }
+    dictation_input_blocked_.store(!dictation_journal_.Get().authorized);
+    PublishDictation();
     RefreshCount();
     if (storage_ready_.load() && has_context_.load())
         notify_(Result::ContextReady, 0);
@@ -525,8 +609,15 @@ void VoiceRecorder::Run() {
                 notify_(Result::ContextReady, 0);
         }
         VoiceRecording::Work work;
+        PrepareDictation();
+        if (dictation_retry_work_ && esp_timer_get_time() >= dictation_retry_after_) {
+            const auto retry = *dictation_retry_work_;
+            dictation_retry_work_.reset();
+            Save(retry);
+        }
         while (recording_->Take(work))
             Save(work);
+        ServiceDictation();
         for (size_t i = 0; i < count; ++i)
             ApplyReceipt(receipts[i]);
         if (repair) {

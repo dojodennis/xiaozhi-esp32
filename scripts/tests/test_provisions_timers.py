@@ -110,7 +110,7 @@ int nvs_erase_key(nvs_handle_t,const char* key){assert(std::string(key)=="attemp
 void reset(){disk.clear();pending.clear();namespace_present=fail_open=fail_read=fail_set=fail_commit=fail_erase=corrupt_readback=false;commits=sets=erases=corrupt_after_commit=0;write_error=0;}
 using Json=std::unique_ptr<cJSON,decltype(&cJSON_Delete)>;
 Json json(const std::string& text){Json result(cJSON_Parse(text.c_str()),cJSON_Delete);assert(result);return result;}
-std::string uuid(unsigned n){char b[40];std::snprintf(b,sizeof(b),"00000000-0000-0000-0000-%012x",n);return b;}
+std::string uuid(unsigned n){char b[40];std::snprintf(b,sizeof(b),"00000000-0000-4000-8000-%012x",n);return b;}
 void replace(cJSON* o,const char* key,const std::string& value){auto v=json(value);assert(cJSON_ReplaceItemInObjectCaseSensitive(o,key,v.release()));}
 std::vector<uint8_t> packet{0x18,0x00,0x55};
 std::string hash(unsigned count=1){SHA256_CTX ctx;SHA256_Init(&ctx);uint8_t length[2]={3,0};for(unsigned i=0;i<count;++i){SHA256_Update(&ctx,length,2);SHA256_Update(&ctx,packet.data(),packet.size());}unsigned char out[32];SHA256_Final(out,&ctx);char b[65];for(size_t i=0;i<32;++i)std::snprintf(b+2*i,3,"%02x",out[i]);return b;}
@@ -125,7 +125,7 @@ bool logically_empty(){NvsStore store;DurableSlot slot;return store.Load(slot)==
 struct Harness {
  NvsStore store;Player player{store};Es8311AudioCodec codec;
  uint32_t owner=0,press=0;bool ready=true,negotiated=true,accept_queue=true,send_ok=true;int began=0,cancels=0,ended=0;
- int64_t time=1000000;std::string session=uuid(1),next_lease=uuid(2);std::vector<std::string> sent,proofs;
+ int64_t time=1000000;std::string session=uuid(1);std::vector<std::string> sent,proofs;
  std::deque<std::pair<uint32_t,uint32_t>> queued;
  Harness(){Player::Hooks h;
   h.claim=[&](uint32_t id){if(owner)return false;owner=id;return true;};
@@ -134,12 +134,11 @@ struct Harness {
   h.drained=[&]{return queued.empty()&&codec.IsOutputDrained();};
   h.queue=[&](uint32_t id,uint32_t n,const std::vector<uint8_t>& p){assert(!disk.empty()&&stored().outcome==Outcome::Unknown&&owner==id&&p==packet);if(!accept_queue)return false;queued.emplace_back(id,n);return true;};
   h.send=[&](const std::string& s){if(!send_ok)return false;auto value=json(s);auto action=cJSON_GetObjectItemCaseSensitive(value.get(),"action");assert(cJSON_IsString(action));if(std::string(action->valuestring)=="prepared"||std::string(action->valuestring)=="no_start")proofs.push_back(s);else{assert(stored().outcome!=Outcome::Unknown);sent.push_back(s);}return true;};
-  h.new_lease=[&]{return next_lease;};
   h.wake=[]{};h.began=[&]{++began;};h.ended=[&]{++ended;};player.Initialize(h);
  }
  bool frame(const Json& j){return player.OnJson(j.get(),session,negotiated,press);}
  void service(){player.Service(session,negotiated,ready,press,time);time+=1000;}
- void prepare(const std::string& lease){next_lease=lease;service();DurableSlot current;assert(store.Load(current)==Store::LoadResult::Present&&current.state==DurableState::Prepared&&current.lease_id==lease);}
+ void prepare(const std::string& lease){assert(frame(recovery("prepare_alarm",lease,session)));service();DurableSlot current;assert(store.Load(current)==Store::LoadResult::Present&&current.state==DurableState::Prepared&&current.lease_id==lease);}
  void start(const Alarm& a=alarm()){prepare(a.lease_id);assert(frame(envelope(a)));service();assert(frame(tts(a,"start")));assert(frame(tts(a,"sentence_start")));}
  void stop(const Alarm& a=alarm()){assert(frame(tts(a,"stop")));}
  void audio(){assert(player.OnAudio(packet,uuid(1)));service();}
@@ -161,12 +160,12 @@ void reboot_unknown(){disk=RecordJson({alarm(),Outcome::Unknown});namespace_pres
 void reboot_terminal(){disk=RecordJson({alarm(),Outcome::Completed});namespace_present=true;Harness h;h.session=uuid(10);h.service();check_receipt(h.sent.back(),"completed","reconcile_drain");assert(h.began==0&&h.queued.empty());}
 void stale_ack(){Harness h;h.completed();const auto original=stored();for(auto key:{"session_id","lease_id","playback_id","timer_id","timer_revision","attempt"}){auto a=ack(original,h.session);replace(a.get(),key,std::string(key)=="timer_revision"||std::string(key)=="attempt"?"2":"\""+uuid(88)+"\"");assert(!h.frame(a));h.service();assert(h.owner&&h.player.Fenced()&&!disk.empty());}assert(h.frame(ack(original,h.session)));h.service();assert(!h.owner);auto a=alarm();a.lease_id=uuid(22);a.attempt=2;h.start(a);assert(!h.frame(ack(original,h.session)));h.service();assert(h.owner&&stored().alarm.attempt==2);}
 void receipt_retry(){Harness h;h.completed();auto first=h.sent.back();h.time+=1000001;h.service();assert(h.sent.size()==2&&h.sent.back()==first);h.session=uuid(10);h.service();auto second=h.sent.back();h.time+=1000001;h.service();assert(second==h.sent.back()&&disk==RecordJson(stored()));}
-void disk_faults(){for(int mode=0;mode<5;++mode){reset();Harness h;if(mode==0)fail_open=true;if(mode==1)fail_set=true;if(mode==2)fail_commit=true;if(mode==3){namespace_present=true;disk="broken";}if(mode==4)corrupt_readback=true;h.service();assert(h.player.Fenced()&&h.owner==0&&h.began==0&&h.sent.empty());}reset();disk="broken";namespace_present=true;Harness corrupt;corrupt.service();assert(corrupt.player.Fenced()&&!corrupt.owner&&corrupt.sent.empty());}
+void disk_faults(){for(int mode=0;mode<5;++mode){reset();Harness h;if(mode==0)fail_open=true;if(mode==1)fail_set=true;if(mode==2)fail_commit=true;if(mode==3){namespace_present=true;disk="broken";}if(mode==4)corrupt_readback=true;assert(h.frame(recovery("prepare_alarm",uuid(2),h.session)));h.service();assert(h.player.Fenced()&&h.owner==0&&h.began==0&&h.sent.empty());}reset();disk="broken";namespace_present=true;Harness corrupt;corrupt.service();assert(corrupt.player.Fenced()&&!corrupt.owner&&corrupt.sent.empty());}
 void terminal_write_fault(){Harness h;h.start();h.audio();h.stop();h.play();h.dma();fail_commit=true;h.service();assert(h.sent.empty()&&h.owner&&h.ended==0&&stored().outcome==Outcome::Unknown);}
 void erase_fault(){Harness h;h.completed();assert(h.frame(ack(stored(),h.session)));fail_set=true;h.service();assert(!disk.empty()&&h.owner&&h.player.Fenced());}
 void store_immutable(){NvsStore s;auto a=alarm();DurableSlot empty,prepared{DurableState::Prepared,a.lease_id,{}},active{DurableState::Alarm,a.lease_id,{a,Outcome::Unknown}},failed{DurableState::Alarm,a.lease_id,{a,Outcome::Failed}},completed{DurableState::Alarm,a.lease_id,{a,Outcome::Completed}};assert(s.Transition(empty,prepared));assert(s.Transition(prepared,active));auto other=a;other.lease_id=uuid(100);assert(!s.Transition(active,{DurableState::Alarm,other.lease_id,{other,Outcome::Failed}}));assert(s.Transition(active,failed));assert(!s.Transition(failed,completed));assert(!s.Transition(failed,active));assert(!s.Erase(completed));assert(s.Erase(failed));DurableSlot slot;assert(s.Load(slot)==Store::LoadResult::Empty);}
 void busy_or_press(){for(int mode=0;mode<3;++mode){reset();Harness h;h.prepare(alarm().lease_id);assert(h.frame(envelope(alarm())));if(mode==0)h.ready=false;if(mode==1)h.press+=1;if(mode==2)h.press+=2;h.service();assert(h.began==0&&h.queued.empty()&&h.sent.size()==1);check_receipt(h.sent.back(),mode==0?"failed":"interrupted");}}
-void identity_schema(){auto a=alarm();Alarm result;assert(ParseAlarm(envelope(a).get(),result));for(auto key:{"session_id","lease_id","playback_id","timer_id"}){for(auto invalid:{"\"00000000-0000-0000-0000-000000000000\"","\"ABCDEF00-0000-0000-0000-000000000001\"","\"garbage\"","null","4"}){auto j=envelope(a);replace(j.get(),key,invalid);assert(!ParseAlarm(j.get(),result));}}for(auto key:{"packet_count","timer_revision","attempt","spoken_number"}){for(auto invalid:{"0","-1","1.5","2147483648","null","\"1\""}){auto j=envelope(a);replace(j.get(),key,invalid);assert(!ParseAlarm(j.get(),result));}}for(auto invalid:{"501","999"}){auto j=envelope(a);replace(j.get(),"packet_count",invalid);assert(!ParseAlarm(j.get(),result));}for(auto key:{"lease_id","timer_revision","label","packet_count"}){auto j=envelope(a);cJSON_AddNullToObject(j.get(),key);assert(!ParseAlarm(j.get(),result));}auto j=envelope(a);cJSON_AddNullToObject(j.get(),"turn_id");assert(!ParseAlarm(j.get(),result));}
+void identity_schema(){auto a=alarm();Alarm result;assert(ParseAlarm(envelope(a).get(),result));for(auto key:{"session_id","lease_id","playback_id","timer_id"}){for(auto invalid:{"\"00000000-0000-0000-0000-000000000000\"","\"00000000-0000-0000-8000-000000000001\"","\"00000000-0000-9000-8000-000000000001\"","\"00000000-0000-4000-7000-000000000001\"","\"00000000-0000-4000-c000-000000000001\"","\"ABCDEF00-0000-4000-8000-000000000001\"","\"garbage\"","null","4"}){auto j=envelope(a);replace(j.get(),key,invalid);assert(!ParseAlarm(j.get(),result));}}for(auto key:{"packet_count","timer_revision","attempt","spoken_number"}){for(auto invalid:{"0","-1","1.5","2147483648","null","\"1\""}){auto j=envelope(a);replace(j.get(),key,invalid);assert(!ParseAlarm(j.get(),result));}}for(auto invalid:{"501","999"}){auto j=envelope(a);replace(j.get(),"packet_count",invalid);assert(!ParseAlarm(j.get(),result));}for(auto key:{"lease_id","timer_revision","label","packet_count"}){auto j=envelope(a);cJSON_AddNullToObject(j.get(),key);assert(!ParseAlarm(j.get(),result));}auto j=envelope(a);cJSON_AddNullToObject(j.get(),"turn_id");assert(!ParseAlarm(j.get(),result));}
 Json snapshot(const std::string& deadline="2026-09-06T12:00:00Z",unsigned count=1){std::string s="{\"type\":\"timer\",\"action\":\"snapshot\",\"session_id\":\""+uuid(1)+"\",\"request_id\":\""+uuid(10)+"\",\"timers\":[";for(unsigned i=0;i<count;++i){if(i)s+=",";s+="{\"id\":\""+uuid(i+20)+"\",\"spoken_number\":"+std::to_string(i+1)+",\"label\":\"Pasta\",\"deadline_at\":\""+deadline+"\",\"revision\":1,\"state\":\"active\"}";}return json(s+"]}");}
 void snapshot_bounds(){Snapshot out;assert(ParseSnapshot(snapshot("2026-09-06T12:00:00Z",32).get(),out)&&out.timers.size()==32);assert(!ParseSnapshot(snapshot("2026-09-06T12:00:00Z",33).get(),out)&&out.timers.size()==32);for(auto key:{"id","spoken_number"}){auto j=snapshot("2026-09-06T12:00:00Z",2);auto list=cJSON_GetObjectItemCaseSensitive(j.get(),"timers");auto first=cJSON_GetArrayItem(list,0);auto second=cJSON_GetArrayItem(list,1);auto copy=cJSON_Duplicate(cJSON_GetObjectItemCaseSensitive(first,key),true);cJSON_ReplaceItemInObjectCaseSensitive(second,key,copy);assert(!ParseSnapshot(j.get(),out));}for(auto state:{"cancelled","acknowledged","paused"}){auto j=snapshot();replace(cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(j.get(),"timers"),0),"state","\""+std::string(state)+"\"");assert(!ParseSnapshot(j.get(),out));}}
 void snapshot_authority(){Harness h;auto j=snapshot();assert(h.frame(j));h.service();auto state=h.player.GetSnapshot();assert(DisplayText(state,state.timers[0].deadline_ms+100000).find("0:00")!=std::string::npos);assert(!h.owner&&h.sent.empty()&&h.began==0);h.player.OnDisconnected();assert(h.player.GetSnapshot().timers.empty());h.negotiated=false;assert(!h.frame(j));}
@@ -195,13 +194,13 @@ void actual_output_bridge(){
   auto p=std::make_unique<AudioStreamPacket>();p->payload=payload;p->playback_id=id;p->media_position_ms=ordinal;
   return audio.PushPacketToDecodeQueue(std::move(p),false);
  };
- hooks.send=[&](const std::string& text){auto value=json(text);auto action=cJSON_GetObjectItemCaseSensitive(value.get(),"action");if(std::string(action->valuestring)!="prepared")sent.push_back(text);return true;};hooks.new_lease=[](){return alarm().lease_id;};hooks.wake=[]{};hooks.began=[]{};hooks.ended=[]{};
+ hooks.send=[&](const std::string& text){auto value=json(text);auto action=cJSON_GetObjectItemCaseSensitive(value.get(),"action");if(std::string(action->valuestring)!="prepared")sent.push_back(text);return true;};hooks.wake=[]{};hooks.began=[]{};hooks.ended=[]{};
  player.Initialize(hooks);
  audio.callbacks_.on_playback_progress=[&](uint32_t id,uint32_t ordinal){player.OnProgress(id,ordinal);++progress;};
  audio.callbacks_.on_playback_error=[&](uint32_t id){player.OnError(id);++errors;};
  auto service=[&]{player.Service(uuid(1),true,true,press,time);time+=1000;};
  auto frame=[&](const Json& j){assert(player.OnJson(j.get(),uuid(1),true,press));};
- service();frame(envelope(alarm()));service();frame(tts(alarm(),"start"));frame(tts(alarm(),"sentence_start"));
+ frame(recovery("prepare_alarm",alarm().lease_id,uuid(1)));service();frame(envelope(alarm()));service();frame(tts(alarm(),"start"));frame(tts(alarm(),"sentence_start"));
  // Real enqueue rejects ordinary/old ownership, and a stale release cannot open it.
  assert(!audio.PushPacketToDecodeQueue(std::make_unique<AudioStreamPacket>(),false));
  assert(!audio.ReleaseTimerOutput(7)&&audio.timer_output_owner_!=0);
@@ -237,11 +236,12 @@ void actual_busy_ownership(){
  h.release=[&](uint32_t id){++releases;return audio.ReleaseTimerOutput(id);};
  h.cancel=[&]{++cancels;audio.ResetDecoder();};h.drained=[&]{return audio.IsPlaybackIdle();};
  h.queue=[](uint32_t,uint32_t,const std::vector<uint8_t>&){assert(false);return false;};
- h.send=[&](const std::string& text){auto value=json(text);auto action=cJSON_GetObjectItemCaseSensitive(value.get(),"action");if(std::string(action->valuestring)!="prepared")sent.push_back(text);return true;};h.new_lease=[](){return alarm().lease_id;};h.wake=[]{};
+ h.send=[&](const std::string& text){auto value=json(text);auto action=cJSON_GetObjectItemCaseSensitive(value.get(),"action");if(std::string(action->valuestring)!="prepared")sent.push_back(text);return true;};h.wake=[]{};
  h.began=[&]{++began;};h.ended=[&]{++ended;};player.Initialize(h);
  if(mode<2){auto packet=std::make_unique<AudioStreamPacket>();packet->playback_id=7;packet->payload={0x18,0,0x55};assert(audio.PushPacketToDecodeQueue(std::move(packet),false));}
  if(mode==3){std::vector<int16_t> pcm(1440);assert(audio.codec.OutputData(pcm));}
  const auto generation=audio.playback_generation_;
+ assert(player.OnJson(recovery("prepare_alarm",alarm().lease_id,uuid(1)).get(),uuid(1),true,0));
  player.Service(uuid(1),true,true,0,999000);assert(player.OnJson(envelope(alarm()).get(),uuid(1),true,0));
  player.Service(uuid(1),true,mode!=0,0,1000000);
  assert(claims==(mode==0?0:1)&&cancels==0&&began==0&&ended==0&&releases==0);
@@ -332,30 +332,59 @@ void terminal_hook_paths(){
 }
 
 void recovery_prepare_no_start_ack(){
- Harness h;h.service();assert(!h.player.Fenced()&&!h.player.OwnsOutput()&&h.owner==0&&h.proofs.size()==1);
+ Harness h;h.service();assert(!h.player.Fenced()&&!h.player.OwnsOutput()&&h.owner==0&&h.proofs.empty()&&sets==0&&commits==0&&disk.empty());
+ auto request=recovery("prepare_alarm",uuid(2),h.session);assert(h.frame(request));assert(!h.player.Fenced()&&sets==0&&commits==0&&disk.empty());h.service();assert(h.proofs.size()==1&&h.player.Fenced());
  DurableSlot slot;assert(h.store.Load(slot)==Store::LoadResult::Present&&slot.state==DurableState::Prepared&&slot.lease_id==uuid(2));
  auto prepared=json(h.proofs.back());assert(cJSON_GetArraySize(prepared.get())==5);assert(MatchesRecoveryRequest(prepared.get(),"prepared",uuid(2),h.session));
- assert(h.frame(recovery("abandon_preparation",uuid(2),h.session)));h.service();assert(h.proofs.size()==1&&!h.player.Fenced()&&!h.player.OwnsOutput());
+ assert(h.frame(recovery("abandon_preparation",uuid(2),h.session)));h.service();assert(h.proofs.size()==1&&h.player.Fenced()&&!h.player.OwnsOutput());
  assert(h.store.Load(slot)==Store::LoadResult::Present&&slot.state==DurableState::NoStartPending);
  h.service();assert(h.proofs.size()==2);auto proof=json(h.proofs.back());assert(cJSON_GetArraySize(proof.get())==5);assert(MatchesRecoveryRequest(proof.get(),"no_start",uuid(2),h.session));
  auto stale=no_start_ack(uuid(99),h.session);assert(!h.frame(stale));auto extra=no_start_ack(uuid(2),h.session);cJSON_AddNullToObject(extra.get(),"timer");assert(!h.frame(extra));
  assert(h.frame(no_start_ack(uuid(2),h.session)));h.service();assert(logically_empty()&&!h.player.Fenced()&&!h.player.OwnsOutput()&&h.owner==0);
+ const int writes=sets;const auto proof_count=h.proofs.size();h.service();assert(logically_empty()&&sets==writes&&h.proofs.size()==proof_count);
 }
 
 void recovery_reboot_and_ack_loss(){
- disk=DurableSlotJson({DurableState::Prepared,uuid(2),{}});namespace_present=true;Harness h;assert(!h.player.Fenced()&&h.owner==0);
- h.service();DurableSlot slot;assert(h.store.Load(slot)==Store::LoadResult::Present&&slot.state==DurableState::NoStartPending&&h.proofs.empty());
+ disk=DurableSlotJson({DurableState::Prepared,uuid(2),{}});namespace_present=true;Harness h;assert(h.player.Fenced()&&h.owner==0);
+ h.service();DurableSlot slot;assert(h.player.Fenced()&&h.store.Load(slot)==Store::LoadResult::Present&&slot.state==DurableState::NoStartPending&&h.proofs.empty());
  h.service();assert(h.proofs.size()==1);const auto first=h.proofs.back();h.player.OnDisconnected();h.session=uuid(10);h.service();assert(h.proofs.size()==2&&h.proofs.back()!=first);
  auto second=json(h.proofs.back());assert(MatchesRecoveryRequest(second.get(),"no_start",uuid(2),h.session));assert(!h.frame(no_start_ack(uuid(2),uuid(1))));
  assert(h.frame(no_start_ack(uuid(2),h.session)));h.service();assert(logically_empty()&&!h.player.Fenced());
 }
 
 void recovery_send_loss_press_and_reboot_states(){
- {Harness h;h.send_ok=false;h.service();DurableSlot slot;assert(h.store.Load(slot)==Store::LoadResult::Present&&slot.state==DurableState::Prepared&&h.proofs.empty());h.send_ok=true;h.service();assert(h.proofs.size()==1);++h.press;h.service();assert(h.store.Load(slot)==Store::LoadResult::Present&&slot.state==DurableState::NoStartPending&&h.proofs.size()==1);h.send_ok=false;h.service();assert(h.proofs.size()==1);h.send_ok=true;h.service();assert(h.proofs.size()==2);h.time+=1000001;h.service();assert(h.proofs.size()==3&&h.proofs[1]==h.proofs[2]);assert(h.frame(no_start_ack(uuid(2),h.session)));h.service();assert(logically_empty());}
+ {Harness h;h.send_ok=false;h.prepare(uuid(2));DurableSlot slot;assert(h.store.Load(slot)==Store::LoadResult::Present&&slot.state==DurableState::Prepared&&h.proofs.empty());h.send_ok=true;h.service();assert(h.proofs.size()==1);++h.press;h.service();assert(h.store.Load(slot)==Store::LoadResult::Present&&slot.state==DurableState::NoStartPending&&h.proofs.size()==1);h.send_ok=false;h.service();assert(h.proofs.size()==1);h.send_ok=true;h.service();assert(h.proofs.size()==2);h.time+=1000001;h.service();assert(h.proofs.size()==3&&h.proofs[1]==h.proofs[2]);assert(h.frame(no_start_ack(uuid(2),h.session)));h.service();assert(logically_empty());}
  reset();disk=DurableSlotJson({DurableState::NoStartPending,uuid(2),{}});namespace_present=true;
- {Harness h;h.service();assert(h.proofs.size()==1);auto proof=json(h.proofs.back());assert(MatchesRecoveryRequest(proof.get(),"no_start",uuid(2),h.session));}
+ {Harness h;assert(h.player.Fenced());h.service();assert(h.player.Fenced()&&h.proofs.size()==1);auto proof=json(h.proofs.back());assert(MatchesRecoveryRequest(proof.get(),"no_start",uuid(2),h.session));assert(h.frame(no_start_ack(uuid(2),h.session)));h.service();assert(!h.player.Fenced()&&logically_empty());}
  reset();disk=DurableSlotJson({DurableState::Empty,uuid(2),{}});namespace_present=true;
- {Harness h;h.next_lease=uuid(22);h.service();DurableSlot slot;assert(h.store.Load(slot)==Store::LoadResult::Present&&slot.state==DurableState::Prepared&&slot.lease_id==uuid(22));assert(h.proofs.size()==1);}
+ {Harness h;const int writes=sets;h.service();DurableSlot slot;assert(h.store.Load(slot)==Store::LoadResult::Empty&&sets==writes&&h.proofs.empty());h.prepare(uuid(22));assert(h.store.Load(slot)==Store::LoadResult::Present&&slot.state==DurableState::Prepared&&slot.lease_id==uuid(22));assert(h.proofs.size()==1);}
+}
+
+void recovery_request_before_persistence(){
+ {Harness h;h.ready=false;assert(h.frame(recovery("prepare_alarm",uuid(2),h.session)));h.service();assert(disk.empty()&&sets==0&&commits==0&&h.proofs.empty());++h.press;h.ready=true;h.service();assert(disk.empty()&&sets==0&&commits==0&&h.proofs.empty());h.service();assert(disk.empty());}
+ reset();
+ {Harness h;h.ready=false;assert(h.frame(recovery("prepare_alarm",uuid(2),h.session)));h.player.OnDisconnected();h.session=uuid(10);h.ready=true;h.service();assert(disk.empty()&&sets==0&&commits==0&&h.proofs.empty());assert(!h.frame(recovery("prepare_alarm",uuid(2),uuid(1))));h.prepare(uuid(22));}
+ reset();
+ {Harness h;h.ready=false;assert(h.frame(recovery("prepare_alarm",uuid(2),h.session)));h.session=uuid(10);h.ready=true;h.service();assert(disk.empty()&&sets==0&&commits==0&&h.proofs.empty());}
+ reset();
+ {Harness h;h.ready=false;assert(h.frame(recovery("prepare_alarm",uuid(2),h.session)));h.service();assert(disk.empty()&&sets==0&&commits==0);}
+ {Harness rebooted;rebooted.service();assert(disk.empty()&&sets==0&&commits==0&&rebooted.proofs.empty());}
+}
+
+void recovery_request_duplicates_and_schema(){
+ Harness h;h.ready=false;auto request=recovery("prepare_alarm",uuid(2),h.session);assert(h.frame(request));assert(h.frame(request));assert(sets==0&&commits==0);
+ auto conflict=recovery("prepare_alarm",uuid(22),h.session);assert(!h.frame(conflict));
+ auto extra=recovery("prepare_alarm",uuid(2),h.session);cJSON_AddNullToObject(extra.get(),"timer");assert(!h.frame(extra));
+ auto duplicate=recovery("prepare_alarm",uuid(2),h.session);cJSON_AddStringToObject(duplicate.get(),"lease_id",uuid(2).c_str());assert(!h.frame(duplicate));
+ for(auto invalid:{"0","1.5","true","\"1\""}){auto frame=recovery("prepare_alarm",uuid(2),h.session);replace(frame.get(),"version",invalid);assert(!h.frame(frame));}
+ for(auto invalid:{"\"00000000-0000-0000-0000-000000000000\"","\"00000000-0000-0000-8000-000000000001\"","\"00000000-0000-9000-8000-000000000001\"","\"00000000-0000-4000-7000-000000000001\"","\"00000000-0000-4000-c000-000000000001\"","\"ABCDEF00-0000-4000-8000-000000000001\"","\"garbage\"","null","4"}){auto frame=recovery("prepare_alarm",uuid(2),h.session);replace(frame.get(),"lease_id",invalid);assert(!h.frame(frame));}
+ h.ready=true;h.service();assert(h.proofs.size()==1);const int writes=sets;const auto first=h.proofs.back();assert(h.frame(request));h.service();assert(h.proofs.size()==2&&h.proofs.back()==first&&sets==writes);assert(!h.frame(conflict));
+}
+
+void recovery_no_auto_rearm(){
+ {Harness h;h.prepare(uuid(2));assert(h.frame(recovery("abandon_preparation",uuid(2),h.session)));h.service();h.service();assert(h.frame(no_start_ack(uuid(2),h.session)));h.service();const int writes=sets;const auto proofs=h.proofs.size();for(int i=0;i<4;++i)h.service();assert(logically_empty()&&sets==writes&&h.proofs.size()==proofs);}
+ reset();
+ {Harness h;h.completed();assert(h.frame(ack(stored(),h.session)));h.service();const int writes=sets;for(int i=0;i<4;++i)h.service();assert(logically_empty()&&sets==writes&&!h.player.Fenced()&&h.owner==0);}
 }
 
 void recovery_header_wins_serialized_commit(){
@@ -363,12 +392,14 @@ void recovery_header_wins_serialized_commit(){
  assert(h.frame(tts(a,"start")));assert(h.frame(tts(a,"sentence_start")));assert(h.player.OnAudio(packet,h.session));
  assert(h.owner==0&&h.began==0&&h.queued.empty());DurableSlot before;assert(h.store.Load(before)==Store::LoadResult::Present&&before.state==DurableState::Prepared);
  h.service();DurableSlot after;assert(h.store.Load(after)==Store::LoadResult::Present&&after.state==DurableState::Alarm);assert(h.owner!=0&&h.began==1&&h.queued.size()==1);
+ assert(!h.frame(recovery("prepare_alarm",uuid(2),h.session)));assert(h.store.Load(after)==Store::LoadResult::Present&&after.state==DurableState::Alarm);
  auto duplicate=envelope(a);assert(h.frame(duplicate));auto conflict=a;conflict.timer_id=uuid(88);assert(!h.frame(envelope(conflict)));
 }
 
 void recovery_no_start_wins_serialized_commit(){
  Harness h;h.prepare(uuid(2));assert(h.frame(recovery("abandon_preparation",uuid(2),h.session)));assert(!h.frame(envelope(alarm())));h.service();h.service();
- DurableSlot slot;assert(h.store.Load(slot)==Store::LoadResult::Present&&slot.state==DurableState::NoStartPending);assert(h.owner==0&&h.began==0&&!h.player.Fenced());
+ DurableSlot slot;assert(h.store.Load(slot)==Store::LoadResult::Present&&slot.state==DurableState::NoStartPending);assert(h.owner==0&&h.began==0&&h.player.Fenced());
+ assert(!h.frame(recovery("prepare_alarm",uuid(2),h.session)));assert(h.store.Load(slot)==Store::LoadResult::Present&&slot.state==DurableState::NoStartPending);
  assert(!h.frame(envelope(alarm())));assert(!h.frame(tts(alarm(),"start")));assert(h.player.OnAudio(packet,h.session));assert(h.queued.empty());
 }
 
@@ -379,26 +410,27 @@ void recovery_transition_faults(){
 
 void recovery_stale_frames_after_new_lease(){
  Harness h;h.prepare(uuid(2));assert(h.frame(recovery("abandon_preparation",uuid(2),h.session)));h.service();h.service();assert(h.frame(no_start_ack(uuid(2),h.session)));h.service();
- h.next_lease=uuid(22);h.service();DurableSlot slot;assert(h.store.Load(slot)==Store::LoadResult::Present&&slot.state==DurableState::Prepared&&slot.lease_id==uuid(22));
- assert(!h.frame(envelope(alarm())));assert(!h.frame(no_start_ack(uuid(2),h.session)));assert(!h.frame(recovery("abandon_preparation",uuid(2),h.session)));assert(!h.player.OnAudio(packet,h.session));assert(!h.player.Fenced()&&h.owner==0);
+ h.service();assert(logically_empty());h.prepare(uuid(22));DurableSlot slot;assert(h.store.Load(slot)==Store::LoadResult::Present&&slot.state==DurableState::Prepared&&slot.lease_id==uuid(22));
+ assert(!h.frame(envelope(alarm())));assert(!h.frame(no_start_ack(uuid(2),h.session)));assert(!h.frame(recovery("abandon_preparation",uuid(2),h.session)));assert(!h.player.OnAudio(packet,h.session));assert(h.player.Fenced()&&h.owner==0);
 }
 
 void recovery_schema_and_legacy(){
  for(auto action:{"abandon_preparation","no_start_ack"}){auto frame=std::string(action)=="no_start_ack"?no_start_ack(uuid(2),uuid(1)):recovery(action,uuid(2),uuid(1));cJSON_AddBoolToObject(frame.get(),"extra",true);assert(std::string(action)=="no_start_ack"?!MatchesNoStartAck(frame.get(),uuid(2),uuid(1)):!MatchesRecoveryRequest(frame.get(),action,uuid(2),uuid(1)));}
  for(auto invalid:{"0","1.5","true","\"1\""}){auto frame=recovery("abandon_preparation",uuid(2),uuid(1));replace(frame.get(),"version",invalid);assert(!MatchesRecoveryRequest(frame.get(),"abandon_preparation",uuid(2),uuid(1)));}
  auto duplicate=recovery("abandon_preparation",uuid(2),uuid(1));cJSON_AddStringToObject(duplicate.get(),"lease_id",uuid(2).c_str());assert(!MatchesRecoveryRequest(duplicate.get(),"abandon_preparation",uuid(2),uuid(1)));
+ std::string lease;assert(ParsePreparationRequest(recovery("prepare_alarm",uuid(2),uuid(1)).get(),uuid(1),lease)&&lease==uuid(2));assert(!ParsePreparationRequest(recovery("prepare_alarm",uuid(2),uuid(10)).get(),uuid(1),lease));
  auto legacy=RecordJson({alarm(),Outcome::Completed});DurableSlot slot;assert(ParseDurableSlot(legacy,slot)&&slot.state==DurableState::Alarm&&DurableSlotJson(slot)==legacy);
  for(auto state:{DurableState::Prepared,DurableState::NoStartPending}){auto text=DurableSlotJson({state,uuid(2),{}});assert(ParseDurableSlot(text,slot)&&slot.state==state&&slot.lease_id==uuid(2));}
 }
 
 int main(int argc,char** argv){assert(argc==2);std::map<std::string,std::function<void()>> tests={
 #define CASE(name) {#name,name}
- CASE(recovery_prepare_no_start_ack),CASE(recovery_reboot_and_ack_loss),CASE(recovery_send_loss_press_and_reboot_states),CASE(recovery_header_wins_serialized_commit),CASE(recovery_no_start_wins_serialized_commit),CASE(recovery_transition_faults),CASE(recovery_stale_frames_after_new_lease),CASE(recovery_schema_and_legacy),CASE(enqueue_claim_interleavings),CASE(enqueue_waiting_owner_change),CASE(terminal_hook_paths),CASE(actual_busy_ownership),CASE(late_audio_and_json_budget),CASE(actual_output_bridge),CASE(completed_dma),CASE(no_provider_stop),CASE(interrupted_dma),CASE(decoder_failure),CASE(write_failure),CASE(digest_failure),CASE(packet_order),CASE(packet_bounds),CASE(reconnect_terminal),CASE(reboot_unknown),CASE(reboot_terminal),CASE(stale_ack),CASE(receipt_retry),CASE(disk_faults),CASE(terminal_write_fault),CASE(erase_fault),CASE(store_immutable),CASE(busy_or_press),CASE(identity_schema),CASE(snapshot_bounds),CASE(snapshot_authority),CASE(deadline_validation),CASE(tts_schema)};
+ CASE(recovery_prepare_no_start_ack),CASE(recovery_reboot_and_ack_loss),CASE(recovery_send_loss_press_and_reboot_states),CASE(recovery_request_before_persistence),CASE(recovery_request_duplicates_and_schema),CASE(recovery_no_auto_rearm),CASE(recovery_header_wins_serialized_commit),CASE(recovery_no_start_wins_serialized_commit),CASE(recovery_transition_faults),CASE(recovery_stale_frames_after_new_lease),CASE(recovery_schema_and_legacy),CASE(enqueue_claim_interleavings),CASE(enqueue_waiting_owner_change),CASE(terminal_hook_paths),CASE(actual_busy_ownership),CASE(late_audio_and_json_budget),CASE(actual_output_bridge),CASE(completed_dma),CASE(no_provider_stop),CASE(interrupted_dma),CASE(decoder_failure),CASE(write_failure),CASE(digest_failure),CASE(packet_order),CASE(packet_bounds),CASE(reconnect_terminal),CASE(reboot_unknown),CASE(reboot_terminal),CASE(stale_ack),CASE(receipt_retry),CASE(disk_faults),CASE(terminal_write_fault),CASE(erase_fault),CASE(store_immutable),CASE(busy_or_press),CASE(identity_schema),CASE(snapshot_bounds),CASE(snapshot_authority),CASE(deadline_validation),CASE(tts_schema)};
  reset();tests.at(argv[1])();std::cout<<argv[1]<<" passed\n";
 }
 '''
 CASES = ('enqueue_claim_interleavings enqueue_waiting_owner_change terminal_hook_paths '
-         'recovery_prepare_no_start_ack recovery_reboot_and_ack_loss recovery_send_loss_press_and_reboot_states recovery_header_wins_serialized_commit recovery_no_start_wins_serialized_commit recovery_transition_faults recovery_stale_frames_after_new_lease recovery_schema_and_legacy '
+         'recovery_prepare_no_start_ack recovery_reboot_and_ack_loss recovery_send_loss_press_and_reboot_states recovery_request_before_persistence recovery_request_duplicates_and_schema recovery_no_auto_rearm recovery_header_wins_serialized_commit recovery_no_start_wins_serialized_commit recovery_transition_faults recovery_stale_frames_after_new_lease recovery_schema_and_legacy '
          'actual_busy_ownership late_audio_and_json_budget actual_output_bridge completed_dma no_provider_stop interrupted_dma decoder_failure write_failure digest_failure '
          'packet_order packet_bounds reconnect_terminal reboot_unknown reboot_terminal stale_ack receipt_retry '
          'disk_faults terminal_write_fault erase_fault store_immutable busy_or_press identity_schema '
@@ -438,6 +470,20 @@ int main(){OrbitCrestDisplay display;display.SetTimerText("7 • 0:10 Pasta");as
             self.assertNotIn("Nvs", callback)
         self.assertIn("packet->source_session_id", source)
         self.assertIn("source_session_id = packet_session", (ROOT / "main/protocols/websocket_protocol.cc").read_text())
+
+    def test_durable_recovery_fence_blocks_publication_but_not_local_capture(self):
+        incoming = (ROOT / "main/application.cc").read_text()
+        incoming = incoming[incoming.index("protocol->OnIncomingJson("):]
+        guard = "if (!heartbeat && timer_player_.Fenced())"
+        self.assertIn(guard, incoming)
+        self.assertLess(incoming.index("if (timer_frame || timer_tts)"), incoming.index(guard))
+        self.assertLess(incoming.index("const bool heartbeat"), incoming.index(guard))
+        for signature in ("void Application::SendVoiceRecording(",
+                          "void Application::HandleProvisionsGatewayMaintenance()",
+                          "void Application::StartNotification("):
+            self.assertIn("timer_player_.Fenced()", method("main/application.cc", signature))
+        self.assertNotIn("timer_player_.Fenced()",
+                         method("main/application.cc", "bool Application::BeginLocalRecordingOnMain()"))
 
     def test_timer_terminal_power_hook_preserves_foreground_owners(self):
         handler = method("main/application.cc", "void Application::HandleTimerOutputEnded()")

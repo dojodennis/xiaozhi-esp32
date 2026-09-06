@@ -304,7 +304,10 @@ private:
         button1_.OnPressUp([]() { Application::GetInstance().StopListening(); });
 
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        button2_.OnDoubleClick([]() { Application::GetInstance().ToggleDictationScreen(); });
         button2_.OnLongPress([this]() {
+            if (Application::GetInstance().IsDictationScreen())
+                return;
             ResetDisplayIdleTimer();
             Application::GetInstance().Schedule([]() {
                 Application::GetInstance().RetrySavedVoiceRecording();
@@ -315,6 +318,12 @@ private:
         // Keep the second button useful without adding a menu or allowing an
         // accidental mute. It toggles only between the pilot floor and max.
         button2_.OnClick([this]() {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+            if (Application::GetInstance().IsDictationScreen()) {
+                Application::GetInstance().DictationButton();
+                return;
+            }
+#endif
             ResetDisplayIdleTimer();
             Application::GetInstance().Schedule([this]() {
                 auto* codec = GetAudioCodec();

@@ -1,6 +1,5 @@
 #include "provisions_timers.h"
 
-#include <esp_random.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -48,6 +47,11 @@ bool Id(const cJSON* value, std::string& output) {
         }
     }
     if (!nonzero)
+        return false;
+    if (value->valuestring[14] < '1' || value->valuestring[14] > '8')
+        return false;
+    const char variant = value->valuestring[19];
+    if (variant != '8' && variant != '9' && variant != 'a' && variant != 'b')
         return false;
     output = value->valuestring;
     return true;
@@ -135,6 +139,7 @@ bool Deadline(const cJSON* value, int64_t& output) {
     return true;
 }
 }  // namespace
+bool ParseTimestamp(const cJSON* value, int64_t& unix_ms) { return Deadline(value, unix_ms); }
 
 bool WithinJsonBudget(std::string_view text) {
     if (text.empty() || text.size() > 32768)
@@ -407,6 +412,21 @@ bool SameDurableSlot(const DurableSlot& a, const DurableSlot& b) {
     return a.state == b.state && DurableSlotJson(a) == DurableSlotJson(b);
 }
 
+bool ParsePreparationRequest(const cJSON* root, const std::string& transport_session,
+                             std::string& lease_id) {
+    const auto version = Field(root, "version");
+    std::string parsed_session;
+    std::string parsed_lease;
+    if (!Keys(root, {"type", "action", "version", "session_id", "lease_id"}) ||
+        !Text(Field(root, "type"), "timer") ||
+        !Text(Field(root, "action"), "prepare_alarm") || !cJSON_IsNumber(version) ||
+        version->valuedouble != 1 || !Id(Field(root, "session_id"), parsed_session) ||
+        parsed_session != transport_session || !Id(Field(root, "lease_id"), parsed_lease))
+        return false;
+    lease_id = std::move(parsed_lease);
+    return true;
+}
+
 bool MatchesRecoveryRequest(const cJSON* root, const char* action, const std::string& lease_id,
                             const std::string& transport_session) {
     const auto version = Field(root, "version");
@@ -440,19 +460,6 @@ std::string RecoveryProofJson(DurableState state, const std::string& lease_id,
     cJSON_AddStringToObject(root, "session_id", transport_session.c_str());
     cJSON_AddStringToObject(root, "lease_id", lease_id.c_str());
     return Print(root);
-}
-
-std::string NewLeaseId() {
-    uint8_t bytes[16];
-    esp_fill_random(bytes, sizeof(bytes));
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    char value[37];
-    std::snprintf(value, sizeof(value),
-                  "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x", bytes[0],
-                  bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7], bytes[8],
-                  bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]);
-    return value;
 }
 
 std::string ReceiptJson(const Record& record, const std::string& session) {

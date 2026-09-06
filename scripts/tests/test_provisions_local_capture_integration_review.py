@@ -55,7 +55,13 @@ constexpr std::string_view kSaved="Saved on Orbit. I'll sync when connected.";
 constexpr std::string_view kFailed="I couldn't save that. Please repeat it.";
 }
 struct VoiceRecorder {
-    enum class Result {Saved,Failed,NeedsAttention,Synced,ContextReady,RetryQueued,RetryUnavailable};
+    uint32_t DictationAuthorization() const{return 0;}
+    bool DictationBusy() const{return false;}
+    bool CanDictate(uint32_t,const std::string&,uint64_t)const{return false;}
+    bool BeginDictation(uint32_t,uint64_t){return false;}
+    bool DictationPreparing(uint32_t)const{return false;}
+
+    enum class Result {Saved,Failed,NeedsAttention,Synced,ContextReady,RetryQueued,RetryUnavailable,DictationReady,DictationChanged,DictationAuthorized};
     bool allow_begin=true;unsigned begun=0,released=0,replays=0;
     bool CanRetry() const {return false;}
     std::function<void()> before_begin;
@@ -97,6 +103,12 @@ struct AudioService {
     }
 };
 struct Application {
+    bool provisions_recording_was_dictation_=false;
+    std::atomic<bool> dictation_screen_{false};std::atomic<uint32_t> dictation_closed_press_{0};
+    uint32_t dictation_authorization_seen_=0;bool dictation_has_assignment_proof_=false;std::string dictation_assignment_proof_;
+    void FenceDictationThrough(uint32_t press){dictation_closed_press_=press;}
+    void ServiceDictation(){} void HandleStartListeningEvent(){}
+
     std::mutex provisions_recording_control_mutex_;
     ProvisionsReplyTurn provisions_physical_press_;
     std::atomic<bool> manual_listening_requested_{false},has_server_time_{false};
@@ -243,7 +255,7 @@ struct WebsocketProtocol:std::enable_shared_from_this<WebsocketProtocol> {
     explicit WebsocketProtocol(bool& value):destroyed(value){}
     ~WebsocketProtocol(){destroyed=true;}
     std::atomic<unsigned> connection_generation_{1};
-    std::atomic<bool> gateway_authenticated_{true},gateway_hello_pending_{true},timers_enabled_{true};
+    std::atomic<bool> gateway_authenticated_{true},gateway_hello_pending_{true},timers_enabled_{true},dictation_enabled_{false};
     int event_group_handle_=1,errors=0;
     std::function<void()> on_audio_channel_closed_;
     void SetError(const char*){++errors;}
@@ -380,6 +392,12 @@ struct Latch {
 };
 namespace provisions {
 struct VoiceRecorder {
+    uint32_t DictationAuthorization() const{return 0;}
+    bool DictationBusy() const{return false;}
+    bool CanDictate(uint32_t,const std::string&,uint64_t)const{return false;}
+    bool BeginDictation(uint32_t,uint64_t){return false;}
+    bool DictationPreparing(uint32_t)const{return false;}
+
     enum class Result {Failed};
     std::array<int16_t,VoiceRecording::kMaxSamples> a{},b{};
     VoiceRecording core{a.data(),b.data(),a.size()};
@@ -409,6 +427,12 @@ struct WebsocketProtocol {
     void InterruptStoredRecording(){++interruptions;}
 };
 struct Application {
+    bool provisions_recording_was_dictation_=false;
+    std::atomic<bool> dictation_screen_{false};std::atomic<uint32_t> dictation_closed_press_{0};
+    uint32_t dictation_authorization_seen_=0;bool dictation_has_assignment_proof_=false;std::string dictation_assignment_proof_;
+    void FenceDictationThrough(uint32_t press){dictation_closed_press_=press;}
+    void ServiceDictation(){} void HandleStartListeningEvent(){}
+
     ProvisionsReplyTurn provisions_physical_press_;
     std::atomic<bool> manual_listening_requested_{false},has_server_time_{false};
     std::atomic<bool> provisions_recording_failed_{false},provisions_recording_saving_{false},provisions_recording_local_{false};
@@ -531,12 +555,13 @@ struct WebsocketProtocol {
     using Connection=WebSocket;
     std::atomic<TaskHandle_t> operation_owner_{nullptr};
     std::atomic<bool> upload_active_{false};
-    std::atomic<bool> close_requested_{false},gateway_authenticated_{true},capture_enabled_{true},gateway_hello_pending_{false},timers_enabled_{false};
+    std::atomic<bool> close_requested_{false},gateway_authenticated_{true},capture_enabled_{true},gateway_hello_pending_{false},timers_enabled_{false},dictation_enabled_{false};
     std::atomic<uint32_t> connection_generation_{1};
     std::shared_ptr<WebSocket> websocket_;
     ProvisionsReplyTurn voice_turn_;int event_group_handle_=0;
     bool BeginOperation();void EndOperation();void CloseAudioChannel(bool send_goodbye=false);
     void InterruptStoredRecording();
+    bool DictationNegotiated() const{return dictation_enabled_.load();}
     bool SendStoredRecording(const provisions::VoiceReplay&,bool,const std::function<bool()>&);
     bool IsAudioChannelOpened(){auto ws=std::atomic_load(&websocket_);return gateway_authenticated_.load() && ws && ws->seen.connected;}
     bool GetCaptureContext(provisions::VoiceContext& out){out.conversation_id[0]=1;return capture_enabled_.load();}
@@ -639,6 +664,12 @@ struct Protocol {bool open=false;bool IsAudioChannelOpened(){return open;}};
 struct Ota {bool HasServerTime(){return true;}void MarkCurrentVersionValid(){}};
 struct Audio {int sounds=0;void PlaySound(std::string_view){++sounds;}};
 struct Application {
+    bool provisions_recording_was_dictation_=false;
+    std::atomic<bool> dictation_screen_{false};std::atomic<uint32_t> dictation_closed_press_{0};
+    uint32_t dictation_authorization_seen_=0;bool dictation_has_assignment_proof_=false;std::string dictation_assignment_proof_;
+    void FenceDictationThrough(uint32_t press){dictation_closed_press_=press;}
+    void ServiceDictation(){} void HandleStartListeningEvent(){}
+
     std::shared_ptr<Protocol> protocol=std::make_shared<Protocol>();
     std::unique_ptr<Ota> ota_=std::make_unique<Ota>();
     std::atomic<bool> manual_listening_requested_{true},has_server_time_{false};
@@ -700,7 +731,7 @@ bool IsCanonicalUuid(const std::string& text){return text=="11111111-2222-4333-8
 }
 namespace provisions {VoiceReplay::~VoiceReplay()=default;}
 struct WebsocketProtocol {
-    std::atomic<bool> gateway_authenticated_{false},gateway_hello_pending_{true},capture_enabled_{false},timers_enabled_{false};
+    std::atomic<bool> gateway_authenticated_{false},gateway_hello_pending_{true},capture_enabled_{false},timers_enabled_{false},dictation_enabled_{false};
     std::atomic<int64_t> last_gateway_activity_us_{0};
     std::mutex capture_context_mutex_;provisions::VoiceContext capture_context_;
     int server_sample_rate_=0,server_frame_duration_=0,event_group_handle_=0,rejected=0;
@@ -717,6 +748,12 @@ struct Recorder {
     bool CanRetry(){return false;}bool RetryPending(){return false;}
 };
 struct Application {
+    bool provisions_recording_was_dictation_=false;
+    std::atomic<bool> dictation_screen_{false};std::atomic<uint32_t> dictation_closed_press_{0};
+    uint32_t dictation_authorization_seen_=0;bool dictation_has_assignment_proof_=false;std::string dictation_assignment_proof_;
+    void FenceDictationThrough(uint32_t press){dictation_closed_press_=press;}
+    void ServiceDictation(){} void HandleStartListeningEvent(){}
+
     std::atomic<bool> provisions_recording_failed_{false},provisions_recording_saving_{false},provisions_response_pending_{false};
     std::shared_ptr<Recorder> provisions_recorder_=std::make_shared<Recorder>();
     std::shared_ptr<WebsocketProtocol> protocol=std::make_shared<WebsocketProtocol>();
@@ -771,6 +808,16 @@ int main(){
         assert(p.gateway_authenticated_&&p.timers_enabled_.load()==(variant==2));
         p.RejectServerHello("test disconnect");assert(!p.timers_enabled_);
         cJSON_Delete(root);
+    }
+    for (int variant=0;variant<5;++variant) {
+        auto* root=cJSON_Parse(hello);auto* capabilities=cJSON_GetObjectItemCaseSensitive(root,"provisions");
+        cJSON_AddTrueToObject(capabilities,"audio_capture");cJSON_AddItemToObject(capabilities,"capture_context",cJSON_Parse(context));
+        if(variant==1)cJSON_AddFalseToObject(capabilities,"dictation_v1");
+        if(variant==2||variant==4)cJSON_AddTrueToObject(capabilities,"dictation_v1");
+        if(variant==3)cJSON_AddStringToObject(capabilities,"dictation_v1","true");
+        if(variant==4)cJSON_AddFalseToObject(capabilities,"dictation_v1");
+        WebsocketProtocol p;p.ParseServerHello(root);assert(p.gateway_authenticated_&&p.dictation_enabled_.load()==(variant==2));
+        p.RejectServerHello("disconnect");assert(!p.dictation_enabled_);cJSON_Delete(root);
     }
 #endif
     Application app;

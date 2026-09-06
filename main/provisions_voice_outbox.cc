@@ -7,7 +7,7 @@
 namespace provisions {
 namespace {
 constexpr uint8_t kMagic[8] = {'O', 'R', 'B', 'A', 'U', 'D', '0', '2'};
-constexpr size_t kAuthenticatedBytes = 108;
+constexpr uint8_t kDictationMagic[8] = {'O', 'R', 'B', 'A', 'U', 'D', '0', '3'};
 uint64_t Get(const uint8_t* p, size_t bytes) {
     uint64_t result = 0;
     for (size_t i = 0; i < bytes; ++i)
@@ -22,14 +22,24 @@ bool Nonzero(const uint8_t* p, size_t size) {
     return std::any_of(p, p + size, [](uint8_t value) { return value != 0; });
 }
 bool ValidMetadata(const VoiceCapture& capture) {
+    const bool extension = capture.IsDictation()
+                               ? Nonzero(capture.dictation_session_id.data(), 16) &&
+                                     capture.chunk_sequence < 60 && capture.sample_count > 0 &&
+                                     capture.sample_count <= 160000
+                               : capture.purpose == VoicePurpose::Command &&
+                                     !Nonzero(capture.dictation_session_id.data(), 16) &&
+                                     capture.chunk_sequence == 0 && capture.sample_count == 0;
     return Nonzero(capture.request_id.data(), 16) && Nonzero(capture.conversation_id.data(), 16) &&
            capture.captured_unix_ms <= 253402300799999ULL && capture.source_revision <= 999999999 &&
-           (Nonzero(capture.source_request_id.data(), 16) || capture.source_revision == 0);
+           (Nonzero(capture.source_request_id.data(), 16) || capture.source_revision == 0) &&
+           extension;
 }
 bool Same(const VoiceCapture& a, const VoiceCapture& b) {
     return a.request_id == b.request_id && a.conversation_id == b.conversation_id &&
            a.captured_unix_ms == b.captured_unix_ms && a.packet_count == b.packet_count &&
-           a.source_request_id == b.source_request_id && a.source_revision == b.source_revision;
+           a.source_request_id == b.source_request_id && a.source_revision == b.source_revision &&
+           a.purpose == b.purpose && a.dictation_session_id == b.dictation_session_id &&
+           a.chunk_sequence == b.chunk_sequence && a.sample_count == b.sample_count;
 }
 bool Overlaps(VoiceBytes input, const uint8_t* buffer, size_t size) {
     const auto a = reinterpret_cast<uintptr_t>(input.data);
@@ -72,7 +82,7 @@ VoiceStoreResult VoiceOutbox::Read(size_t slot, SavedVoiceCapture& output) {
     output = {};
     if (slot >= kSlots || !BuffersReady())
         return VoiceStoreResult::Invalid;
-    std::array<uint8_t, kHeaderBytes> header;
+    std::array<uint8_t, kDictationHeaderBytes> header;
     const size_t offset = slot * kSlotBytes;
     if (!flash_.Read(offset, header.data(), header.size()))
         return VoiceStoreResult::IoError;
@@ -86,16 +96,30 @@ VoiceStoreResult VoiceOutbox::Read(size_t slot, SavedVoiceCapture& output) {
     capture.packet_count = Get(header.data() + 64, 4);
     std::copy_n(header.data() + 76, 16, capture.source_request_id.begin());
     capture.source_revision = Get(header.data() + 92, 4);
+    const bool dictation =
+        std::memcmp(header.data(), kDictationMagic, 8) == 0 && Get(header.data() + 8, 4) == 3;
+    const size_t nonce_offset = dictation ? 124 : 96;
+    const size_t authenticated_bytes = nonce_offset + 12;
+    if (dictation) {
+        capture.purpose = static_cast<VoicePurpose>(Get(header.data() + 96, 4));
+        std::copy_n(header.data() + 100, 16, capture.dictation_session_id.begin());
+        capture.chunk_sequence = Get(header.data() + 116, 4);
+        capture.sample_count = Get(header.data() + 120, 4);
+        if (!capture.IsDictation())
+            return VoiceStoreResult::Corrupt;
+    }
     const uint64_t sequence = Get(header.data() + 16, 8);
-    if (std::memcmp(header.data(), kMagic, 8) != 0 || Get(header.data() + 8, 4) != 2 || bytes < 3 ||
-        bytes > kMaxFrameBytes || sequence == 0 || !ValidMetadata(capture) ||
+    if ((!dictation &&
+         (std::memcmp(header.data(), kMagic, 8) != 0 || Get(header.data() + 8, 4) != 2)) ||
+        bytes < 3 || bytes > kMaxFrameBytes || sequence == 0 || !ValidMetadata(capture) ||
         Get(header.data() + 68, 4) != 16000 || Get(header.data() + 72, 4) != 60 ||
-        !Nonzero(header.data() + 96, 12))
+        !Nonzero(header.data() + nonce_offset, 12))
         return VoiceStoreResult::Corrupt;
     if (!flash_.Read(offset + kBodyOffset, cipher_buffer_, bytes))
         return VoiceStoreResult::IoError;
-    if (!cipher_.Open(header.data() + 96, {header.data(), kAuthenticatedBytes},
-                      {cipher_buffer_, bytes}, header.data() + 108, plain_buffer_)) {
+    if (!cipher_.Open(header.data() + nonce_offset, {header.data(), authenticated_bytes},
+                      {cipher_buffer_, bytes}, header.data() + authenticated_bytes,
+                      plain_buffer_)) {
         std::memset(plain_buffer_, 0, bytes);
         return VoiceStoreResult::Corrupt;
     }
@@ -139,9 +163,13 @@ VoiceStoreResult VoiceOutbox::Save(const VoiceCapture& capture, VoiceBytes frame
         return VoiceStoreResult::Full;
     if (sequence == std::numeric_limits<uint64_t>::max())
         return VoiceStoreResult::Invalid;
-    std::array<uint8_t, kHeaderBytes> header{};
-    std::copy_n(kMagic, 8, header.begin());
-    Put(header.data() + 8, 2, 4);
+    std::array<uint8_t, kDictationHeaderBytes> header{};
+    const bool dictation = capture.IsDictation();
+    const size_t header_bytes = dictation ? kDictationHeaderBytes : kHeaderBytes;
+    const size_t nonce_offset = dictation ? 124 : 96;
+    const size_t authenticated_bytes = nonce_offset + 12;
+    std::copy_n(dictation ? kDictationMagic : kMagic, 8, header.begin());
+    Put(header.data() + 8, dictation ? 3 : 2, 4);
     Put(header.data() + 12, frames.size, 4);
     Put(header.data() + 16, sequence + 1, 8);
     std::copy(capture.request_id.begin(), capture.request_id.end(), header.begin() + 24);
@@ -153,14 +181,22 @@ VoiceStoreResult VoiceOutbox::Save(const VoiceCapture& capture, VoiceBytes frame
     std::copy(capture.source_request_id.begin(), capture.source_request_id.end(),
               header.begin() + 76);
     Put(header.data() + 92, capture.source_revision, 4);
-    if (!cipher_.NextNonce(header.data() + 96) || !Nonzero(header.data() + 96, 12) ||
-        !cipher_.Seal(header.data() + 96, {header.data(), kAuthenticatedBytes}, frames,
-                      cipher_buffer_, header.data() + 108))
+    if (dictation) {
+        Put(header.data() + 96, static_cast<uint32_t>(capture.purpose), 4);
+        std::copy(capture.dictation_session_id.begin(), capture.dictation_session_id.end(),
+                  header.begin() + 100);
+        Put(header.data() + 116, capture.chunk_sequence, 4);
+        Put(header.data() + 120, capture.sample_count, 4);
+    }
+    if (!cipher_.NextNonce(header.data() + nonce_offset) ||
+        !Nonzero(header.data() + nonce_offset, 12) ||
+        !cipher_.Seal(header.data() + nonce_offset, {header.data(), authenticated_bytes}, frames,
+                      cipher_buffer_, header.data() + authenticated_bytes))
         return VoiceStoreResult::CryptoError;
     const size_t offset = available * kSlotBytes;
     if (!flash_.Erase(offset, kSlotBytes) ||
         !flash_.Write(offset + kBodyOffset, cipher_buffer_, frames.size) ||
-        !flash_.Write(offset, header.data(), header.size()))
+        !flash_.Write(offset, header.data(), header_bytes))
         return VoiceStoreResult::IoError;
     // Header (including authentication tag) is written last. Only authenticated
     // read-back can produce Saved; a torn erase/body/header is never a receipt.

@@ -149,6 +149,47 @@ int main() {
     assert(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(retry_start.get(),"deferred")));
     assert(request==cJSON_GetObjectItemCaseSensitive(retry_start.get(),"request_id")->valuestring);
 
+    auto dictation = receipt();auto dc=cJSON_GetObjectItemCaseSensitive(dictation.get(),"capture");
+    cJSON_AddStringToObject(dc,"purpose","dictation");cJSON_AddStringToObject(dc,"dictation_session_id",conversation.c_str());
+    cJSON_AddNumberToObject(dc,"chunk_sequence",59);cJSON_AddNumberToObject(dc,"sample_count",160000);
+    auto dr=cJSON_AddObjectToObject(dictation.get(),"dictation_receipt");
+    cJSON_AddStringToObject(dr,"session_id",conversation.c_str());cJSON_AddStringToObject(dr,"segment_id",source.c_str());
+    cJSON_AddStringToObject(dr,"capture_id",request.c_str());cJSON_AddNumberToObject(dr,"sequence",59);
+    cJSON_AddStringToObject(dr,"state","transcribed");cJSON_AddNumberToObject(dr,"revision",1);
+    cJSON_AddBoolToObject(dr,"transcript_persisted",true);cJSON_AddBoolToObject(dr,"terminal",true);
+    assert(ParseVoiceReceipt(dictation.get(),out)&&out.durable&&out.capture.IsDictation());
+    replay.capture=out.capture;replay.retry_token={};
+    assert(VoiceCaptureStart(replay,session,3,false).empty());
+    auto ds=parse(VoiceCaptureStart(replay,session,3,true));
+    assert(cJSON_Compare(cJSON_GetObjectItemCaseSensitive(ds.get(),"capture"),dc,true));
+    for(int level=0;level<3;++level){
+        auto bad=Json(cJSON_Duplicate(dictation.get(),true),cJSON_Delete);
+        auto object=level==0?bad.get():cJSON_GetObjectItemCaseSensitive(bad.get(),level==1?"capture":"dictation_receipt");
+        cJSON_AddNullToObject(object,"unknown");assert(!ParseVoiceReceipt(bad.get(),out));
+    }
+    for(const char* field:{"session_id","segment_id","capture_id","sequence","state","revision","transcript_persisted","terminal"}){
+        auto bad=Json(cJSON_Duplicate(dictation.get(),true),cJSON_Delete);
+        replace(cJSON_GetObjectItemCaseSensitive(bad.get(),"dictation_receipt"),field,"null");assert(!ParseVoiceReceipt(bad.get(),out));
+    }
+    for(const char* field:{"session_id","capture_id"}){
+        auto bad=Json(cJSON_Duplicate(dictation.get(),true),cJSON_Delete);
+        auto object=cJSON_GetObjectItemCaseSensitive(bad.get(),"dictation_receipt");
+        cJSON_SetValuestring(cJSON_GetObjectItemCaseSensitive(object,field),retry.c_str());assert(!ParseVoiceReceipt(bad.get(),out));
+    }
+    for(const char* field:{"purpose","dictation_session_id","chunk_sequence","sample_count"}){
+        auto bad=Json(cJSON_Duplicate(dictation.get(),true),cJSON_Delete);
+        replace(cJSON_GetObjectItemCaseSensitive(bad.get(),"capture"),field,"null");assert(!ParseVoiceReceipt(bad.get(),out));
+    }
+    for(const char* field:{"terminal","transcript_persisted"}){
+        auto bad=Json(cJSON_Duplicate(dictation.get(),true),cJSON_Delete);
+        replace(cJSON_GetObjectItemCaseSensitive(bad.get(),"dictation_receipt"),field,"false");assert(!ParseVoiceReceipt(bad.get(),out));
+    }
+    replace(dr,"state","\"pending\"");replace(dr,"terminal","false");replace(dr,"transcript_persisted","false");
+    assert(!ParseVoiceReceipt(dictation.get(),out));
+    replace(dictation.get(),"state","\"pending\"");replace(dictation.get(),"durable","false");
+    assert(ParseVoiceReceipt(dictation.get(),out)&&!out.durable);
+    replace(dr,"state","\"failed\"");assert(ParseVoiceReceipt(dictation.get(),out)&&!out.durable);
+
     std::cout<<"Strict wire context, receipt state, bounds and serialization passed\n";
 }
 '''

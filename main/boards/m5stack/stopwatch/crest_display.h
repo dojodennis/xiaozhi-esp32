@@ -15,6 +15,11 @@ class OrbitCrestDisplay final : public SpiLcdDisplay {
     lv_obj_t* caption_ = nullptr;
     lv_obj_t* timers_ = nullptr;
     std::string timer_text_;
+    lv_obj_t* dictation_panel_ = nullptr;
+    lv_obj_t* dictation_status_ = nullptr;
+    lv_obj_t* dictation_action_ = nullptr;
+    bool dictation_visible_ = false;
+    std::string dictation_status_text_, dictation_action_text_;
     std::array<lv_obj_t*, 3> rings_{};
     lv_timer_t* animation_timer_ = nullptr;
     State state_ = State::Boot;
@@ -246,6 +251,36 @@ public:
         lv_obj_set_style_text_color(timers_, lv_color_hex(0xcbd5e1), 0);
         lv_label_set_long_mode(timers_, LV_LABEL_LONG_CLIP);
         lv_label_set_text(timers_, "");
+        dictation_panel_ = lv_obj_create(face_);
+        lv_obj_remove_style_all(dictation_panel_);
+        lv_obj_set_size(dictation_panel_, 466, 466);
+        lv_obj_center(dictation_panel_);
+        lv_obj_set_style_bg_color(dictation_panel_, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(dictation_panel_, LV_OPA_COVER, 0);
+        lv_obj_remove_flag(dictation_panel_, LV_OBJ_FLAG_SCROLLABLE);
+        auto* title = lv_label_create(dictation_panel_);
+        lv_obj_set_style_text_font(title, &font_noto_sans_basic_30_4, 0);
+        lv_obj_set_style_text_color(title, lv_color_hex(OrbitCrest::kIvory), 0);
+        lv_label_set_text(title, "Dictation");
+        lv_obj_align(title, LV_ALIGN_CENTER, 0, -125);
+        dictation_status_ = lv_label_create(dictation_panel_);
+        lv_obj_set_size(dictation_status_, 310, 115);
+        lv_obj_align(dictation_status_, LV_ALIGN_CENTER, 0, -35);
+        lv_obj_set_style_text_font(dictation_status_, &font_noto_sans_basic_16_4, 0);
+        lv_obj_set_style_text_align(dictation_status_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_color(dictation_status_, lv_color_hex(0xcbd5e1), 0);
+        lv_obj_set_style_text_line_space(dictation_status_, 8, 0);
+        dictation_action_ = lv_label_create(dictation_panel_);
+        lv_obj_set_style_text_font(dictation_action_, &font_noto_sans_basic_30_4, 0);
+        lv_obj_set_style_text_color(dictation_action_, lv_color_hex(0x7bb7ff), 0);
+        lv_obj_align(dictation_action_, LV_ALIGN_CENTER, 0, 65);
+        auto* help = lv_label_create(dictation_panel_);
+        lv_obj_set_style_text_font(help, &font_noto_sans_basic_16_4, 0);
+        lv_obj_set_style_text_color(help, lv_color_hex(0xcbd5e1), 0);
+        lv_obj_set_style_text_align(help, LV_TEXT_ALIGN_CENTER, 0);
+        lv_label_set_text(help, "Hold yellow: segment\nDouble blue: back");
+        lv_obj_align(help, LV_ALIGN_CENTER, 0, 125);
+        lv_obj_add_flag(dictation_panel_, LV_OBJ_FLAG_HIDDEN);
         animation_timer_ = lv_timer_create(
             [](lv_timer_t* timer) {
                 static_cast<OrbitCrestDisplay*>(lv_timer_get_user_data(timer))->RenderLocked();
@@ -297,6 +332,27 @@ public:
             return;
         timer_text_ = text;
         lv_label_set_text(timers_, timer_text_.c_str());
+    }
+    void SetDictationScreen(bool visible, const std::string& status,
+                            const std::string& action) override {
+        DisplayLockGuard lock(this);
+        if (!dictation_panel_)
+            return;
+        if (dictation_visible_ != visible) {
+            dictation_visible_ = visible;
+            if (visible)
+                lv_obj_remove_flag(dictation_panel_, LV_OBJ_FLAG_HIDDEN);
+            else
+                lv_obj_add_flag(dictation_panel_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (dictation_status_text_ != status) {
+            dictation_status_text_ = status;
+            lv_label_set_text(dictation_status_, status.c_str());
+        }
+        if (dictation_action_text_ != action) {
+            dictation_action_text_ = action;
+            lv_label_set_text(dictation_action_, ("Blue: " + action).c_str());
+        }
     }
     void SetChatMessage(const char* role, const char* content) override {
         if (!role || std::strcmp(role, "assistant") || !content || !content[0])
