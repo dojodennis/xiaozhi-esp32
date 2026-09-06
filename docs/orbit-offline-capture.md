@@ -73,8 +73,8 @@ runs on the button, input or main task.
 
 The profile requires the negotiated `audio_capture` gateway feature and matching
 backend intake/context routes. A legacy gateway cannot initialize this recorder.
-Keep the existing installed firmware until the coordinated backend/gateway
-activation is validated. CoreS3 and generic profiles retain their streaming path.
+The coordinated backend/gateway activation passed before installation on
+2026-09-06. CoreS3 and generic profiles retain their streaming path.
 
 ## Network stalls and cancellation
 
@@ -148,8 +148,11 @@ Actual-worker, wire and blue-button tests also cover lost acknowledgements,
 assignment changes before queued work, restart, old tokens, oldest selection,
 deferred-only retries and Talk/reconnect guards.
 
-This candidate has not been installed. Coordinated gateway/backend activation
-and physical acceptance remain.
+Firmware source `a4376a3` was installed on the connected StopWatch on 2026-09-06
+after conversation v6, capability v9 and gateway `caa2f9a` activation. See
+[installation evidence](orbit-capture-installation-2026-09-06.md). Signed app-only
+installation, full flash verification, authenticated boot and persistence of the
+new NVS key/context across restart passed. Physical acceptance remains.
 The device must demonstrate real microphone
 recognition and speaker clarity, power loss at each save/cache boundary, full
 storage, repeated presses during reconnection, restart replay, and truthful
