@@ -1,0 +1,150 @@
+{
+  "fixture_version": 1,
+  "canonical_json": "{\"audio_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"binding\":{\"actor_id\":\"11111111-1111-4111-8111-111111111111\",\"assignment_id\":\"33333333-3333-4333-8333-333333333333\",\"conversation_id\":\"33333333-3333-4333-8333-333333333333\",\"device_id\":\"22222222-2222-4222-8222-222222222222\",\"host_session_id\":\"55555555-5555-4555-8555-555555555555\"},\"device_connection_id\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"duration_ms\":480,\"lease_id\":\"66666666-6666-4666-8666-666666666666\",\"playback_id\":\"77777777-7777-4777-8777-777777777777\",\"request_id\":\"88888888-8888-4888-8888-888888888888\",\"response_revision\":1,\"route\":\"speaker\",\"route_epoch\":\"99999999-9999-4999-8999-999999999999\",\"sequence\":1,\"turn_id\":1}",
+  "checkpoint_sha256": "6b93cb0e6e4e074d494685a44b4b656286edf5f97d85fa2e10b2ba1e4c228903",
+  "checkpoint": {
+    "audio_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "binding": {
+      "actor_id": "11111111-1111-4111-8111-111111111111",
+      "assignment_id": "33333333-3333-4333-8333-333333333333",
+      "conversation_id": "33333333-3333-4333-8333-333333333333",
+      "device_id": "22222222-2222-4222-8222-222222222222",
+      "host_session_id": "55555555-5555-4555-8555-555555555555"
+    },
+    "device_connection_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "duration_ms": 480,
+    "lease_id": "66666666-6666-4666-8666-666666666666",
+    "playback_id": "77777777-7777-4777-8777-777777777777",
+    "request_id": "88888888-8888-4888-8888-888888888888",
+    "response_revision": 1,
+    "route": "speaker",
+    "route_epoch": "99999999-9999-4999-8999-999999999999",
+    "sequence": 1,
+    "turn_id": 1
+  },
+  "fence_epoch": 1,
+  "backend_commit_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  "last_stop": {
+    "type": "relay.stopped",
+    "lease_id": "66666666-6666-4666-8666-666666666666",
+    "sequence": 1,
+    "playback_id": "77777777-7777-4777-8777-777777777777",
+    "request_id": "88888888-8888-4888-8888-888888888888",
+    "response_revision": 1,
+    "audio_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "route_epoch": "99999999-9999-4999-8999-999999999999",
+    "completed": true,
+    "started_at_ms": 1000,
+    "stopped_at_ms": 1480,
+    "drained_at_ms": 1980
+  },
+  "messages": {
+    "acquire": {
+      "type": "output_fence_v1.acquire",
+      "version": 1,
+      "device_id": "22222222-2222-4222-8222-222222222222",
+      "fence_epoch": 1,
+      "checkpoint_sha256": "6b93cb0e6e4e074d494685a44b4b656286edf5f97d85fa2e10b2ba1e4c228903",
+      "lease_id": "66666666-6666-4666-8666-666666666666",
+      "sequence": 1,
+      "playback_id": "77777777-7777-4777-8777-777777777777",
+      "request_id": "88888888-8888-4888-8888-888888888888",
+      "response_revision": 1,
+      "route_epoch": "99999999-9999-4999-8999-999999999999",
+      "device_connection_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "mode": "phone_exclusive"
+    },
+    "acquired": {
+      "type": "output_fence_v1.acquired",
+      "version": 1,
+      "device_id": "22222222-2222-4222-8222-222222222222",
+      "fence_epoch": 1,
+      "checkpoint_sha256": "6b93cb0e6e4e074d494685a44b4b656286edf5f97d85fa2e10b2ba1e4c228903",
+      "lease_id": "66666666-6666-4666-8666-666666666666",
+      "sequence": 1,
+      "playback_id": "77777777-7777-4777-8777-777777777777",
+      "capture_closed": true,
+      "prior_output_drained": true,
+      "fallback_disabled": true
+    },
+    "release": {
+      "type": "output_fence_v1.release",
+      "version": 1,
+      "device_id": "22222222-2222-4222-8222-222222222222",
+      "fence_epoch": 1,
+      "checkpoint_sha256": "6b93cb0e6e4e074d494685a44b4b656286edf5f97d85fa2e10b2ba1e4c228903",
+      "lease_id": "66666666-6666-4666-8666-666666666666",
+      "sequence": 1,
+      "playback_id": "77777777-7777-4777-8777-777777777777",
+      "request_id": "88888888-8888-4888-8888-888888888888",
+      "response_revision": 1,
+      "route_epoch": "99999999-9999-4999-8999-999999999999",
+      "completed": true,
+      "started_at_ms": 1000,
+      "stopped_at_ms": 1480,
+      "drained_at_ms": 1980,
+      "physical_state": "DRAINED_PENDING_COMMIT"
+    },
+    "drain_pending": {
+      "type": "output_fence_v1.drain_pending",
+      "version": 1,
+      "device_id": "22222222-2222-4222-8222-222222222222",
+      "fence_epoch": 1,
+      "checkpoint_sha256": "6b93cb0e6e4e074d494685a44b4b656286edf5f97d85fa2e10b2ba1e4c228903",
+      "lease_id": "66666666-6666-4666-8666-666666666666",
+      "sequence": 1,
+      "playback_id": "77777777-7777-4777-8777-777777777777",
+      "physical_drained": true,
+      "physical_state": "DRAINED_PENDING_COMMIT"
+    },
+    "close_commit": {
+      "type": "output_fence_v1.close_commit",
+      "version": 1,
+      "device_id": "22222222-2222-4222-8222-222222222222",
+      "fence_epoch": 1,
+      "checkpoint_sha256": "6b93cb0e6e4e074d494685a44b4b656286edf5f97d85fa2e10b2ba1e4c228903",
+      "lease_id": "66666666-6666-4666-8666-666666666666",
+      "sequence": 1,
+      "playback_id": "77777777-7777-4777-8777-777777777777",
+      "backend_commit_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    },
+    "released": {
+      "type": "output_fence_v1.released",
+      "version": 1,
+      "device_id": "22222222-2222-4222-8222-222222222222",
+      "fence_epoch": 1,
+      "checkpoint_sha256": "6b93cb0e6e4e074d494685a44b4b656286edf5f97d85fa2e10b2ba1e4c228903",
+      "lease_id": "66666666-6666-4666-8666-666666666666",
+      "sequence": 1,
+      "playback_id": "77777777-7777-4777-8777-777777777777",
+      "physical_drained": true,
+      "owner_cleared": true,
+      "physical_state": "TERMINAL"
+    }
+  },
+  "invalid_projections": [
+    {
+      "name": "original_unequal_conversation_vector",
+      "checkpoint": {
+        "audio_sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "binding": {
+          "actor_id": "11111111-1111-4111-8111-111111111111",
+          "assignment_id": "33333333-3333-4333-8333-333333333333",
+          "conversation_id": "44444444-4444-4444-8444-444444444444",
+          "device_id": "22222222-2222-4222-8222-222222222222",
+          "host_session_id": "55555555-5555-4555-8555-555555555555"
+        },
+        "device_connection_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "duration_ms": 480,
+        "lease_id": "66666666-6666-4666-8666-666666666666",
+        "playback_id": "77777777-7777-4777-8777-777777777777",
+        "request_id": "88888888-8888-4888-8888-888888888888",
+        "response_revision": 1,
+        "route": "speaker",
+        "route_epoch": "99999999-9999-4999-8999-999999999999",
+        "sequence": 1,
+        "turn_id": 1
+      }
+    }
+  ]
+}
