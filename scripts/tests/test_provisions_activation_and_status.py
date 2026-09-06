@@ -75,7 +75,7 @@ int main(){
             "main/boards/m5stack/stopwatch/crest_display.h", "static State StateForStatus(")))
 
     def test_dimmed_talk_wakes_on_main_even_if_capture_cannot_start(self):
-        program = r''' 
+        program = r'''
 #include <atomic>
 #include <cassert>
 #include <cstdint>
