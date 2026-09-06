@@ -302,7 +302,7 @@ int main(){
                                   "void AudioService::StopLocalRecording(", "bool AudioService::IsLocalRecordingClosed(",
                                   "bool AudioService::IsLocalInputIdle(", "bool AudioService::IsLocalRecordingReady("))))
 
-    def test_actual_output_task_checks_final_ownership_and_physical_drain(self):
+    def output_task_program(self):
         program = r'''
 #include <atomic>
 #include <cassert>
@@ -342,7 +342,7 @@ struct AudioService{
  struct{std::function<void()> on_playback_drained;std::function<void(uint32_t)> on_playback_error;std::function<void(uint32_t,uint32_t)> on_playback_progress;}callbacks_;
  struct{uint32_t playback_count=0;}debug_statistics_;std::chrono::steady_clock::time_point last_output_time_;
  void AudioOutputTask();void StartLocalRecording(uint32_t);void FenceLocalRecording(uint32_t);void ReleaseLocalRecordingFence(uint32_t);void ReconcileLocalRecording(uint32_t);bool IsPlaybackDrainedLocked()const;bool MarkPlaybackDrainedLocked();
- void stop(){service_stopped_=true;audio_queue_cv_.notify_all();}
+ void stop(){std::lock_guard<std::mutex> lock(audio_queue_mutex_);service_stopped_=true;audio_queue_cv_.notify_all();}
  void enqueue(){audio_playback_queue_.push_back(std::make_unique<AudioTask>());}
 };
 __METHODS__
@@ -373,12 +373,60 @@ int main(){
   a.stop();output.join();assert(a.codec.writes==1&&a.debug_statistics_.playback_count==0&&a.audio_playback_queue_.empty());}
 }
 '''
-        run_cpp(program.replace("__METHODS__", "\n".join(method("main/audio/audio_service.cc", signature)
+        return program.replace("__METHODS__", "\n".join(method("main/audio/audio_service.cc", signature)
                 for signature in ("void AudioService::AudioOutputTask()", "void AudioService::StartLocalRecording(",
                                   "void AudioService::FenceLocalRecording(", "void AudioService::ReleaseLocalRecordingFence(",
                                   "void AudioService::ReconcileLocalRecording(",
                                   "bool AudioService::IsPlaybackDrainedLocked() const",
-                                  "bool AudioService::MarkPlaybackDrainedLocked()"))))
+                                  "bool AudioService::MarkPlaybackDrainedLocked()")))
+
+    def test_actual_output_task_checks_final_ownership_and_physical_drain(self):
+        run_cpp(self.output_task_program())
+
+    def test_output_harness_stop_serializes_notification_with_actual_task_wait(self):
+        # Stop must serialize its predicate and notification with the queue mutex,
+        # just as production AudioService::Stop does. Hold the actual output task
+        # immediately before wait to prove the old helper loses its notification.
+        boundary = r'''
+std::atomic<bool> wait_entered{false},release_wait{false},notified{false},timed_out{false};
+struct ControlledConditionVariable {
+ std::condition_variable actual;
+ void wait(std::unique_lock<std::mutex>& lock) {
+  wait_entered=true;
+  while(!release_wait)std::this_thread::sleep_for(100us);
+  // Only this detector is bounded; production wait and test process limits stay unchanged.
+  timed_out=actual.wait_for(lock,200ms)==std::cv_status::timeout;
+ }
+ template<class Rep,class Period>auto wait_for(std::unique_lock<std::mutex>& lock,const std::chrono::duration<Rep,Period>& duration){return actual.wait_for(lock,duration);}
+ void notify_all(){notified=true;actual.notify_all();}
+};
+'''
+        case = r'''
+int main(){
+ AudioService a;a.playback_drained_notified_=true;
+ std::thread output([&]{a.AudioOutputTask();});
+ wait_for([&]{return wait_entered.load();});
+ std::atomic<bool> stop_started{false};
+ std::thread stopping([&]{stop_started=true;a.stop();});
+ wait_for([&]{return stop_started.load();});
+ if(__EXPECT_LOST_WAKE__)wait_for([&]{return notified.load();});
+ release_wait=true;stopping.join();output.join();
+ assert(timed_out.load()==__EXPECT_LOST_WAKE__);
+}
+'''
+        fixed = ('void stop(){std::lock_guard<std::mutex> lock(audio_queue_mutex_);'
+                 'service_stopped_=true;audio_queue_cv_.notify_all();}')
+        original = 'void stop(){service_stopped_=true;audio_queue_cv_.notify_all();}'
+        program = self.output_task_program()
+        self.assertIn(fixed, program)
+        program = program.replace('struct AudioService{', boundary + '\nstruct AudioService{')
+        program = program.replace('std::condition_variable audio_queue_cv_;',
+                                  'ControlledConditionVariable audio_queue_cv_;')
+        program = program[:program.index('int main(){')]
+        for locked in (False, True):
+            with self.subTest(queue_mutex_held=locked):
+                variant = program if locked else program.replace(fixed, original)
+                run_cpp(variant + case.replace('__EXPECT_LOST_WAKE__', 'false' if locked else 'true'))
 
 
 if __name__ == "__main__":
