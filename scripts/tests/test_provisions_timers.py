@@ -48,6 +48,7 @@ using namespace std::chrono_literals;
 constexpr int AUDIO_POWER_CHECK_INTERVAL_MS=1000,MAX_DECODE_PACKETS_IN_QUEUE=20;
 void esp_timer_stop(int){}void esp_timer_start_periodic(int,int){}
 void esp_opus_dec_reset(void*){}
+std::function<void()> before_decode_queue_lock,before_decode_queue_wait;
 struct AudioStreamPacket {uint32_t playback_id=0,media_position_ms=0;std::vector<uint8_t> payload;};
 struct AudioTask {std::vector<int16_t> pcm=std::vector<int16_t>(1440);uint32_t playback_id=0,media_position_ms=0,timestamp=0,playback_generation=0;};
 struct AudioService {
@@ -147,7 +148,7 @@ void reboot_terminal(){NvsStore store;assert(store.Save({alarm(),Outcome::Comple
 void stale_ack(){Harness h;h.completed();const auto original=stored();for(auto key:{"session_id","lease_id","playback_id","timer_id","timer_revision","attempt"}){auto a=ack(original,h.session);replace(a.get(),key,std::string(key)=="timer_revision"||std::string(key)=="attempt"?"2":"\""+uuid(88)+"\"");assert(!h.frame(a));h.service();assert(h.owner&&h.player.Fenced()&&!disk.empty());}assert(h.frame(ack(original,h.session)));h.service();assert(!h.owner);auto a=alarm();a.lease_id=uuid(22);a.attempt=2;h.start(a);assert(!h.frame(ack(original,h.session)));h.service();assert(h.owner&&stored().alarm.attempt==2);}
 void receipt_retry(){Harness h;h.completed();auto first=h.sent.back();h.time+=1000001;h.service();assert(h.sent.size()==2&&h.sent.back()==first);h.session=uuid(10);h.service();auto second=h.sent.back();h.time+=1000001;h.service();assert(second==h.sent.back()&&disk==RecordJson(stored()));}
 void disk_faults(){for(int mode=0;mode<5;++mode){reset();Harness h;if(mode==0)fail_open=true;if(mode==1)fail_set=true;if(mode==2)fail_commit=true;if(mode==3){namespace_present=true;disk="broken";}if(mode==4)corrupt_readback=true;assert(h.frame(envelope(alarm())));h.service();assert(h.player.Fenced()&&h.owner==0&&h.began==0&&h.sent.empty());}reset();disk="broken";namespace_present=true;Harness corrupt;corrupt.service();assert(corrupt.player.Fenced()&&corrupt.owner&&corrupt.sent.empty());}
-void terminal_write_fault(){Harness h;h.start();h.audio();h.stop();h.play();h.dma();fail_commit=true;h.service();assert(h.sent.empty()&&h.owner&&stored().outcome==Outcome::Unknown);}
+void terminal_write_fault(){Harness h;h.start();h.audio();h.stop();h.play();h.dma();fail_commit=true;h.service();assert(h.sent.empty()&&h.owner&&h.ended==0&&stored().outcome==Outcome::Unknown);}
 void erase_fault(){Harness h;h.completed();assert(h.frame(ack(stored(),h.session)));fail_erase=true;h.service();assert(!disk.empty()&&h.owner&&h.player.Fenced());}
 void store_immutable(){NvsStore s;auto a=alarm();assert(s.Save({a,Outcome::Unknown}));auto other=a;other.lease_id=uuid(100);assert(!s.Save({other,Outcome::Unknown}));assert(s.Save({a,Outcome::Failed}));assert(!s.Save({a,Outcome::Completed}));assert(!s.Save({a,Outcome::Unknown}));assert(!s.Erase({a,Outcome::Completed}));assert(s.Erase({a,Outcome::Failed}));Record r;assert(s.Load(r)==Store::LoadResult::Empty);}
 void busy_or_press(){for(int mode=0;mode<3;++mode){reset();Harness h;assert(h.frame(envelope(alarm())));if(mode==0)h.ready=false;if(mode==1)h.press+=1;if(mode==2)h.press+=2;h.service();assert(h.began==0&&h.queued.empty()&&h.sent.size()==1);check_receipt(h.sent.back(),mode==0?"failed":"interrupted");}}
@@ -261,14 +262,69 @@ void actual_busy_ownership(){
  audio.stop();if(output.joinable())output.join();
  }
 }
+void enqueue_claim_interleavings(){
+ constexpr uint32_t timer_id=0x80000001u;
+ {
+  AudioService audio;const auto generation=audio.playback_generation_;
+  std::mutex gate;std::condition_variable cv;bool at_lock=false,resume=false,pushed=false;
+  before_decode_queue_lock=[&]{std::unique_lock<std::mutex> lock(gate);at_lock=true;cv.notify_all();cv.wait(lock,[&]{return resume;});};
+  std::thread producer([&]{auto p=std::make_unique<AudioStreamPacket>();p->playback_id=7;p->payload=packet;pushed=audio.PushPacketToDecodeQueue(std::move(p),false);});
+  {std::unique_lock<std::mutex> lock(gate);assert(cv.wait_for(lock,2s,[&]{return at_lock;}));}
+  assert(audio.ClaimTimerOutput(timer_id));
+  {std::lock_guard<std::mutex> lock(gate);resume=true;}cv.notify_all();producer.join();
+  before_decode_queue_lock={};
+  assert(!pushed&&audio.timer_output_owner_==timer_id&&audio.audio_decode_queue_.empty());
+  assert(audio.playback_generation_==generation);
+  auto matching=std::make_unique<AudioStreamPacket>();matching->playback_id=timer_id;
+  assert(audio.PushPacketToDecodeQueue(std::move(matching),false));
+  assert(audio.audio_decode_queue_.size()==1&&audio.audio_decode_queue_.front()->playback_id==timer_id);
+ }
+ {
+  AudioService audio;const auto generation=audio.playback_generation_;
+  auto ordinary=std::make_unique<AudioStreamPacket>();ordinary->playback_id=7;
+  assert(audio.PushPacketToDecodeQueue(std::move(ordinary),false));
+  assert(!audio.ClaimTimerOutput(timer_id));
+  assert(audio.timer_output_owner_==0&&audio.audio_decode_queue_.size()==1);
+  assert(audio.audio_decode_queue_.front()->playback_id==7&&audio.playback_generation_==generation);
+ }
+}
+void enqueue_waiting_owner_change(){
+ constexpr uint32_t timer_id=0x80000001u;
+ AudioService audio;const auto generation=audio.playback_generation_;
+ for(int i=0;i<MAX_DECODE_PACKETS_IN_QUEUE;++i){auto p=std::make_unique<AudioStreamPacket>();p->playback_id=7;assert(audio.PushPacketToDecodeQueue(std::move(p),false));}
+ std::mutex gate;std::condition_variable cv;bool waiting=false,pushed=false;
+ before_decode_queue_wait=[&]{{std::lock_guard<std::mutex> lock(gate);waiting=true;}cv.notify_all();};
+ std::thread producer([&]{auto p=std::make_unique<AudioStreamPacket>();p->playback_id=8;pushed=audio.PushPacketToDecodeQueue(std::move(p),true);});
+ {std::unique_lock<std::mutex> lock(gate);assert(cv.wait_for(lock,2s,[&]{return waiting;}));}
+ {
+  std::lock_guard<std::mutex> lock(audio.audio_queue_mutex_);
+  audio.audio_decode_queue_.clear();
+  assert(audio.IsPlaybackDrainedLocked());
+  uint32_t empty=0;assert(audio.timer_output_owner_.compare_exchange_strong(empty,timer_id));
+  audio.audio_queue_cv_.notify_all();
+ }
+ producer.join();before_decode_queue_wait={};
+ assert(!pushed&&audio.timer_output_owner_==timer_id&&audio.audio_decode_queue_.empty());
+ assert(audio.playback_generation_==generation);
+}
+void terminal_hook_paths(){
+ {Harness h;h.completed();assert(h.began==1&&h.ended==1);}
+ reset();
+ {Harness h;h.start();h.audio();h.stop();h.play(false);h.service();assert(h.began==1&&h.ended==1);}
+ reset();
+ {Harness h;h.start();h.audio();h.stop();h.play();++h.press;h.service();h.dma();h.service();assert(h.began==1&&h.ended==1);}
+ reset();
+ {Harness h;assert(h.frame(envelope(alarm())));h.ready=false;h.service();assert(h.began==0&&h.ended==0);}
+}
 
 int main(int argc,char** argv){assert(argc==2);std::map<std::string,std::function<void()>> tests={
 #define CASE(name) {#name,name}
- CASE(actual_busy_ownership),CASE(late_audio_and_json_budget),CASE(actual_output_bridge),CASE(completed_dma),CASE(no_provider_stop),CASE(interrupted_dma),CASE(decoder_failure),CASE(write_failure),CASE(digest_failure),CASE(packet_order),CASE(packet_bounds),CASE(reconnect_terminal),CASE(reboot_unknown),CASE(reboot_terminal),CASE(stale_ack),CASE(receipt_retry),CASE(disk_faults),CASE(terminal_write_fault),CASE(erase_fault),CASE(store_immutable),CASE(busy_or_press),CASE(identity_schema),CASE(snapshot_bounds),CASE(snapshot_authority),CASE(deadline_validation),CASE(tts_schema)};
+ CASE(enqueue_claim_interleavings),CASE(enqueue_waiting_owner_change),CASE(terminal_hook_paths),CASE(actual_busy_ownership),CASE(late_audio_and_json_budget),CASE(actual_output_bridge),CASE(completed_dma),CASE(no_provider_stop),CASE(interrupted_dma),CASE(decoder_failure),CASE(write_failure),CASE(digest_failure),CASE(packet_order),CASE(packet_bounds),CASE(reconnect_terminal),CASE(reboot_unknown),CASE(reboot_terminal),CASE(stale_ack),CASE(receipt_retry),CASE(disk_faults),CASE(terminal_write_fault),CASE(erase_fault),CASE(store_immutable),CASE(busy_or_press),CASE(identity_schema),CASE(snapshot_bounds),CASE(snapshot_authority),CASE(deadline_validation),CASE(tts_schema)};
  reset();tests.at(argv[1])();std::cout<<argv[1]<<" passed\n";
 }
 '''
-CASES = ('actual_busy_ownership late_audio_and_json_budget actual_output_bridge completed_dma no_provider_stop interrupted_dma decoder_failure write_failure digest_failure '
+CASES = ('enqueue_claim_interleavings enqueue_waiting_owner_change terminal_hook_paths '
+         'actual_busy_ownership late_audio_and_json_budget actual_output_bridge completed_dma no_provider_stop interrupted_dma decoder_failure write_failure digest_failure '
          'packet_order packet_bounds reconnect_terminal reboot_unknown reboot_terminal stale_ack receipt_retry '
          'disk_faults terminal_write_fault erase_fault store_immutable busy_or_press identity_schema '
          'snapshot_bounds snapshot_authority deadline_validation tts_schema').split()
@@ -300,12 +356,45 @@ int main(){OrbitCrestDisplay display;display.SetTimerText("7 • 0:10 Pasta");as
         self.assertIn("audio_service_.ClaimTimerOutput(id)", init)
         self.assertIn("audio_service_.ReleaseTimerOutput(id)", init)
         self.assertIn("audio_service_.PushPacketToDecodeQueue(std::move(packet), false)", init)
+        self.assertIn("hooks.ended = [this]() { HandleTimerOutputEnded(); };", init)
         for edge in ("void Application::StartListening()", "void Application::StopListening()"):
             callback = method("main/application.cc", edge)
             self.assertNotIn("timer_player_", callback)
             self.assertNotIn("Nvs", callback)
         self.assertIn("packet->source_session_id", source)
         self.assertIn("source_session_id = packet_session", (ROOT / "main/protocols/websocket_protocol.cc").read_text())
+
+    def test_timer_terminal_power_hook_preserves_foreground_owners(self):
+        handler = method("main/application.cc", "void Application::HandleTimerOutputEnded()")
+        program = r"""
+#include <atomic>
+#include <cassert>
+#include <functional>
+enum DeviceState {kDeviceStateIdle,kDeviceStateListening,kDeviceStateSpeaking,kDeviceStateNotifying};
+enum class PowerSaveLevel {LOW_POWER,PERFORMANCE};
+struct Board {int low_power=0,performance=0;PowerSaveLevel level=PowerSaveLevel::PERFORMANCE;std::function<void()> before_low;static Board& GetInstance(){static Board b;return b;}void SetPowerSaveLevel(PowerSaveLevel next){if(next==PowerSaveLevel::LOW_POWER){if(before_low)before_low();++low_power;}else{++performance;}level=next;}};
+struct AudioService {bool playback_idle=true,input_idle=true;bool IsPlaybackIdle(){return playback_idle;}bool IsLocalInputIdle(){return input_idle;}};
+struct Application {DeviceState state=kDeviceStateNotifying;bool transition=true,talk_on_transition=false,output_on_transition=false,reply_on_transition=false;int transitions=0;std::atomic<bool> manual_listening_requested_{false};AudioService audio_service_;
+ DeviceState GetDeviceState()const{return state;}bool SetDeviceState(DeviceState next){++transitions;if(!transition)return false;state=next;if(talk_on_transition)manual_listening_requested_=true;if(output_on_transition)audio_service_.playback_idle=false;if(reply_on_transition)state=kDeviceStateSpeaking;return true;}
+ void HandleTimerOutputEnded();
+};
+__HANDLER__
+void reset_board(){auto& board=Board::GetInstance();board.low_power=board.performance=0;board.level=PowerSaveLevel::PERFORMANCE;board.before_low={};}
+int main(){
+ {reset_board();Application app;app.HandleTimerOutputEnded();assert(app.state==kDeviceStateIdle&&app.transitions==1&&Board::GetInstance().low_power==1&&Board::GetInstance().performance==0&&Board::GetInstance().level==PowerSaveLevel::LOW_POWER);}
+ {reset_board();Application app;app.manual_listening_requested_=true;app.HandleTimerOutputEnded();assert(app.state==kDeviceStateNotifying&&app.transitions==0&&Board::GetInstance().low_power==0);}
+ {reset_board();Application app;app.audio_service_.input_idle=false;app.HandleTimerOutputEnded();assert(app.state==kDeviceStateNotifying&&app.transitions==0&&Board::GetInstance().low_power==0);}
+ {reset_board();Application app;app.audio_service_.playback_idle=false;app.HandleTimerOutputEnded();assert(app.state==kDeviceStateNotifying&&app.transitions==0&&Board::GetInstance().low_power==0);}
+ {reset_board();Application app;app.state=kDeviceStateSpeaking;app.HandleTimerOutputEnded();assert(app.state==kDeviceStateSpeaking&&app.transitions==0&&Board::GetInstance().low_power==0);}
+ {reset_board();Application app;app.transition=false;app.HandleTimerOutputEnded();assert(app.state==kDeviceStateNotifying&&app.transitions==1&&Board::GetInstance().low_power==0);}
+ {reset_board();Application app;app.talk_on_transition=true;app.HandleTimerOutputEnded();assert(app.state==kDeviceStateIdle&&app.transitions==1&&Board::GetInstance().low_power==0);}
+ {reset_board();Application app;app.output_on_transition=true;app.HandleTimerOutputEnded();assert(app.state==kDeviceStateIdle&&app.transitions==1&&Board::GetInstance().low_power==0);}
+ {reset_board();Application app;app.reply_on_transition=true;app.HandleTimerOutputEnded();assert(app.state==kDeviceStateSpeaking&&app.transitions==1&&Board::GetInstance().low_power==0);}
+ {reset_board();Application app;Board::GetInstance().before_low=[&]{app.manual_listening_requested_=true;};app.HandleTimerOutputEnded();assert(app.state==kDeviceStateIdle&&app.transitions==1&&Board::GetInstance().low_power==1&&Board::GetInstance().performance==1&&Board::GetInstance().level==PowerSaveLevel::PERFORMANCE);}
+ {reset_board();Application app;Board::GetInstance().before_low=[&]{app.audio_service_.playback_idle=false;};app.HandleTimerOutputEnded();assert(app.state==kDeviceStateIdle&&app.transitions==1&&Board::GetInstance().low_power==1&&Board::GetInstance().performance==1&&Board::GetInstance().level==PowerSaveLevel::PERFORMANCE);}
+}
+"""
+        run_cpp(program.replace("__HANDLER__", handler))
 
 
 class TimerFirmwareTests(unittest.TestCase):
@@ -334,10 +423,23 @@ class TimerFirmwareTests(unittest.TestCase):
         codec = codec.replace("__METHODS__", "\n".join(method(*spec) for spec in specs))
         audio = AUDIO.replace("__OWNER_METHODS__", "\n".join(method("main/audio/audio_service.h", sig) for sig in (
             "bool ClaimTimerOutput(", "bool ReleaseTimerOutput(")))
-        audio = audio.replace("__AUDIO_METHODS__", "\n".join(method("main/audio/audio_service.cc", sig) for sig in (
+        push = method("main/audio/audio_service.cc", "bool AudioService::PushPacketToDecodeQueue(")
+        push = push.replace(
+            "std::unique_lock<std::mutex> lock(audio_queue_mutex_);",
+            "if (before_decode_queue_lock) before_decode_queue_lock();\n    "
+            "std::unique_lock<std::mutex> lock(audio_queue_mutex_);",
+        )
+        push = push.replace(
+            "audio_queue_cv_.wait(lock, [this, generation]() {",
+            "if (before_decode_queue_wait) before_decode_queue_wait();\n            "
+            "audio_queue_cv_.wait(lock, [this, generation]() {",
+        )
+        audio_methods = [method("main/audio/audio_service.cc", sig) for sig in (
             "void AudioService::AudioOutputTask()", "bool AudioService::IsPlaybackIdle()",
             "bool AudioService::IsPlaybackDrainedLocked() const", "bool AudioService::MarkPlaybackDrainedLocked()",
-            "void AudioService::ResetDecoder()", "bool AudioService::PushPacketToDecodeQueue(")))
+            "void AudioService::ResetDecoder()")]
+        audio_methods.append(push)
+        audio = audio.replace("__AUDIO_METHODS__", "\n".join(audio_methods))
         (path / "review.cc").write_text(PROGRAM.replace("__CODEC__", codec).replace("__AUDIO__", audio))
         sanitize = ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
         subprocess.run(["cc", *sanitize, "-I", str(cjson), "-c", str(cjson / "cJSON.c"),

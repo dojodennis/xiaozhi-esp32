@@ -200,6 +200,7 @@ private:
     provisions::timers::Player timer_player_{timer_store_};
     void InitializeTimers();
     void ServiceTimers();
+    void HandleTimerOutputEnded();
     std::mutex provisions_recording_control_mutex_;
     uint32_t provisions_recording_started_press_ = 0;  // Main-task owned.
     bool provisions_recording_was_dictation_ = false;
