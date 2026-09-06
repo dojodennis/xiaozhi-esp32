@@ -21,6 +21,11 @@ struct AudioStreamPacket {
     uint32_t timestamp = 0;
     uint32_t playback_id = 0;
     uint32_t media_position_ms = 0;
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    // Immutable receive context; a delayed old binary callback cannot attach to
+    // a newer alarm after transport replacement.
+    std::string source_session_id;
+#endif
     std::vector<uint8_t> payload;
 };
 

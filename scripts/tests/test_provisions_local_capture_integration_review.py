@@ -243,7 +243,7 @@ struct WebsocketProtocol:std::enable_shared_from_this<WebsocketProtocol> {
     explicit WebsocketProtocol(bool& value):destroyed(value){}
     ~WebsocketProtocol(){destroyed=true;}
     std::atomic<unsigned> connection_generation_{1};
-    std::atomic<bool> gateway_authenticated_{true},gateway_hello_pending_{true};
+    std::atomic<bool> gateway_authenticated_{true},gateway_hello_pending_{true},timers_enabled_{true};
     int event_group_handle_=1,errors=0;
     std::function<void()> on_audio_channel_closed_;
     void SetError(const char*){++errors;}
@@ -531,7 +531,7 @@ struct WebsocketProtocol {
     using Connection=WebSocket;
     std::atomic<TaskHandle_t> operation_owner_{nullptr};
     std::atomic<bool> upload_active_{false};
-    std::atomic<bool> close_requested_{false},gateway_authenticated_{true},capture_enabled_{true},gateway_hello_pending_{false};
+    std::atomic<bool> close_requested_{false},gateway_authenticated_{true},capture_enabled_{true},gateway_hello_pending_{false},timers_enabled_{false};
     std::atomic<uint32_t> connection_generation_{1};
     std::shared_ptr<WebSocket> websocket_;
     ProvisionsReplyTurn voice_turn_;int event_group_handle_=0;
@@ -699,7 +699,7 @@ bool IsCanonicalUuid(const std::string& text){return text=="11111111-2222-4333-8
 }
 namespace provisions {VoiceReplay::~VoiceReplay()=default;}
 struct WebsocketProtocol {
-    std::atomic<bool> gateway_authenticated_{false},gateway_hello_pending_{true},capture_enabled_{false};
+    std::atomic<bool> gateway_authenticated_{false},gateway_hello_pending_{true},capture_enabled_{false},timers_enabled_{false};
     std::atomic<int64_t> last_gateway_activity_us_{0};
     std::mutex capture_context_mutex_;provisions::VoiceContext capture_context_;
     int server_sample_rate_=0,server_frame_duration_=0,event_group_handle_=0,rejected=0;
@@ -754,6 +754,21 @@ int main(){
 #endif
         cJSON_Delete(root);
     }
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    for (int variant=0;variant<5;++variant) {
+        cJSON* root=cJSON_Parse(hello);auto capabilities=cJSON_GetObjectItemCaseSensitive(root,"provisions");
+        cJSON_AddTrueToObject(capabilities,"audio_capture");
+        cJSON_AddItemToObject(capabilities,"capture_context",cJSON_Parse(context));
+        if(variant==1)cJSON_AddFalseToObject(capabilities,"timers_v1");
+        if(variant==2||variant==4)cJSON_AddTrueToObject(capabilities,"timers_v1");
+        if(variant==3)cJSON_AddStringToObject(capabilities,"timers_v1","true");
+        if(variant==4)cJSON_AddFalseToObject(capabilities,"timers_v1");
+        WebsocketProtocol p;p.ParseServerHello(root);
+        assert(p.gateway_authenticated_&&p.timers_enabled_.load()==(variant==2));
+        p.RejectServerHello("test disconnect");assert(!p.timers_enabled_);
+        cJSON_Delete(root);
+    }
+#endif
     Application app;
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
     assert(std::string(app.GetProvisionsIdleStatus())=="Capture unavailable");

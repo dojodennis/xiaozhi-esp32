@@ -13,6 +13,8 @@ class OrbitCrestDisplay final : public SpiLcdDisplay {
     lv_obj_t* band_ = nullptr;
     lv_obj_t* star_ = nullptr;
     lv_obj_t* caption_ = nullptr;
+    lv_obj_t* timers_ = nullptr;
+    std::string timer_text_;
     std::array<lv_obj_t*, 3> rings_{};
     lv_timer_t* animation_timer_ = nullptr;
     State state_ = State::Boot;
@@ -236,6 +238,14 @@ public:
         lv_obj_set_style_text_align(caption_, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_text_line_space(caption_, 3, 0);
         lv_label_set_long_mode(caption_, LV_LABEL_LONG_CLIP);
+        timers_ = lv_label_create(face_);
+        lv_obj_set_size(timers_, 250, 54);
+        lv_obj_align(timers_, LV_ALIGN_CENTER, 0, 166);
+        lv_obj_set_style_text_font(timers_, &font_noto_sans_basic_16_4, 0);
+        lv_obj_set_style_text_align(timers_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_color(timers_, lv_color_hex(0xcbd5e1), 0);
+        lv_label_set_long_mode(timers_, LV_LABEL_LONG_CLIP);
+        lv_label_set_text(timers_, "");
         animation_timer_ = lv_timer_create(
             [](lv_timer_t* timer) {
                 static_cast<OrbitCrestDisplay*>(lv_timer_get_user_data(timer))->RenderLocked();
@@ -281,6 +291,13 @@ public:
         ShowNotification(notification.c_str(), duration_ms);
     }
 
+    void SetTimerText(const std::string& text) override {
+        DisplayLockGuard lock(this);
+        if (!timers_ || timer_text_ == text)
+            return;
+        timer_text_ = text;
+        lv_label_set_text(timers_, timer_text_.c_str());
+    }
     void SetChatMessage(const char* role, const char* content) override {
         if (!role || std::strcmp(role, "assistant") || !content || !content[0])
             return;

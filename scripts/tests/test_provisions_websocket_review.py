@@ -232,6 +232,13 @@ int main(int argc,char** argv){assert(argc==2);Fixture fixture;f=&fixture;const 
         f->wait([&]{return f->received_count()==1 || !socket.IsConnected();});assert(socket.IsConnected());
         {std::lock_guard<std::mutex> lock(f->mutex);assert(f->received.size()==1 && !f->received[0].first && f->received[0].second==std::string(3000,'a')+std::string(5000,'b'));assert(f->sent.size()==1 && f->sent[0].first==138 && f->sent[0].second=="p");}
         socket.Close();f->closed();
+    }else if(test=="timer_json_bounds"){
+        ProvisionsWebSocket socket;f->callbacks(socket);assert(socket.Connect(url));
+        f->inject(std::string(32768,'a'),1,true,1024);
+        f->wait([&]{return f->received_count()==1 || !socket.IsConnected();});assert(socket.IsConnected());
+        {std::lock_guard<std::mutex> lock(f->mutex);assert(f->received[0].second.size()==32768);}
+        f->inject(std::string(32769,'b'),1,true,1024);
+        f->wait([&]{return !socket.IsConnected();});f->closed();assert(f->received_count()==1);
     }else if(test=="split_ping"){
         ProvisionsWebSocket socket;f->callbacks(socket);assert(socket.Connect(url));f->inject("ping",9,true,2);f->inject("after");
         f->wait([&]{return f->received_count()==1 || !socket.IsConnected();});assert(socket.IsConnected());
@@ -245,7 +252,7 @@ int main(int argc,char** argv){assert(argc==2);Fixture fixture;f=&fixture;const 
         const auto start=esp_timer_get_time();f->wait([&]{return !socket.IsConnected();});f->closed();assert(f->received_count()==0);assert(esp_timer_get_time()-start<=5560000);
     }else if(test=="invalid_inputs"){
         ProvisionsWebSocket invalid;assert(!invalid.Connect("wss://other.invalid/"));invalid.SetHeader("bad\r\nkey","secret");assert(!invalid.Connect(url));
-        ProvisionsWebSocket socket;assert(socket.Connect(url));assert(!socket.Send(""));assert(!socket.Send(std::string(8193,'x')));assert(!socket.Send(nullptr,2,true));assert(!socket.Send(std::string(2049,'x').data(),2049,true));socket.Close();f->closed();
+        ProvisionsWebSocket socket;assert(socket.Connect(url));assert(!socket.Send(""));assert(!socket.Send(std::string(32769,'x')));assert(!socket.Send(nullptr,2,true));assert(!socket.Send(std::string(2049,'x').data(),2049,true));socket.Close();f->closed();
     }else if(test=="allocation_failures"){
         for(int fail=1;fail<=3;++fail){Fixture local;f=&local;f->allocation_failure=fail;ProvisionsWebSocket socket;assert(!socket.Connect(url));f->closed();}
         f=&fixture;f->task_failure=true;ProvisionsWebSocket socket;assert(!socket.Connect(url));
@@ -304,6 +311,9 @@ class ProvisionsWebsocketReview(unittest.TestCase):
 
     def test_control_payload_may_arrive_in_short_tls_reads(self):
         self.run_case("split_ping")
+
+    def test_bounded_full_timer_snapshot_json(self):
+        self.run_case("timer_json_bounds")
 
     def test_rejected_inputs_and_allocation_failures(self):
         for case in ("invalid_inputs", "allocation_failures"):

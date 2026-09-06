@@ -7,6 +7,7 @@
 #include "provisions_endpoint_policy.h"
 #endif
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
+#include "provisions_timers.h"
 #include "provisions_voice_wire.h"
 #endif
 
@@ -123,6 +124,9 @@ void WebsocketProtocol::CloseAudioChannel(bool send_goodbye) {
     (void)send_goodbye;  // Websocket doesn't need to send goodbye message
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     gateway_authenticated_.store(false);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    timers_enabled_.store(false);
+#endif
     connection_generation_.fetch_add(1);
     if (gateway_hello_pending_.exchange(false)) {
         xEventGroupSetBits(event_group_handle_, WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT);
@@ -167,6 +171,9 @@ bool WebsocketProtocol::OpenAudioChannel() {
     const bool opened = OpenAudioChannelImpl();
     if (!opened) {
         gateway_authenticated_.store(false);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        timers_enabled_.store(false);
+#endif
         capture_enabled_.store(false);
     }
     EndOperation();
@@ -185,6 +192,9 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
     std::string token = provisions_settings.GetString("device_token");
     version_ = 1;
     gateway_authenticated_.store(false);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    timers_enabled_.store(false);
+#endif
     gateway_hello_pending_.store(false);
     last_gateway_activity_us_.store(0);
     SetSessionId({});
@@ -257,6 +267,11 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
             return;
         }
         if (binary) {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+            const auto packet_session = session_id();
+            if (connection_generation != connection_generation_.load())
+                return;
+#endif
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
             if (!gateway_authenticated_.load()) {
                 ESP_LOGW(TAG, "Ignoring audio received before gateway authentication");
@@ -275,6 +290,9 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
                         .sample_rate = server_sample_rate_,
                         .frame_duration = server_frame_duration_,
                         .timestamp = bp2->timestamp,
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                        .source_session_id = packet_session,
+#endif
                         .payload = std::vector<uint8_t>(payload, payload + bp2->payload_size)}));
                 } else if (version_ == 3) {
                     BinaryProtocol3* bp3 = (BinaryProtocol3*)data;
@@ -285,12 +303,18 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
                         .sample_rate = server_sample_rate_,
                         .frame_duration = server_frame_duration_,
                         .timestamp = 0,
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                        .source_session_id = packet_session,
+#endif
                         .payload = std::vector<uint8_t>(payload, payload + bp3->payload_size)}));
                 } else {
                     on_incoming_audio_(std::make_unique<AudioStreamPacket>(AudioStreamPacket{
                         .sample_rate = server_sample_rate_,
                         .frame_duration = server_frame_duration_,
                         .timestamp = 0,
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                        .source_session_id = packet_session,
+#endif
                         .payload = std::vector<uint8_t>((uint8_t*)data, (uint8_t*)data + len)}));
                 }
             }
@@ -300,9 +324,16 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
             // embedded NUL representations before parsing so a sentence such
             // as `safe\u0000hidden` cannot be validated as only its prefix.
             const std::string_view raw_frame(data, len);
-            if (raw_frame.find('\0') != std::string_view::npos ||
+            if (
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                !::provisions::timers::WithinJsonBudget(raw_frame) ||
+#endif
+                raw_frame.find('\0') != std::string_view::npos ||
                 raw_frame.find("\\u0000") != std::string_view::npos) {
                 gateway_authenticated_.store(false);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                timers_enabled_.store(false);
+#endif
                 ESP_LOGE(TAG, "Rejecting gateway JSON containing an embedded NUL");
                 SetError("Invalid gateway message");
                 return;
@@ -327,6 +358,9 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
             if (root == nullptr) {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
                 gateway_authenticated_.store(false);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                timers_enabled_.store(false);
+#endif
                 ESP_LOGE(TAG, "Rejecting malformed gateway JSON");
                 SetError("Invalid gateway message");
 #else
@@ -340,6 +374,9 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
                     if (gateway_authenticated_.load()) {
                         gateway_authenticated_.store(false);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                        timers_enabled_.store(false);
+#endif
                         SetError("Unexpected gateway hello");
                         cJSON_Delete(root);
                         return;
@@ -356,6 +393,9 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
                     if (!cJSON_IsString(message_session) ||
                         this->session_id() != message_session->valuestring) {
                         gateway_authenticated_.store(false);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                        timers_enabled_.store(false);
+#endif
                         SetError("Invalid gateway message session");
                         cJSON_Delete(root);
                         return;
@@ -363,6 +403,9 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
                     if (strcmp(type->valuestring, "pong") == 0) {
                         if (cJSON_GetArraySize(root) != 2) {
                             gateway_authenticated_.store(false);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                            timers_enabled_.store(false);
+#endif
                             SetError("Invalid gateway pong");
                             cJSON_Delete(root);
                             return;
@@ -382,6 +425,9 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
             } else {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
                 gateway_authenticated_.store(false);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                timers_enabled_.store(false);
+#endif
                 ESP_LOGE(TAG, "Rejecting gateway message without a type");
                 SetError("Invalid gateway message");
 #else
@@ -410,6 +456,9 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
         ESP_LOGI(TAG, "Websocket disconnected");
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
         gateway_authenticated_.store(false);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        timers_enabled_.store(false);
+#endif
         if (gateway_hello_pending_.exchange(false)) {
             SetError(Lang::Strings::SERVER_NOT_CONNECTED);
             xEventGroupSetBits(event_group_handle_, WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT);
@@ -489,6 +538,7 @@ std::string WebsocketProtocol::GetHelloMessage() {
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
     cJSON_AddBoolToObject(features, "audio_capture", true);
     cJSON_AddBoolToObject(features, "audio_retry", true);
+    cJSON_AddBoolToObject(features, "timers_v1", true);
 #endif
 #else
     cJSON_AddBoolToObject(features, "mcp", true);
@@ -564,6 +614,14 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
     server_sample_rate_ = sample_rate->valueint;
     server_frame_duration_ = frame_duration->valueint;
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    unsigned timer_flags = 0;
+    const cJSON* feature;
+    cJSON_ArrayForEach (feature, provisions) {
+        if (feature->string && strcmp(feature->string, "timers_v1") == 0)
+            ++timer_flags;
+    }
+    timers_enabled_.store(timer_flags == 1 &&
+                          cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(provisions, "timers_v1")));
     auto capture_feature = cJSON_GetObjectItemCaseSensitive(provisions, "audio_capture");
     auto capture_context = cJSON_GetObjectItemCaseSensitive(provisions, "capture_context");
     ::provisions::VoiceContext context;
@@ -608,6 +666,9 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
 void WebsocketProtocol::RejectServerHello(const char* message) {
     gateway_authenticated_.store(false);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    timers_enabled_.store(false);
+#endif
     gateway_hello_pending_.store(false);
     SetError(message);
     xEventGroupSetBits(event_group_handle_, WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT);
@@ -628,6 +689,9 @@ bool WebsocketProtocol::BeginOperation() {
 void WebsocketProtocol::EndOperation() {
     if (close_requested_.exchange(false)) {
         gateway_authenticated_.store(false);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        timers_enabled_.store(false);
+#endif
         capture_enabled_.store(false);
         std::atomic_store(&websocket_, std::shared_ptr<Connection>{});
     }

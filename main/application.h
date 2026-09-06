@@ -25,6 +25,7 @@
 #include "provisions_tts_turn.h"
 #endif
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
+#include "provisions_timer_player.h"
 #include "provisions_voice_recorder.h"
 #endif
 
@@ -43,6 +44,7 @@
 #define MAIN_EVENT_STOP_LISTENING (1 << 11)
 #define MAIN_EVENT_STATE_CHANGED (1 << 12)
 #define MAIN_EVENT_PLAYBACK_DRAINED (1 << 13)
+#define MAIN_EVENT_TIMER (1 << 14)
 
 enum AecMode {
     kAecOff,
@@ -186,6 +188,10 @@ private:
     int provisions_reconnect_attempts_ = 0;
 #endif
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    provisions::timers::NvsStore timer_store_;
+    provisions::timers::Player timer_player_{timer_store_};
+    void InitializeTimers();
+    void ServiceTimers();
     std::mutex provisions_recording_control_mutex_;
     uint32_t provisions_recording_started_press_ = 0;  // Main-task owned.
     std::shared_ptr<provisions::VoiceRecorder> provisions_recorder_;

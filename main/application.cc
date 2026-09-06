@@ -137,6 +137,9 @@ void Application::Initialize() {
     // Setup the audio service
     auto codec = board.GetAudioCodec();
     audio_service_.Initialize(codec);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    InitializeTimers();
+#endif
     audio_service_.Start();
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
     auto recorder = std::make_shared<provisions::VoiceRecorder>();
@@ -167,8 +170,11 @@ void Application::Initialize() {
         xEventGroupSetBits(event_group_, MAIN_EVENT_PLAYBACK_DRAINED);
     };
     callbacks.on_playback_error = [this](uint32_t playback_id) {
-        // This player owns its mutex. Invalidate the exact failed notification
-        // before publishing a drain event; an empty queue is not successful audio.
+    // This player owns its mutex. Invalidate the exact failed notification
+    // before publishing a drain event; an empty queue is not successful audio.
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        timer_player_.OnError(playback_id);
+#endif
         notify_player_.OnPlaybackError(playback_id);
         Schedule([this]() {
             if (!manual_listening_requested_.load())
@@ -176,6 +182,9 @@ void Application::Initialize() {
         });
     };
     callbacks.on_playback_progress = [this](uint32_t playback_id, uint32_t media_position_ms) {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        timer_player_.OnProgress(playback_id, media_position_ms);
+#endif
         notify_player_.OnPlaybackProgress(playback_id, media_position_ms);
     };
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
@@ -300,7 +309,7 @@ void Application::Run() {
         MAIN_EVENT_VAD_CHANGE | MAIN_EVENT_CLOCK_TICK | MAIN_EVENT_ERROR |
         MAIN_EVENT_NETWORK_CONNECTED | MAIN_EVENT_NETWORK_DISCONNECTED | MAIN_EVENT_TOGGLE_CHAT |
         MAIN_EVENT_START_LISTENING | MAIN_EVENT_STOP_LISTENING | MAIN_EVENT_ACTIVATION_DONE |
-        MAIN_EVENT_STATE_CHANGED | MAIN_EVENT_PLAYBACK_DRAINED;
+        MAIN_EVENT_STATE_CHANGED | MAIN_EVENT_PLAYBACK_DRAINED | MAIN_EVENT_TIMER;
 
     while (true) {
         auto bits = xEventGroupWaitBits(event_group_, ALL_EVENTS, pdTRUE, pdFALSE, portMAX_DELAY);
@@ -434,6 +443,11 @@ void Application::Run() {
             }
         }
 
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        // Also reconcile coalesced Talk edges: the atomic press ID changes even
+        // when down/up both arrive before the main task handles their events.
+        ServiceTimers();
+#endif
         if (bits & MAIN_EVENT_CLOCK_TICK) {
             clock_ticks_++;
             auto display = Board::GetInstance().GetDisplay();
@@ -846,6 +860,9 @@ void Application::InitializeProtocol() {
         const auto protocol = source.lock();
         if (!protocol || GetProtocol() != protocol)
             return;
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        timer_player_.OnDisconnected();
+#endif
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
         protocol->InvalidateVoiceReply();
         InvalidateProvisionsTtsTurn();
@@ -860,6 +877,12 @@ void Application::InitializeProtocol() {
         const auto protocol = source.lock();
         if (!protocol || GetProtocol() != protocol)
             return;
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        if (packet->source_session_id != protocol->session_id())
+            return;
+        if (timer_player_.OnAudio(packet->payload, packet->source_session_id))
+            return;
+#endif
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
         if (manual_listening_requested_.load(std::memory_order_acquire) ||
             ProvisionsReplyInterrupted() || !GetProtocol() ||
@@ -903,6 +926,9 @@ void Application::InitializeProtocol() {
         const auto protocol = source.lock();
         if (!protocol || GetProtocol() != protocol)
             return;
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        timer_player_.OnDisconnected();
+#endif
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
         protocol->InvalidateVoiceReply();
         InvalidateProvisionsTtsTurn();
@@ -958,6 +984,19 @@ void Application::InitializeProtocol() {
             });
         };
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        const bool timer_frame = strcmp(type->valuestring, "timer") == 0;
+        const bool timer_tts =
+            strcmp(type->valuestring, "tts") == 0 &&
+            (timer_player_.Fenced() || cJSON_GetObjectItemCaseSensitive(root, "playback_id"));
+        if (timer_frame || timer_tts) {
+            auto* websocket = static_cast<WebsocketProtocol*>(protocol.get());
+            if (!timer_player_.OnJson(root, protocol->session_id(), websocket->TimersNegotiated(),
+                                      provisions_physical_press_.id())) {
+                timer_player_.OnDisconnected();
+                reject_gateway_frame();
+            }
+            return;
+        }
         // Capture receipts are independent of the audible turn. A later button
         // press must not prevent reconciliation of an earlier durable recording.
         if (strcmp(type->valuestring, "capture_receipt") == 0 ||
@@ -1007,6 +1046,12 @@ void Application::InitializeProtocol() {
         const bool heartbeat = strcmp(type->valuestring, "provisions") == 0 &&
                                cJSON_IsString(reply_state) &&
                                strcmp(reply_state->valuestring, "heartbeat") == 0;
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        if (!heartbeat && timer_player_.Fenced()) {
+            reject_gateway_frame();
+            return;
+        }
+#endif
         if (!heartbeat) {
             auto turn = cJSON_GetObjectItem(root, "turn_id");
             if (!cJSON_IsNumber(turn) || turn->valuedouble < 1 ||
@@ -1581,6 +1626,8 @@ void Application::HandleVoiceRecordingResult(provisions::VoiceRecorder::Result r
 }
 
 void Application::SendVoiceRecording(std::shared_ptr<const provisions::VoiceReplay> replay) {
+    if (timer_player_.Fenced())
+        return;
     auto protocol = GetProtocol();
     if (!protocol || !protocol->IsAudioChannelOpened() || manual_listening_requested_.load() ||
         GetDeviceState() != kDeviceStateIdle || provisions_response_pending_.load())
@@ -1691,7 +1738,8 @@ void Application::HandleProvisionsGatewayMaintenance() {
         return;
     if (auto recorder = std::atomic_load(&provisions_recorder_)) {
         if (GetDeviceState() == kDeviceStateIdle && !provisions_response_pending_.load() &&
-            !provisions_network_busy_.load() && audio_service_.IsPlaybackIdle() && GetProtocol() &&
+            !timer_player_.Fenced() && !provisions_network_busy_.load() &&
+            audio_service_.IsPlaybackIdle() && GetProtocol() &&
             GetProtocol()->IsAudioChannelOpened())
             recorder->RequestReplay();
     }
@@ -2382,6 +2430,10 @@ void Application::ConfigureWakeWordForListening() {
 }
 
 void Application::StartNotification(std::string audio_url, std::vector<NotifySubtitle> subtitles) {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    if (timer_player_.Fenced() || notification_playback_id_ >= 0x7fffffffu)
+        return;
+#endif
     if (GetDeviceState() != kDeviceStateIdle || notify_player_.IsBusy()) {
         ESP_LOGW(TAG, "Ignoring notify message while device is busy");
         return;
@@ -2694,3 +2746,62 @@ void Application::ResetProtocol() {
         SetProtocol(nullptr);
     });
 }
+
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+void Application::InitializeTimers() {
+    provisions::timers::Player::Hooks hooks;
+    hooks.claim = [this](uint32_t id) { return audio_service_.ClaimTimerOutput(id); };
+    hooks.release = [this](uint32_t id) { return audio_service_.ReleaseTimerOutput(id); };
+    hooks.cancel = [this]() { audio_service_.ResetDecoder(); };
+    hooks.drained = [this]() { return audio_service_.IsPlaybackIdle(); };
+    hooks.queue = [this](uint32_t id, uint32_t ordinal, const std::vector<uint8_t>& payload) {
+        auto packet = std::make_unique<AudioStreamPacket>();
+        packet->sample_rate = 24000;
+        packet->frame_duration = 60;
+        packet->playback_id = id;
+        // Timer output uses this progress field as an exact packet ordinal.
+        packet->media_position_ms = ordinal;
+        packet->payload = payload;
+        return audio_service_.PushPacketToDecodeQueue(std::move(packet), false);
+    };
+    hooks.send = [this](const std::string& receipt) {
+        auto protocol = GetProtocol();
+        return protocol &&
+               static_cast<WebsocketProtocol*>(protocol.get())->SendTimerReceipt(receipt);
+    };
+    hooks.wake = [this]() { xEventGroupSetBits(event_group_, MAIN_EVENT_TIMER); };
+    hooks.began = [this]() {
+        audio_service_.EnableVoiceProcessing(false);
+        audio_service_.EnableWakeWordDetection(false);
+        SetDeviceState(kDeviceStateNotifying);
+        Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+    };
+    hooks.ended = [this]() {
+        if (GetDeviceState() == kDeviceStateNotifying && !manual_listening_requested_.load())
+            SetDeviceState(kDeviceStateIdle);
+    };
+    timer_player_.Initialize(std::move(hooks));
+}
+void Application::ServiceTimers() {
+    const auto protocol = GetProtocol();
+    const bool negotiated =
+        protocol && static_cast<WebsocketProtocol*>(protocol.get())->TimersNegotiated();
+    const auto session = protocol ? protocol->session_id() : std::string{};
+    const bool ready = GetDeviceState() == kDeviceStateIdle &&
+                       !manual_listening_requested_.load() &&
+                       !provisions_response_pending_.load() && !provisions_network_busy_.load() &&
+                       !provisions_recording_saving_.load() && !notify_player_.IsBusy() &&
+                       audio_service_.IsLocalInputIdle() && audio_service_.IsPlaybackIdle();
+    timer_player_.Service(session, negotiated, ready, provisions_physical_press_.id(),
+                          esp_timer_get_time());
+    timeval now{};
+    if (has_server_time_.load())
+        gettimeofday(&now, nullptr);
+    const auto snapshot = timer_player_.GetSnapshot();
+    Board::GetInstance().GetDisplay()->SetTimerText(
+        negotiated && snapshot.session_id == session
+            ? provisions::timers::DisplayText(
+                  snapshot, static_cast<int64_t>(now.tv_sec) * 1000 + now.tv_usec / 1000)
+            : "");
+}
+#endif

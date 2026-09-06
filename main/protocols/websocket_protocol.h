@@ -33,6 +33,8 @@ public:
     bool IsGatewayHeartbeatExpired() const;
 #endif
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    bool TimersNegotiated() const { return timers_enabled_.load() && IsAudioChannelOpened(); }
+    bool SendTimerReceipt(const std::string& text) { return TimersNegotiated() && SendText(text); }
     bool GetCaptureContext(provisions::VoiceContext& context) const;
     bool AcceptCaptureContext(const provisions::VoiceContext& context, bool reassignment = false);
     // Run on the application's bounded network task, never the button/audio task.
@@ -57,6 +59,7 @@ private:
     std::atomic<bool> close_requested_{false};
     std::atomic<bool> upload_active_{false};
     std::atomic<bool> capture_enabled_{false};
+    std::atomic<bool> timers_enabled_{false};
     mutable std::mutex capture_context_mutex_;
     provisions::VoiceContext capture_context_{};
     bool BeginOperation();

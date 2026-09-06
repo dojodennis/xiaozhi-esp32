@@ -179,6 +179,14 @@ public:
     std::unique_ptr<AudioStreamPacket> PopPacketFromSendQueue();
     void PlaySound(const std::string_view& sound);
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    // A timer owns output until its durable terminal fact is acknowledged.
+    bool ClaimTimerOutput(uint32_t id) {
+        uint32_t empty = 0;
+        return id != 0 && timer_output_owner_.compare_exchange_strong(empty, id);
+    }
+    bool ReleaseTimerOutput(uint32_t id) {
+        return id != 0 && timer_output_owner_.compare_exchange_strong(id, 0);
+    }
     // Embedded sounds only: keep their storage alive through playback. These
     // controls never demux, decode, wait for capacity or write to the codec.
     bool PlayLocalFeedback(const std::string_view& sound);
@@ -189,6 +197,9 @@ public:
     void SetModelsList(srmodel_list_t* models_list);
 
 private:
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    std::atomic<uint32_t> timer_output_owner_{0};
+#endif
     AudioCodec* codec_ = nullptr;
     AudioServiceCallbacks callbacks_;
     std::unique_ptr<AudioEngine> audio_engine_;

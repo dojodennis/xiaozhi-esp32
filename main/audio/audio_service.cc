@@ -454,11 +454,14 @@ void AudioService::AudioOutputTask() {
         }
 
         lock.lock();
-        const bool current = task->playback_generation == playback_generation_ &&
-                             !service_stopped_.load()
+        const bool current =
+            task->playback_generation == playback_generation_ && !service_stopped_.load()
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-                             && local_recording_press_.load() == 0 &&
-                             local_physical_boundary_.load() == local_output_boundary_.load()
+            && local_recording_press_.load() == 0 &&
+            local_physical_boundary_.load() == local_output_boundary_.load()
+#endif
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+            && (timer_output_owner_.load() == 0 || timer_output_owner_.load() == task->playback_id)
 #endif
             ;
         lock.unlock();
@@ -578,7 +581,15 @@ void AudioService::OpusCodecTask() {
                 std::unique_lock<std::mutex> decoder_lock(decoder_mutex_);
                 auto ret = esp_opus_dec_decode(opus_decoder_, &raw, &out_frame, &dec_info);
                 decoder_lock.unlock();
-                if (ret == ESP_AUDIO_ERR_OK) {
+                bool complete_packet = true;
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                if (packet->playback_id >= 0x80000000u) {
+                    complete_packet = raw.consumed == packet->payload.size() &&
+                                      out_frame.decoded_size == 1440 * sizeof(int16_t) &&
+                                      packet->sample_rate == 24000 && packet->frame_duration == 60;
+                }
+#endif
+                if (ret == ESP_AUDIO_ERR_OK && complete_packet) {
                     task->pcm.resize(out_frame.decoded_size / sizeof(int16_t));
                     if (decoder_sample_rate_ != codec_->output_sample_rate() &&
                         output_resampler_ != nullptr) {
@@ -595,7 +606,7 @@ void AudioService::OpusCodecTask() {
                     }
                     decoded = true;
                 } else {
-                    ESP_LOGE(TAG, "Failed to decode audio after resize, error code: %d", ret);
+                    ESP_LOGE(TAG, "Failed to decode complete audio packet, error code: %d", ret);
                 }
             } else {
                 ESP_LOGE(TAG, "Audio decoder is not configured");
@@ -779,6 +790,11 @@ void AudioService::PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t
 }
 
 bool AudioService::PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait) {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    const auto timer_owner = timer_output_owner_.load();
+    if (timer_owner != 0 && packet->playback_id != timer_owner)
+        return false;
+#endif
     std::unique_lock<std::mutex> lock(audio_queue_mutex_);
     const uint32_t generation = playback_generation_;
     if (audio_decode_queue_.size() >= MAX_DECODE_PACKETS_IN_QUEUE) {
@@ -1019,7 +1035,7 @@ void AudioService::SetCallbacks(AudioServiceCallbacks& callbacks) { callbacks_ =
 bool AudioService::PlayLocalFeedback(const std::string_view& sound) {
     std::lock_guard<std::mutex> lock(audio_queue_mutex_);
     if (sound.empty() || sound.size() > 32768 || service_stopped_.load() ||
-        local_recording_press_.load() != 0)
+        local_recording_press_.load() != 0 || timer_output_owner_.load() != 0)
         return false;
     ++playback_generation_;
     audio_decode_queue_.clear();
@@ -1074,6 +1090,10 @@ void AudioService::FillLocalFeedbackLocked() {
 #endif
 
 void AudioService::PlaySound(const std::string_view& ogg) {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    if (timer_output_owner_.load() != 0)
+        return;
+#endif
     if (!codec_->output_enabled()) {
         esp_timer_stop(audio_power_timer_);
         esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);

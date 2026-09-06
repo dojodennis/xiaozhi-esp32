@@ -19,7 +19,7 @@
 #include <vector>
 
 namespace {
-constexpr size_t kMaxMessageBytes = 8192;
+constexpr size_t kMaxMessageBytes = 32768;
 constexpr size_t kMaxBinaryBytes = 2048;
 constexpr size_t kMaxPendingWrites = 4;
 constexpr int kPollMs = 20;

@@ -62,12 +62,12 @@ struct esp_audio_enc_in_frame_t {uint8_t* buffer;uint32_t len;};
 struct esp_audio_enc_out_frame_t {uint8_t* buffer;uint32_t len,encoded_bytes;};
 uint16_t fingerprint(const uint8_t* data,size_t size){uint16_t value=31;for(size_t i=0;i<size;++i)value=value*33+data[i];return value;}
 struct Decoder {
-    std::atomic<bool> block{false},entered{false},release{false};std::atomic<int> calls{0},resets{0};
+    std::atomic<bool> block{false},entered{false},release{false};std::atomic<int> calls{0},resets{0};uint32_t bytes=2;bool partial=false;
 };
 int esp_opus_dec_decode(void* raw_decoder,esp_audio_dec_in_raw_t* raw,esp_audio_dec_out_frame_t* out,esp_audio_dec_info_t*){
     auto& decoder=*static_cast<Decoder*>(raw_decoder);++decoder.calls;
     if(decoder.block.exchange(false)){decoder.entered=true;while(!decoder.release)std::this_thread::sleep_for(100us);}
-    reinterpret_cast<int16_t*>(out->buffer)[0]=fingerprint(raw->buffer,raw->len);out->decoded_size=2;return ESP_AUDIO_ERR_OK;
+    reinterpret_cast<int16_t*>(out->buffer)[0]=fingerprint(raw->buffer,raw->len);out->decoded_size=decoder.bytes;raw->consumed=raw->len-(decoder.partial?1:0);return ESP_AUDIO_ERR_OK;
 }
 void esp_opus_dec_reset(void* raw){++static_cast<Decoder*>(raw)->resets;}
 int esp_opus_enc_process(void*,esp_audio_enc_in_frame_t*,esp_audio_enc_out_frame_t*){return -1;}
@@ -98,7 +98,7 @@ struct Codec {
     size_t size(){std::lock_guard<std::mutex> lock(mutex);return played.size();}
 };
 struct AudioService {
-    std::atomic<bool> service_stopped_{false};std::atomic<uint32_t> local_recording_press_{0},local_physical_boundary_{0},local_output_boundary_{0};
+    std::atomic<bool> service_stopped_{false};std::atomic<uint32_t> local_recording_press_{0},timer_output_owner_{0},local_physical_boundary_{0},local_output_boundary_{0};
     std::mutex audio_queue_mutex_,decoder_mutex_;std::condition_variable audio_queue_cv_;
     std::string_view local_feedback_;size_t local_feedback_offset_=0;bool local_feedback_active_=false;
     OggDemuxer local_feedback_demuxer_;
@@ -182,6 +182,17 @@ int main(int argc,char** argv){assert(argc==5);const std::string test=argv[1],sa
             {std::lock_guard<std::mutex> lock(audio.audio_queue_mutex_);assert(!audio.local_feedback_active_ && audio.IsPlaybackDrainedLocked());}
             audio.Stop();worker.join();output.join();assert(drained==1);
         }
+    }else if(test=="timer_frame_integrity"){
+        for(int mode=0;mode<3;++mode){
+            AudioService audio;audio.timer_output_owner_=0x80000001u;audio.decoder.bytes=mode==1?2:2880;audio.decoder.partial=mode==2;
+            std::atomic<int> drained{0},progress{0};audio.callbacks_.on_playback_drained=[&]{++drained;};audio.callbacks_.on_playback_progress=[&](uint32_t id,uint32_t n){assert(id==0x80000001u&&n==1);++progress;};
+            auto packet=std::make_unique<AudioStreamPacket>();packet->sample_rate=24000;packet->frame_duration=60;packet->payload={0x18,0,0x55};packet->playback_id=0x80000001u;packet->media_position_ms=1;
+            audio.audio_decode_queue_.push_back(std::move(packet));audio.playback_drained_notified_=false;
+            std::thread worker([&]{audio.OpusCodecTask();}),output([&]{audio.AudioOutputTask();});
+            wait_for([&]{return drained.load()==1;});
+            assert(audio.codec.size()==(mode==0?1u:0u)&&progress==(mode==0?1:0));
+            audio.Stop();worker.join();output.join();
+        }
     }else if(test=="reset_and_stop"){
         for(bool stop:{false,true}){AudioService audio;std::atomic<int> drained{0};audio.callbacks_.on_playback_drained=[&]{++drained;};assert(audio.PlayLocalFeedback(saved));
             {std::lock_guard<std::mutex> lock(audio.audio_queue_mutex_);audio.FillLocalFeedbackLocked();assert(audio.audio_decode_queue_.size()==1);}
@@ -260,6 +271,9 @@ class ProvisionsLocalFeedbackReview(unittest.TestCase):
 
     def test_full_worker_output_and_final_drain(self):
         self.run_case("complete_playback")
+
+    def test_timer_requires_complete_consumed_packet_and_full_sixty_ms_pcm(self):
+        self.run_case("timer_frame_integrity")
 
     def test_reset_and_stop_clear_pending_feedback(self):
         self.run_case("reset_and_stop")
