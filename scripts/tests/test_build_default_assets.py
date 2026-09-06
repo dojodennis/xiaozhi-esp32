@@ -37,6 +37,20 @@ class BuildDefaultAssetsTest(unittest.TestCase):
                     directory, None, "font_noto_sans_common_20_4.bin", None
                 )
 
+    def test_stopwatch_assets_cannot_overwrite_recording_region(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config, image = Path(directory) / "sdkconfig", Path(directory) / "assets.bin"
+            config.write_text("CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH=y\n")
+            with image.open("wb") as file:
+                file.truncate(6 * 1024 * 1024)
+            BUILD.validate_voice_outbox_boundary(config, image)
+            with image.open("ab") as file:
+                file.write(b"x")
+            with self.assertRaisesRegex(ValueError, "reserved voice"):
+                BUILD.validate_voice_outbox_boundary(config, image)
+            config.write_text("CONFIG_BOARD_TYPE_M5STACK_STOPWATCH=y\n")
+            BUILD.validate_voice_outbox_boundary(config, image)
+
 
 if __name__ == "__main__":
     unittest.main()

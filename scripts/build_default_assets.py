@@ -803,6 +803,14 @@ def build_assets_integrated(wakenet_model_paths, multinet_model_paths, text_font
             shutil.rmtree(temp_build_dir)
 
 
+def validate_voice_outbox_boundary(sdkconfig_path, asset_path):
+    """The StopWatch audio journal owns the last 2 MiB of its 8 MiB assets partition."""
+    with open(sdkconfig_path, encoding="utf-8") as config:
+        stopwatch = "CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH=y" in config.read().splitlines()
+    if stopwatch and os.path.getsize(asset_path) > 6 * 1024 * 1024:
+        raise ValueError("StopWatch assets overlap the reserved voice recording region")
+
+
 def main():
     parser = argparse.ArgumentParser(description='Build default assets based on configuration')
     parser.add_argument('--sdkconfig', required=True, help='Path to sdkconfig file')
@@ -930,6 +938,7 @@ def main():
     if not success:
         sys.exit(1)
     
+    validate_voice_outbox_boundary(args.sdkconfig, args.output)
     print("Build completed successfully!")
 
 

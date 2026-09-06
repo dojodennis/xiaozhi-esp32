@@ -882,7 +882,8 @@ if(PROVISIONS_STOPWATCH_PROFILE)
         )
     endif()
     set(BOARD_NAME "${PROVISIONS_STOPWATCH_BOARD_NAME}")
-    list(APPEND SOURCES "provisions_endpoint_policy.cc")
+    list(APPEND SOURCES "provisions_endpoint_policy.cc"
+        "provisions_voice_outbox.cc" "provisions_voice_outbox_esp.cc")
 endif()
 
 if(NOT BOARD_DIR AND NOT CMAKE_BUILD_EARLY_EXPANSION)
@@ -1385,6 +1386,9 @@ endfunction()
 
 partition_table_get_partition_info(size "--partition-name assets" "size")
 partition_table_get_partition_info(offset "--partition-name assets" "offset")
+if(PROVISIONS_STOPWATCH_PROFILE AND (CONFIG_FLASH_CUSTOM_ASSETS OR CONFIG_FLASH_EXPRESSION_ASSETS))
+    message(FATAL_ERROR "Provisions StopWatch requires bounded default assets; custom/expression assets can overwrite saved voice recordings")
+endif()
 if ("${size}" AND "${offset}")
     # Flash assets based on configuration
     if(CONFIG_FLASH_DEFAULT_ASSETS)
