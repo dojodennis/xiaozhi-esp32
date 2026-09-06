@@ -255,7 +255,7 @@ int esp_opus_enc_process(void*,esp_audio_enc_in_frame_t* in,esp_audio_enc_out_fr
 }
 void esp_opus_enc_close(void*){++closed;}
 void mbedtls_platform_zeroize(void* p,size_t n){memset(p,0,n);}
-struct VoiceCapture {unsigned packet_count=0;};
+struct VoiceCapture {unsigned packet_count=0,sample_count=0;bool IsDictation()const{return false;}};
 struct VoiceOutbox {static constexpr size_t kMaxPackets=167,kMaxFrameBytes=262478;};
 struct VoiceRecording {static constexpr size_t kMaxSamples=160000;struct Work{bool failed=false;size_t samples;const int16_t* pcm;VoiceCapture capture;};};
 __CONSTANT__

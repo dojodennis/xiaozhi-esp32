@@ -47,6 +47,7 @@ struct Record {
 
 // Bound cJSON recursion as well as bytes before parsing the larger snapshot frame.
 bool WithinJsonBudget(std::string_view text);
+bool ParseTimestamp(const cJSON* value, int64_t& unix_ms);
 bool ParseSnapshot(const cJSON* root, Snapshot& output);
 bool ParseAlarm(const cJSON* root, Alarm& output);
 bool MatchesTts(const cJSON* root, const Alarm& alarm, std::string& state);

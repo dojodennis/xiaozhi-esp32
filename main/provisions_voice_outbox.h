@@ -13,6 +13,7 @@ struct VoiceBytes {
     const uint8_t* data;
     size_t size;
 };
+enum class VoicePurpose : uint32_t { Command = 0, Dictation = 1 };
 struct VoiceCapture {
     VoiceId request_id{};
     VoiceId conversation_id{};
@@ -20,6 +21,11 @@ struct VoiceCapture {
     uint32_t packet_count = 0;
     VoiceId source_request_id{};  // All-zero means no prior presented answer.
     uint32_t source_revision = 0;
+    VoicePurpose purpose = VoicePurpose::Command;
+    VoiceId dictation_session_id{};
+    uint32_t chunk_sequence = 0;
+    uint32_t sample_count = 0;  // Actual microphone samples; excludes encoder padding.
+    bool IsDictation() const { return purpose == VoicePurpose::Dictation; }
 };
 struct SavedVoiceCapture {
     VoiceCapture capture;
@@ -56,6 +62,7 @@ public:
     static constexpr size_t kMaxPacketBytes = 2048;
     static constexpr size_t kMaxFrameBytes = kMaxPackets * (2 + kMaxPacketBytes);
     static constexpr size_t kHeaderBytes = 124;
+    static constexpr size_t kDictationHeaderBytes = 152;
 
     VoiceOutbox(VoiceFlash& flash, VoiceCipher& cipher, uint8_t* cipher_buffer,
                 uint8_t* plain_buffer, size_t buffer_bytes);

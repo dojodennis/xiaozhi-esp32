@@ -193,6 +193,11 @@ void Application::Initialize() {
         auto recorder = std::atomic_load(&provisions_recorder_);
         if (recorder && !recorder->Append(press, pcm, frames, channels))
             recorder->Fail(press);
+        if (recorder && recorder->DictationCapped(press)) {
+            audio_service_.ReleaseLocalRecordingFence(press);
+            FenceDictationThrough(press);
+            xEventGroupSetBits(event_group_, MAIN_EVENT_DICTATION_CAP);
+        }
     };
     callbacks.on_recording_error = [this](uint32_t press) {
         if (auto recorder = std::atomic_load(&provisions_recorder_))
@@ -309,7 +314,8 @@ void Application::Run() {
         MAIN_EVENT_VAD_CHANGE | MAIN_EVENT_CLOCK_TICK | MAIN_EVENT_ERROR |
         MAIN_EVENT_NETWORK_CONNECTED | MAIN_EVENT_NETWORK_DISCONNECTED | MAIN_EVENT_TOGGLE_CHAT |
         MAIN_EVENT_START_LISTENING | MAIN_EVENT_STOP_LISTENING | MAIN_EVENT_ACTIVATION_DONE |
-        MAIN_EVENT_STATE_CHANGED | MAIN_EVENT_PLAYBACK_DRAINED | MAIN_EVENT_TIMER;
+        MAIN_EVENT_STATE_CHANGED | MAIN_EVENT_PLAYBACK_DRAINED | MAIN_EVENT_TIMER |
+        MAIN_EVENT_DICTATION_MODE | MAIN_EVENT_DICTATION_CONTROL | MAIN_EVENT_DICTATION_CAP;
 
     while (true) {
         auto bits = xEventGroupWaitBits(event_group_, ALL_EVENTS, pdTRUE, pdFALSE, portMAX_DELAY);
@@ -373,6 +379,15 @@ void Application::Run() {
             HandleToggleChatEvent();
         }
 
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        if (bits &
+            (MAIN_EVENT_DICTATION_MODE | MAIN_EVENT_DICTATION_CONTROL | MAIN_EVENT_DICTATION_CAP)) {
+            CloseDictationInputOnMain();
+            Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+        }
+        if (bits & MAIN_EVENT_DICTATION_CONTROL)
+            HandleDictationControlOnMain();
+#endif
         if (bits & MAIN_EVENT_START_LISTENING) {
             HandleStartListeningEvent();
         }
@@ -447,6 +462,7 @@ void Application::Run() {
         // Also reconcile coalesced Talk edges: the atomic press ID changes even
         // when down/up both arrive before the main task handles their events.
         ServiceTimers();
+        ServiceDictation();
 #endif
         if (bits & MAIN_EVENT_CLOCK_TICK) {
             clock_ticks_++;
@@ -984,6 +1000,16 @@ void Application::InitializeProtocol() {
             });
         };
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        if (strcmp(type->valuestring, "dictation") == 0) {
+            auto* websocket = static_cast<WebsocketProtocol*>(protocol.get());
+            provisions::dictation::Reply reply;
+            auto recorder = std::atomic_load(&provisions_recorder_);
+            if (!websocket->DictationNegotiated() ||
+                !provisions::dictation::ParseReply(root, protocol->session_id(), reply) ||
+                !recorder || !recorder->AcknowledgeDictation(reply))
+                reject_gateway_frame();
+            return;
+        }
         const bool timer_frame = strcmp(type->valuestring, "timer") == 0;
         const bool timer_tts =
             strcmp(type->valuestring, "tts") == 0 &&
@@ -1013,7 +1039,8 @@ void Application::InitializeProtocol() {
             auto recorder = std::atomic_load(&provisions_recorder_);
             if (strcmp(type->valuestring, "capture_receipt") == 0) {
                 provisions::VoiceCaptureReceipt receipt;
-                if (!provisions::ParseVoiceReceipt(root, receipt)) {
+                if (!provisions::ParseVoiceReceipt(root, receipt) ||
+                    (receipt.capture.IsDictation() && !websocket->DictationNegotiated())) {
                     reject_gateway_frame();
                     return;
                 }
@@ -1566,6 +1593,22 @@ void Application::HandleVoiceRecordingResult(provisions::VoiceRecorder::Result r
                                              uint32_t press) {
     using Result = provisions::VoiceRecorder::Result;
     auto recorder = std::atomic_load(&provisions_recorder_);
+    if (result == Result::DictationReady) {
+        if (dictation_screen_.load() && manual_listening_requested_.load() &&
+            provisions_physical_press_.IsCurrent(press))
+            HandleStartListeningEvent();
+        else if (recorder)
+            recorder->Release(press);
+        ServiceDictation();
+        return;
+    }
+    if (result == Result::DictationChanged || result == Result::DictationAuthorized) {
+        if (provisions_recording_was_dictation_ && recorder && !recorder->DictationBusy() &&
+            provisions_recording_started_press_ == 0)
+            provisions_recording_saving_.store(false);
+        ServiceDictation();
+        return;
+    }
     // Main-task result publication is serialized with recording startup.
     // The timer-owned physical-held flag is never changed by a delayed result.
     bool current = false;
@@ -1636,7 +1679,8 @@ void Application::SendVoiceRecording(std::shared_ptr<const provisions::VoiceRepl
     if (!provisions_network_busy_.compare_exchange_strong(expected, true))
         return;
     const uint32_t physical = provisions_physical_press_.id();
-    const bool deferred = replay->press == 0 || replay->press != physical;
+    const bool deferred =
+        replay->capture.IsDictation() || replay->press == 0 || replay->press != physical;
     if (!deferred) {
         provisions_capture_press_.store(physical);
         SetProvisionsResponsePending(true);
@@ -1913,6 +1957,8 @@ bool Application::BeginLocalRecordingOnMain() {
         return false;
     if (provisions_recording_started_press_ == press)
         return true;
+    if (press <= dictation_closed_press_.load())
+        return false;
     audio_service_.CancelLocalFeedback();
     if (auto protocol = GetProtocol())
         static_cast<WebsocketProtocol*>(protocol.get())->InterruptStoredRecording();
@@ -1922,7 +1968,28 @@ bool Application::BeginLocalRecordingOnMain() {
         if (gettimeofday(&now, nullptr) == 0 && now.tv_sec > 0)
             captured_ms = static_cast<uint64_t>(now.tv_sec) * 1000 + now.tv_usec / 1000;
     }
-    if (!recorder || !recorder->Begin(press, captured_ms)) {
+    bool began = false;
+    if (dictation_screen_.load()) {
+        if (recorder && recorder->DictationAuthorization() != dictation_authorization_seen_) {
+            dictation_authorization_seen_ = recorder->DictationAuthorization();
+            FenceDictationThrough(press);
+            return false;
+        }
+        if (!recorder || !dictation_has_assignment_proof_) {
+            FenceDictationThrough(press);
+            return false;
+        }
+        if (!recorder->CanDictate(press, dictation_assignment_proof_, captured_ms)) {
+            if (!recorder->DictationPreparing(press))
+                FenceDictationThrough(press);
+            return false;
+        }
+        began = recorder->BeginDictation(press, captured_ms);
+        if (!began)
+            return false;
+    } else
+        began = recorder && recorder->Begin(press, captured_ms);
+    if (!began) {
         if (provisions_physical_press_.id() == press && manual_listening_requested_.load()) {
             provisions_recording_failed_.store(true);
             Schedule([this, press]() {
@@ -1932,6 +1999,7 @@ bool Application::BeginLocalRecordingOnMain() {
         return false;
     }
     provisions_recording_started_press_ = press;
+    provisions_recording_was_dictation_ = dictation_screen_.load();
     provisions_recording_failed_.store(false);
     provisions_recording_saving_.store(false);
     provisions_recording_local_.store(false);
@@ -1953,6 +2021,8 @@ void Application::EndLocalRecordingOnMain() {
         return;  // An older stop event cannot close the newer still-held press.
     const uint32_t press = provisions_physical_press_.id();
     const uint32_t started = provisions_recording_started_press_;
+    if (auto recorder = std::atomic_load(&provisions_recorder_))
+        recorder->Release(press);
     audio_service_.StopLocalRecording();
     if (started != 0) {
         if (auto recorder = std::atomic_load(&provisions_recorder_))

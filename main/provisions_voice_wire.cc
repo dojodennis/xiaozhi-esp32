@@ -75,6 +75,51 @@ void AddContext(cJSON* object, const VoiceCapture& capture) {
         cJSON_AddNullToObject(object, "source_revision");
     }
 }
+bool DictationFields(const cJSON* object, VoiceCapture& capture) {
+    const auto purpose = cJSON_GetObjectItemCaseSensitive(object, "purpose");
+    const auto session = cJSON_GetObjectItemCaseSensitive(object, "dictation_session_id");
+    uint64_t sequence = 0, samples = 0;
+    if (!cJSON_IsString(purpose) || std::strcmp(purpose->valuestring, "dictation") != 0 ||
+        !cJSON_IsString(session) ||
+        !ParseVoiceId(session->valuestring, capture.dictation_session_id) ||
+        !Integer(cJSON_GetObjectItemCaseSensitive(object, "chunk_sequence"), 59, sequence) ||
+        !Integer(cJSON_GetObjectItemCaseSensitive(object, "sample_count"), 160000, samples) ||
+        !samples)
+        return false;
+    capture.purpose = VoicePurpose::Dictation;
+    capture.chunk_sequence = sequence;
+    capture.sample_count = samples;
+    return true;
+}
+bool DictationReceipt(const cJSON* value, const VoiceCapture& capture, std::string_view outer_state,
+                      bool outer_terminal) {
+    if (!Keys(value, {"session_id", "segment_id", "capture_id", "sequence", "state", "revision",
+                      "transcript_persisted", "terminal"}))
+        return false;
+    VoiceId session{}, segment{}, id{};
+    auto parse_id = [value](const char* key, VoiceId& output) {
+        const auto item = cJSON_GetObjectItemCaseSensitive(value, key);
+        return cJSON_IsString(item) && ParseVoiceId(item->valuestring, output);
+    };
+    uint64_t sequence = 0, revision = 0;
+    const auto state = cJSON_GetObjectItemCaseSensitive(value, "state");
+    const auto persisted = cJSON_GetObjectItemCaseSensitive(value, "transcript_persisted");
+    const auto terminal = cJSON_GetObjectItemCaseSensitive(value, "terminal");
+    if (!parse_id("session_id", session) || session != capture.dictation_session_id ||
+        !parse_id("segment_id", segment) || !parse_id("capture_id", id) ||
+        id != capture.request_id ||
+        !Integer(cJSON_GetObjectItemCaseSensitive(value, "sequence"), 59, sequence) ||
+        sequence != capture.chunk_sequence ||
+        !Integer(cJSON_GetObjectItemCaseSensitive(value, "revision"), 2147483647, revision) ||
+        !revision || !cJSON_IsString(state) || !cJSON_IsBool(persisted) || !cJSON_IsBool(terminal))
+        return false;
+    const std::string_view status(state->valuestring);
+    const bool completed = status == "transcribed" || status == "unintelligible";
+    return (completed || status == "pending" || status == "failed") &&
+           cJSON_IsTrue(persisted) == (status == "transcribed") &&
+           cJSON_IsTrue(terminal) == completed && completed == outer_terminal &&
+           (!completed || status == outer_state);
+}
 }  // namespace
 bool ParseVoiceId(const char* value, VoiceId& output) {
     output = {};
@@ -116,7 +161,9 @@ bool ParseVoiceReceipt(const cJSON* value, VoiceCaptureReceipt& output) {
     output = {};
     const bool retry_fields = Keys(value, {"session_id", "type", "request_id", "capture", "state",
                                            "durable", "retry_token", "retry_used"});
-    if (!retry_fields &&
+    const bool dictation_fields = Keys(value, {"session_id", "type", "request_id", "capture",
+                                               "state", "durable", "dictation_receipt"});
+    if (!retry_fields && !dictation_fields &&
         !Keys(value, {"session_id", "type", "request_id", "capture", "state", "durable"}))
         return false;
     if (retry_fields) {
@@ -135,14 +182,24 @@ bool ParseVoiceReceipt(const cJSON* value, VoiceCaptureReceipt& output) {
     if (!cJSON_IsString(type) || std::strcmp(type->valuestring, "capture_receipt") != 0 ||
         !cJSON_IsString(id) || !ParseVoiceId(id->valuestring, output.capture.request_id) ||
         !cJSON_IsString(state) || !cJSON_IsBool(durable) ||
-        !Keys(capture, {"conversation_id", "source_request_id", "source_revision", "audio_sha256",
-                        "audio_bytes", "packet_count", "captured_unix_ms"}))
+        !(dictation_fields
+              ? Keys(capture,
+                     {"conversation_id", "source_request_id", "source_revision", "audio_sha256",
+                      "audio_bytes", "packet_count", "captured_unix_ms", "purpose",
+                      "dictation_session_id", "chunk_sequence", "sample_count"}) &&
+                    DictationFields(capture, output.capture)
+              : Keys(capture, {"conversation_id", "source_request_id", "source_revision",
+                               "audio_sha256", "audio_bytes", "packet_count", "captured_unix_ms"})))
         return false;
     const std::string_view status(state->valuestring);
     const bool terminal = status == "transcribed" || status == "unintelligible";
     if (status != "processing" && status != "pending" && status != "needs_attention" && !terminal)
         return false;
     if (cJSON_IsTrue(durable) != terminal)
+        return false;
+    if (dictation_fields &&
+        !DictationReceipt(cJSON_GetObjectItemCaseSensitive(value, "dictation_receipt"),
+                          output.capture, status, terminal))
         return false;
     VoiceContext context;
     uint64_t count = 0, bytes = 0, captured = 0;
@@ -173,6 +230,8 @@ std::string VoiceCaptureStart(const VoiceReplay& replay, const std::string& sess
                                    [](uint8_t byte) { return byte != 0; });
     if (retry && !deferred)
         return {};
+    if (replay.capture.IsDictation() && (retry || !deferred))
+        return {};
     cJSON* root = cJSON_CreateObject();
     if (!root)
         return {};
@@ -191,6 +250,13 @@ std::string VoiceCaptureStart(const VoiceReplay& replay, const std::string& sess
         return {};
     }
     AddContext(capture, replay.capture);
+    if (replay.capture.IsDictation()) {
+        cJSON_AddStringToObject(capture, "purpose", "dictation");
+        cJSON_AddStringToObject(capture, "dictation_session_id",
+                                VoiceIdText(replay.capture.dictation_session_id).c_str());
+        cJSON_AddNumberToObject(capture, "chunk_sequence", replay.capture.chunk_sequence);
+        cJSON_AddNumberToObject(capture, "sample_count", replay.capture.sample_count);
+    }
     cJSON_AddNumberToObject(capture, "audio_bytes", replay.bytes);
     cJSON_AddNumberToObject(capture, "packet_count", replay.capture.packet_count);
     cJSON_AddNumberToObject(capture, "captured_unix_ms", replay.capture.captured_unix_ms);

@@ -8,6 +8,8 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
+#include "provisions_dictation.h"
 #include "provisions_voice_outbox_esp.h"
 #include "provisions_voice_recording.h"
 
@@ -44,7 +46,10 @@ public:
         Synced,
         ContextReady,
         RetryQueued,
-        RetryUnavailable
+        RetryUnavailable,
+        DictationChanged,
+        DictationReady,
+        DictationAuthorized
     };
     using Notify = std::function<void(Result, uint32_t)>;
     using ReplayReady = std::function<void(std::shared_ptr<const VoiceReplay>)>;
@@ -57,6 +62,22 @@ public:
     bool ActivateContext(const VoiceContext& context);
     bool UpdateContext(const VoiceContext& context);
     bool Begin(uint32_t press, uint64_t captured_unix_ms);
+    bool BeginDictation(uint32_t press, uint64_t captured_unix_ms);
+    bool CanDictate(uint32_t press, const VoiceId& conversation, int64_t now_ms) const;
+    bool DictationPreparing(uint32_t press) const;
+    bool MatchesConversation(const VoiceId& conversation) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return has_context_.load() && context_.conversation_id == conversation;
+    }
+    bool RequestDictationControl(dictation::Action action);
+    bool AcknowledgeDictation(const dictation::Reply& reply);
+    dictation::Record DictationRecord() const;
+    bool DictationFaulted() const { return dictation_error_.load(); }
+    bool DictationBusy() const { return dictation_busy_.load(); }
+    bool DictationCapped(uint32_t press) const {
+        return press != 0 && dictation_capped_press_.load() == press;
+    }
+    uint32_t DictationAuthorization() const { return dictation_authorization_.load(); }
     bool Append(uint32_t press, const int16_t* pcm, size_t frames, size_t channels);
     void Fail(uint32_t press);
     void Release(uint32_t press);
@@ -87,7 +108,7 @@ private:
     std::atomic<bool> needs_attention_{false};
     std::atomic<bool> can_retry_{false};
     std::atomic<unsigned> retry_pending_count_{0};
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::condition_variable context_cv_;
     VoiceContext context_{};
     VoiceContext requested_context_{};
@@ -110,6 +131,26 @@ private:
     std::array<VoiceId, VoiceOutbox::kSlots> retry_tokens_{};
     std::array<bool, VoiceOutbox::kSlots> retry_used_{};
     std::array<bool, VoiceOutbox::kSlots> retry_pending_{};
+    dictation::NvsStore dictation_store_;
+    dictation::Journal dictation_journal_{dictation_store_};
+    dictation::Record dictation_snapshot_{};
+    std::atomic<bool> dictation_busy_{false}, dictation_error_{false};
+    std::atomic<uint32_t> dictation_capped_press_{0};
+    std::atomic<uint32_t> dictation_authorization_{0};
+    std::atomic<bool> dictation_input_blocked_{true};
+    uint32_t dictation_requested_press_ = 0, dictation_ready_press_ = 0,
+             dictation_closed_through_ = 0;
+    uint64_t dictation_captured_ms_ = 0;
+    dictation::Action dictation_command_ = dictation::Action::None;
+    VoiceId dictation_command_conversation_{};
+    bool dictation_stop_requested_ = false;
+    std::optional<dictation::Reply> dictation_reply_;
+    std::optional<VoiceRecording::Work> dictation_retry_work_;
+    bool dictation_missing_parts_ = false;  // Worker-owned reboot recovery finding.
+    int64_t dictation_retry_after_ = 0;
+    void PrepareDictation();
+    void ServiceDictation();
+    void PublishDictation();
     void Wake();
     void Run();
     bool LoadContext(VoiceContext& context, bool committed = true);

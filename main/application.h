@@ -45,6 +45,9 @@
 #define MAIN_EVENT_STATE_CHANGED (1 << 12)
 #define MAIN_EVENT_PLAYBACK_DRAINED (1 << 13)
 #define MAIN_EVENT_TIMER (1 << 14)
+#define MAIN_EVENT_DICTATION_MODE (1 << 15)
+#define MAIN_EVENT_DICTATION_CONTROL (1 << 16)
+#define MAIN_EVENT_DICTATION_CAP (1 << 17)
 
 enum AecMode {
     kAecOff,
@@ -110,6 +113,11 @@ public:
      * Sends MAIN_EVENT_START_LISTENING to be handled in Run()
      */
     void StartListening();
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    void ToggleDictationScreen();
+    void DictationButton();
+    bool IsDictationScreen() const { return dictation_screen_.load(); }
+#endif
 
     /**
      * Stop listening (event-based, thread-safe)
@@ -194,6 +202,7 @@ private:
     void ServiceTimers();
     std::mutex provisions_recording_control_mutex_;
     uint32_t provisions_recording_started_press_ = 0;  // Main-task owned.
+    bool provisions_recording_was_dictation_ = false;
     std::shared_ptr<provisions::VoiceRecorder> provisions_recorder_;
     std::atomic<bool> provisions_recording_failed_{false};
     std::atomic<bool> provisions_recording_saving_{false};
@@ -204,6 +213,22 @@ private:
     void ReconnectVoiceGateway();
     bool BeginLocalRecordingOnMain();
     void EndLocalRecordingOnMain();
+    std::atomic<bool> dictation_screen_{false};
+    std::atomic<uint32_t> dictation_closed_press_{0};
+    void FenceDictationThrough(uint32_t press) {
+        uint32_t prior = dictation_closed_press_.load();
+        while (prior < press && !dictation_closed_press_.compare_exchange_weak(prior, press)) {
+        }
+    }
+    uint32_t dictation_authorization_seen_ = 0;
+    provisions::VoiceId dictation_assignment_proof_{};
+    bool dictation_has_assignment_proof_ = false;
+    std::string dictation_sent_control_;
+    int64_t dictation_last_send_us_ = 0;
+    int64_t dictation_next_receipt_us_ = 0;
+    void CloseDictationInputOnMain();
+    void HandleDictationControlOnMain();
+    void ServiceDictation();
 #endif
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;

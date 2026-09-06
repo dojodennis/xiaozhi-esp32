@@ -11,6 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from test_provisions_audio_boundaries import method
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location(
@@ -79,6 +80,17 @@ SUPPORT = fixture.PROGRAM.split("int main() {")[0].replace(
     "(bytes==VoiceOutbox::kMaxFrameBytes || bytes==VoiceRecording::kMaxSamples*sizeof(int16_t)) && caps==").replace(
         "n==fail_n", "(fail_n==0 || n==fail_n)")
 
+# Keep dictation's versioned NVS namespace distinct from the existing audio keys.
+SUPPORT = SUPPORT.replace('std::string(space)=="orbit_audio" &&', '(std::string(space)=="orbit_audio" || std::string(space)=="orbit_dct_v1") &&')
+SUPPORT = SUPPORT.replace('*handle=++state.handles;', '*handle=++state.handles;if(std::string(space)=="orbit_dct_v1")*handle|=0x80000000u;')
+SUPPORT = SUPPORT.replace('nvs_get_blob(nvs_handle_t,const char* key,', 'nvs_get_blob(nvs_handle_t handle,const char* key,')
+SUPPORT = SUPPORT.replace('nvs_set_blob(nvs_handle_t,const char* key,', 'nvs_set_blob(nvs_handle_t handle,const char* key,')
+SUPPORT = SUPPORT.replace('auto requested=*bytes;*bytes=found->second.size();', 'auto requested=*bytes;*bytes=found->second.size();if(!out)return ESP_OK;')
+SUPPORT = SUPPORT.replace('if(state.bad("get_blob"))return ESP_FAIL;', 'std::string scoped=(handle&0x80000000u)?std::string("dictation/")+key:key;key=scoped.c_str();if(state.bad("get_blob"))return ESP_FAIL;')
+SUPPORT = SUPPORT.replace('if(state.bad("set_blob"))return ESP_FAIL;', 'std::string scoped=(handle&0x80000000u)?std::string("dictation/")+key:key;key=scoped.c_str();if(state.bad("set_blob"))return ESP_FAIL;')
+SUPPORT = SUPPORT.replace('aad==108 || aad==16', 'aad==108 || aad==136 || aad==16')
+SUPPORT = SUPPORT.replace('struct State {', 'struct AdapterState {').replace('State state;', 'AdapterState state;').replace('state=State{};', 'state=AdapterState{};')
+
 WORKER = r'''
 struct TestTask {
     std::mutex mutex;std::condition_variable changed;unsigned notifications=0;bool waiting=false;
@@ -94,6 +106,7 @@ std::shared_ptr<const VoiceReplay> held;
 bool hold_replay=false;
 bool fail_encoder=false;
 bool pause_worker=false;
+std::function<void(VoiceRecorder::Result)> notify_hook;
 int xTaskCreate(void(*function)(void*),const char*,unsigned,void* argument,unsigned,TaskHandle_t* handle) {
     assert(!task);task=new TestTask;*handle=task;
     task->thread=std::thread([=]{current_task=task;function(argument);});return pdPASS;
@@ -137,7 +150,7 @@ int esp_opus_enc_process(void* encoder,esp_audio_enc_in_frame_t* in,esp_audio_en
 }
 void esp_opus_enc_close(void* encoder){assert(encoder);}
 void initialize(VoiceRecorder& recorder) {
-    assert(recorder.Start([](auto result,uint32_t press){notices.emplace_back(result,press);},
+    assert(recorder.Start([](auto result,uint32_t press){notices.emplace_back(result,press);if(notify_hook)notify_hook(result);},
         [](auto replay){
             VoiceCaptureReceipt receipt;receipt.capture=replay->capture;receipt.bytes=replay->bytes;
             receipt.digest=replay->digest;offered.push_back({receipt,replay->press,replay->slot,replay->retry_token});
@@ -385,8 +398,248 @@ void queued_retry_scope_case() {
     join();
 }
 
-int main(){normal_cases();context_cases();explicit_retry_cases();queued_retry_scope_case();}
+
+void dictation_ack(VoiceRecorder& recorder, dictation::State next) {
+    const auto r=recorder.DictationRecord();dictation::Reply ack;
+    ack.id=r.id;ack.action=r.pending;ack.acknowledged=true;ack.payload_revision=r.pending_revision;
+    ack.payload_count=r.frozen_count;ack.state=next;ack.revision=r.revision+1;
+    ack.control_revision=r.pending==dictation::Action::Start?1:r.control_revision+1;
+    ack.expected_count=r.count;ack.expires_ms=1790812800000LL;
+    assert(recorder.AcknowledgeDictation(ack));drain();
+}
+void begin_dictation(VoiceRecorder& recorder,uint32_t press) {
+    assert(recorder.CanDictate(press,context().conversation_id,1788712345678LL));
+    assert(!recorder.BeginDictation(press,1788712345678LL));drain();
+    assert(recorder.BeginDictation(press,1788712345678LL));
+}
+void dictation_ack_stop_race() {
+    fresh();
+    {
+        VoiceRecorder recorder;initialize(recorder);authorize(recorder);
+        assert(recorder.RequestDictationControl(dictation::Action::Start));drain();
+        // The production worker has committed its ACK but has not published
+        // capture authority when the application asks to stop.
+        bool requested=false;
+        notify_hook=[&](auto result){
+            if(result==VoiceRecorder::Result::DictationChanged&&!requested){
+                requested=true;assert(recorder.RequestDictationControl(dictation::Action::Stop));
+                assert(!recorder.CanDictate(1,context().conversation_id,1788712345678LL));
+            }
+        };
+        dictation_ack(recorder,dictation::State::Open);notify_hook={};
+        assert(requested&&recorder.DictationAuthorization()==0);
+        assert(recorder.DictationRecord().pending==dictation::Action::Stop);
+        assert(!recorder.CanDictate(1,context().conversation_id,1788712345678LL));
+    }
+    join();
+}
+void dictation_cases() {
+    fresh();VoiceId session,request;
+    {
+        VoiceRecorder recorder;initialize(recorder);authorize(recorder);
+        assert(recorder.RequestDictationControl(dictation::Action::Start));drain();
+        session=recorder.DictationRecord().id;assert(recorder.DictationRecord().pending==dictation::Action::Start);
+        assert(!recorder.CanDictate(1,context().conversation_id,1788712345678LL));
+        dictation_ack(recorder,dictation::State::Open);
+        assert(recorder.DictationAuthorization()==1);
+        begin_dictation(recorder,1);assert(recorder.DictationRecord().count==1);
+        request=recorder.DictationRecord().segments[0].request_id;
+        int16_t pcm[160]{};assert(recorder.Append(1,pcm,160,1));
+        {std::lock_guard<std::mutex> lock(task->mutex);pause_worker=true;}
+        recorder.Release(1);assert(recorder.RequestDictationControl(dictation::Action::Stop));
+        assert(!recorder.CanDictate(2,context().conversation_id,1788712345678LL));
+        {std::lock_guard<std::mutex> lock(task->mutex);pause_worker=false;task->changed.notify_all();}
+        drain();
+        const auto stopped=recorder.DictationRecord();
+        assert(stopped.count==1&&stopped.frozen_count==1&&stopped.pending_revision==1&&stopped.pending==dictation::Action::Stop);
+        assert(stopped.segments[0].samples==160&&stopped.segments[0].request_id==request);
+        assert(offered.back().press==0&&offered.back().receipt.capture.IsDictation());
+        assert(offered.back().receipt.capture.sample_count==160&&offered.back().receipt.capture.packet_count==1);
+        assert(recorder.PendingCount()==1&&!recorder.DictationBusy());
+    }
+    join();
+    // The pending Stop and exact raw part survive restart before the ACK.
+    {
+        VoiceRecorder recorder;initialize(recorder);assert(recorder.DictationRecord().id==session);
+        assert(recorder.DictationRecord().pending==dictation::Action::Stop&&recorder.DictationRecord().count==1);
+        dictation_ack(recorder,dictation::State::Stopped);assert(recorder.DictationRecord().control_revision==2);
+        replay(recorder);auto receipt=offered.back().receipt;receipt.durable=true;
+        state.fail="set_blob";state.fail_n=0;acknowledge(recorder,receipt);
+        assert(recorder.PendingCount()==1&&recorder.DictationFaulted()&&!recorder.DictationRecord().segments[0].terminal);
+        state.fail.clear();acknowledge(recorder,receipt);assert(!recorder.DictationFaulted());
+        assert(recorder.PendingCount()==0&&recorder.DictationRecord().count==1&&recorder.DictationRecord().segments[0].terminal);
+        assert(recorder.RequestDictationControl(dictation::Action::Resume));drain();
+        assert(!recorder.CanDictate(2,context().conversation_id,1788712345678LL));
+        dictation_ack(recorder,dictation::State::Open);assert(recorder.DictationRecord().control_revision==3);
+        begin_dictation(recorder,2);int16_t pcm[160]{};
+        for(int i=0;i<1000;++i)assert(recorder.Append(2,pcm,160,1));
+        assert(recorder.DictationCapped(2));drain();
+        assert(!recorder.CanDictate(2,context().conversation_id,1788712345678LL));
+        assert(offered.back().receipt.capture.sample_count==160000&&offered.back().receipt.capture.packet_count==167);
+        assert(recorder.DictationRecord().count==2&&recorder.DictationRecord().segments[1].samples==160000);
+        recorder.Release(2);drain();
+    }
+    join();
+    // A failed flash write keeps Processing PCM and the same reserved request.
+    fresh();
+    {
+        VoiceRecorder recorder;initialize(recorder);authorize(recorder);
+        assert(recorder.RequestDictationControl(dictation::Action::Start));drain();dictation_ack(recorder,dictation::State::Open);
+        begin_dictation(recorder,1);request=recorder.DictationRecord().segments[0].request_id;
+        int16_t pcm[160]{};assert(recorder.Append(1,pcm,160,1));state.fail="write";state.fail_n=0;
+        recorder.Release(1);assert(recorder.RequestDictationControl(dictation::Action::Stop));drain();
+        assert(recorder.DictationFaulted()&&recorder.DictationBusy()&&recorder.DictationRecord().frozen_count==1);
+        assert(recorder.DictationRecord().segments[0].request_id==request);
+        state.fail.clear();clock_us+=31000000;replay(recorder);
+        assert(!recorder.DictationFaulted()&&!recorder.DictationBusy()&&recorder.PendingCount()==1);
+        assert(offered.back().receipt.capture.request_id==request&&offered.back().receipt.capture.sample_count==160);
+    }
+    join();
+    // No microphone starts for a release while the reservation is still queued.
+    fresh();
+    {
+        VoiceRecorder recorder;initialize(recorder);authorize(recorder);
+        assert(recorder.RequestDictationControl(dictation::Action::Start));drain();dictation_ack(recorder,dictation::State::Open);
+        {std::lock_guard<std::mutex> lock(task->mutex);pause_worker=true;}
+        assert(!recorder.BeginDictation(1,1788712345678LL));recorder.Release(1);
+        assert(recorder.RequestDictationControl(dictation::Action::Stop));
+        {std::lock_guard<std::mutex> lock(task->mutex);pause_worker=false;task->changed.notify_all();}
+        drain();assert(recorder.DictationRecord().count==0&&recorder.DictationRecord().frozen_count==0&&!recorder.DictationBusy());
+    }
+    join();
+    std::cout<<"Dictation worker reservation, cap, Stop sealing, exact retry and restart cases passed\n";
+}
+int main(){normal_cases();context_cases();explicit_retry_cases();queued_retry_scope_case();dictation_ack_stop_race();dictation_cases();}
+
 '''
+
+
+PHYSICAL = r"""
+#include "provisions_reply_turn.h"
+#include <sys/time.h>
+#include <string_view>
+#define CONFIG_PROVISIONS_LOCAL_CAPTURE 1
+#define CONFIG_PROVISIONS_GATEWAY_REQUIRED 1
+constexpr int MAIN_EVENT_START_LISTENING=1,MAIN_EVENT_STOP_LISTENING=2,MAIN_EVENT_DICTATION_MODE=4,MAIN_EVENT_DICTATION_CONTROL=8,MAIN_EVENT_DICTATION_CAP=16,AS_EVENT_LOCAL_RECORDING_RUNNING=32;
+constexpr int kDeviceStateIdle=0,kDeviceStateListening=1;
+std::atomic<unsigned> app_events{0};
+void xEventGroupSetBits(int,unsigned bits){app_events.fetch_or(bits);}void xEventGroupClearBits(int,unsigned bits){app_events.fetch_and(~bits);}
+struct WebsocketProtocol {
+ bool opened=true,negotiated=true;VoiceContext capture=context();std::vector<std::string> controls;
+ void InterruptStoredRecording(){}bool IsAudioChannelOpened(){return opened;}bool DictationNegotiated(){return opened&&negotiated;}
+ bool GetCaptureContext(VoiceContext& out){out=capture;return opened&&negotiated;}
+ std::string session_id(){return "00000000-0000-0000-0000-000000000001";}
+ bool SendDictationControl(const std::string& text){controls.push_back(text);return true;}
+};
+struct Display {bool visible=false;std::string status,action;void SetDictationScreen(bool v,const std::string& s,const std::string& a){visible=v;status=s;action=a;}};
+struct Board {Display display;static Board& GetInstance(){static Board board;return board;}Display* GetDisplay(){return &display;}};
+int64_t DictationNow(bool trusted){return trusted?1788712345678LL:0;}
+
+struct AudioService {
+ std::atomic<uint32_t> local_physical_boundary_{0},local_recording_press_{0},local_output_boundary_{0},local_prepared_press_{0};
+ std::atomic<bool> service_stopped_{false};std::mutex local_recording_mutex_,audio_queue_mutex_;std::condition_variable audio_queue_cv_;
+ uint32_t playback_generation_=0;int event_group_=0;std::vector<int> audio_decode_queue_,audio_playback_queue_;std::string_view local_feedback_;bool local_feedback_active_=false;
+ void FenceLocalRecording(uint32_t);void ReleaseLocalRecordingFence(uint32_t);void ReconcileLocalRecording(uint32_t);
+ void StartLocalRecording(uint32_t);void StopLocalRecording(uint32_t expected=0);
+ void CancelLocalFeedback(){}void CloseVoiceUploadGate(){}void ResetDecoder(){}bool IsLocalRecordingReady(uint32_t press){return local_recording_press_==press;}
+};
+struct Application {
+ std::mutex provisions_recording_control_mutex_;ProvisionsReplyTurn provisions_physical_press_;
+ std::shared_ptr<VoiceRecorder> provisions_recorder_=std::make_shared<VoiceRecorder>();AudioService audio_service_;
+ std::shared_ptr<WebsocketProtocol> protocol=std::make_shared<WebsocketProtocol>();int event_group_=0,state=kDeviceStateIdle;
+ std::atomic<bool> manual_listening_requested_{false},has_server_time_{true},provisions_recording_failed_{false},provisions_recording_saving_{false},provisions_recording_local_{false},dictation_screen_{false};
+ std::atomic<uint32_t> dictation_closed_press_{0};uint32_t provisions_recording_started_press_=0,dictation_authorization_seen_=0;
+ bool provisions_recording_was_dictation_=false,dictation_has_assignment_proof_=true;VoiceId dictation_assignment_proof_=context().conversation_id;
+ std::atomic<bool> provisions_network_busy_{false},provisions_response_pending_{false};
+ int64_t dictation_next_receipt_us_=0,dictation_last_send_us_=0;std::string dictation_sent_control_;
+ struct TimerPlayer{bool fenced=false;bool Fenced(){return fenced;}}timer_player_;
+ std::shared_ptr<WebsocketProtocol> GetProtocol(){return protocol;}int GetDeviceState(){return state;}void SetDeviceState(int value){state=value;}
+ void Schedule(std::function<void()> fn){fn();}void HandleVoiceRecordingResult(VoiceRecorder::Result,uint32_t){assert(false);}
+ void StartListening();void StopListening();bool BeginLocalRecordingOnMain();void EndLocalRecordingOnMain();void ToggleDictationScreen();void DictationButton();void CloseDictationInputOnMain();void ServiceDictation();void HandleDictationControlOnMain();
+ __FENCE__
+ void Samples(uint32_t press,const int16_t* pcm,size_t frames,size_t channels) __SAMPLES__
+};
+__AUDIO_METHODS__
+__APP_METHODS__
+void dictation_main_consumer_cases(){
+ fresh();
+ {
+  Application app;auto& recorder=*app.provisions_recorder_;initialize(recorder);authorize(recorder);
+  app.dictation_has_assignment_proof_=false;app.ToggleDictationScreen();app.CloseDictationInputOnMain();
+  app.protocol->negotiated=false;app.HandleDictationControlOnMain();drain();assert(recorder.DictationRecord().pending==dictation::Action::None);
+  app.protocol->negotiated=true;app.ServiceDictation();app.HandleDictationControlOnMain();drain();
+  assert(recorder.DictationRecord().pending==dictation::Action::Start);app.ServiceDictation();
+  assert(app.protocol->controls.size()==1&&Board::GetInstance().display.action=="Stop");
+  const auto pending=app.protocol->controls.back();clock_us+=1000001;app.ServiceDictation();assert(app.protocol->controls.size()==2&&app.protocol->controls.back()==pending);
+  dictation_ack(recorder,dictation::State::Open);app.ServiceDictation();
+  app.dictation_has_assignment_proof_=false;app.protocol->opened=false;
+  app.StartListening();assert(!app.BeginLocalRecordingOnMain());
+  // A current authenticated assignment cannot revive the hold begun offline
+  // before this reboot's assignment proof existed.
+  app.protocol->opened=true;app.ServiceDictation();assert(app.dictation_has_assignment_proof_&&!app.BeginLocalRecordingOnMain());
+  app.StopListening();app.EndLocalRecordingOnMain();app.StartListening();assert(!app.BeginLocalRecordingOnMain());drain();assert(app.BeginLocalRecordingOnMain());
+  int16_t samples[160]{};app.Samples(2,samples,160,1);app.state=kDeviceStateListening;
+  app.DictationButton();assert(app.audio_service_.local_recording_press_==0);
+  app.CloseDictationInputOnMain();app.HandleDictationControlOnMain();drain();
+  assert(recorder.DictationRecord().pending==dictation::Action::Stop&&recorder.DictationRecord().frozen_count==1);
+  app.StopListening();app.EndLocalRecordingOnMain();app.ServiceDictation();assert(app.protocol->controls.back().find("expected_segments")!=std::string::npos);
+  dictation_ack(recorder,dictation::State::Stopped);app.ServiceDictation();drain();app.ServiceDictation();
+  assert(Board::GetInstance().display.status.find("Stopped")!=std::string::npos||Board::GetInstance().display.status.find("Control pending")!=std::string::npos);
+ }
+ join();
+}
+void dictation_physical_cases(){
+ fresh();
+ {
+  Application app;auto& recorder=*app.provisions_recorder_;initialize(recorder);authorize(recorder);
+  assert(recorder.RequestDictationControl(dictation::Action::Start));drain();dictation_ack(recorder,dictation::State::Open);
+  app.dictation_authorization_seen_=recorder.DictationAuthorization();
+  const auto writes=state.writes;
+  app.ToggleDictationScreen();assert(app.dictation_screen_&&state.writes==writes);app.CloseDictationInputOnMain();
+  app.StartListening();assert(app.audio_service_.local_recording_press_==0);
+  assert(!app.BeginLocalRecordingOnMain());drain();assert(app.BeginLocalRecordingOnMain());app.state=kDeviceStateListening;
+  assert(app.audio_service_.local_recording_press_==1);int16_t pcm[160]{};app.Samples(1,pcm,160,1);
+  app.ToggleDictationScreen();assert(!app.dictation_screen_&&app.manual_listening_requested_&&app.audio_service_.local_recording_press_==0);
+  app.CloseDictationInputOnMain();drain();assert(!app.BeginLocalRecordingOnMain()&&app.audio_service_.local_recording_press_==0);
+  assert(recorder.DictationRecord().count==1&&offered.back().receipt.capture.IsDictation());
+  app.StopListening();app.EndLocalRecordingOnMain();app.StartListening();assert(app.BeginLocalRecordingOnMain());
+  assert(app.audio_service_.local_recording_press_==2);app.Samples(2,pcm,160,1);app.StopListening();app.EndLocalRecordingOnMain();drain();
+  assert(recorder.RequestDictationControl(dictation::Action::Stop));drain();dictation_ack(recorder,dictation::State::Stopped);
+  assert(recorder.RequestDictationControl(dictation::Action::Resume));drain();
+  app.ToggleDictationScreen();app.CloseDictationInputOnMain();app.StartListening();assert(!app.BeginLocalRecordingOnMain());
+  dictation_ack(recorder,dictation::State::Open);app.ServiceDictation();
+  // A delayed ACK cannot activate the already-held third press.
+  assert(!app.BeginLocalRecordingOnMain()&&app.dictation_closed_press_==3&&app.audio_service_.local_recording_press_==0);
+  app.StopListening();app.EndLocalRecordingOnMain();app.StartListening();assert(!app.BeginLocalRecordingOnMain());drain();assert(app.BeginLocalRecordingOnMain());app.state=kDeviceStateListening;
+  for(int i=0;i<1000;++i)app.Samples(4,pcm,160,1);
+  assert(app.manual_listening_requested_&&app.audio_service_.local_recording_press_==0&&(app_events&MAIN_EVENT_DICTATION_CAP));
+  app.CloseDictationInputOnMain();drain();assert(!app.BeginLocalRecordingOnMain()&&recorder.DictationRecord().segments[1].samples==160000);
+  app.StopListening();app.EndLocalRecordingOnMain();
+  {std::lock_guard<std::mutex> lock(task->mutex);pause_worker=true;}
+  app.StartListening();assert(!app.BeginLocalRecordingOnMain());app.StopListening();app.EndLocalRecordingOnMain();
+  {std::lock_guard<std::mutex> lock(task->mutex);pause_worker=false;task->changed.notify_all();}
+  drain();assert(recorder.DictationRecord().count==2&&app.audio_service_.local_recording_press_==0);
+  app.FenceDictationThrough(7);app.FenceDictationThrough(4);assert(app.dictation_closed_press_==7);
+ }
+ join();std::cout<<"Physical dictation entry/exit, queued release, ACK edge and cap fences passed\n";
+}
+"""
+app_source = (ROOT / 'main/application.cc').read_text()
+start = app_source.index('callbacks.on_recording_audio = ')
+opening = app_source.index('{', start)
+depth, end = 1, opening + 1
+while depth:
+    depth += (app_source[end] == '{') - (app_source[end] == '}')
+    end += 1
+PHYSICAL = PHYSICAL.replace('__SAMPLES__', app_source[opening:end])
+PHYSICAL = PHYSICAL.replace('__FENCE__', method('main/application.h', 'void FenceDictationThrough('))
+PHYSICAL = PHYSICAL.replace('__AUDIO_METHODS__', '\n'.join(method('main/audio/audio_service.cc', signature) for signature in (
+    'void AudioService::FenceLocalRecording(', 'void AudioService::ReleaseLocalRecordingFence(',
+    'void AudioService::ReconcileLocalRecording(', 'void AudioService::StartLocalRecording(', 'void AudioService::StopLocalRecording(')))
+PHYSICAL = PHYSICAL.replace('__APP_METHODS__', '\n'.join([
+    *[method('main/application.cc', signature) for signature in ('void Application::StartListening()', 'void Application::StopListening()', 'bool Application::BeginLocalRecordingOnMain()', 'void Application::EndLocalRecordingOnMain()')],
+    *[method('main/provisions_dictation_application.cc', signature) for signature in ('void Application::ToggleDictationScreen()', 'void Application::DictationButton()', 'void Application::CloseDictationInputOnMain()', 'void Application::HandleDictationControlOnMain()', 'void Application::ServiceDictation()')]]))
+WORKER = WORKER.replace('int main(){', PHYSICAL + '\nint main(){').replace('dictation_cases();}', 'dictation_cases();dictation_physical_cases();dictation_main_consumer_cases();}')
 
 
 class VoiceRecorderReviewTests(unittest.TestCase):
@@ -403,13 +656,18 @@ class VoiceRecorderReviewTests(unittest.TestCase):
                 header.write_text(source)
             (path / "review.cc").write_text(PRELUDE + SUPPORT + WORKER)
             binary = path / "review"
+            cjson = ROOT / "managed_components/espressif__cjson/cJSON"
+            subprocess.run(["cc", "-fsanitize=address,undefined", "-I", str(cjson), "-c", str(cjson / "cJSON.c"), "-o", str(path / "json.o")], check=True)
             subprocess.run([compiler, "-std=c++17", "-Wall", "-Wextra", "-Werror", "-pthread",
                             "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
-                            "-I", str(path), "-I", str(ROOT / "main"), *flags,
+                            "-I", str(path), "-I", str(ROOT / "main"), "-I", str(cjson), *flags,
                             str(path / "review.cc"), str(ROOT / "main/provisions_voice_outbox.cc"),
                             str(ROOT / "main/provisions_voice_outbox_esp.cc"),
                             str(ROOT / "main/provisions_voice_recording.cc"),
-                            str(ROOT / "main/provisions_voice_recorder.cc"), "-lcrypto",
+                            str(ROOT / "main/provisions_voice_recorder.cc"),
+                            str(ROOT / "main/provisions_dictation_recorder.cc"),
+                            str(ROOT / "main/provisions_dictation.cc"), str(ROOT / "main/provisions_dictation_store.cc"),
+                            str(ROOT / "main/provisions_voice_wire.cc"), str(ROOT / "main/provisions_timers.cc"), str(path / "json.o"), "-lcrypto",
                             "-o", str(binary)], check=True)
             subprocess.run([str(binary)], check=True, timeout=30, env={**os.environ, "ASAN_OPTIONS":
                 "detect_leaks=0" if sys.platform == "darwin" else "detect_leaks=1"})

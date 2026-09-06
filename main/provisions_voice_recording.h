@@ -38,7 +38,8 @@ public:
     };
 
     VoiceRecording(int16_t* first, int16_t* second, size_t capacity);
-    bool Begin(uint32_t press, const VoiceContext& context, uint64_t captured_unix_ms);
+    bool Begin(uint32_t press, const VoiceContext& context, uint64_t captured_unix_ms,
+               const VoiceCapture* dictation = nullptr);
     bool Append(uint32_t press, const int16_t* pcm, size_t frames, size_t channels);
     void Fail(uint32_t press);
     void Release(uint32_t press);
@@ -47,6 +48,7 @@ public:
     // while that clear, encoding, or persistence is in progress.
     void Finish(const Work& work);
     bool IsRecording(uint32_t press) const;
+    bool IsCapped(uint32_t press) const;
     static bool ValidContext(const VoiceContext& context);
 
 private:
@@ -57,6 +59,7 @@ private:
         VoiceCapture capture{};
         size_t samples = 0;
         bool failed = false;
+        bool capped = false;
         uint64_t order = 0;
     };
     mutable std::mutex mutex_;

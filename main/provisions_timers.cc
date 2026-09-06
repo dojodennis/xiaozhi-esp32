@@ -134,6 +134,7 @@ bool Deadline(const cJSON* value, int64_t& output) {
     return true;
 }
 }  // namespace
+bool ParseTimestamp(const cJSON* value, int64_t& unix_ms) { return Deadline(value, unix_ms); }
 
 bool WithinJsonBudget(std::string_view text) {
     if (text.empty() || text.size() > 32768)

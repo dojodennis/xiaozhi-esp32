@@ -154,6 +154,51 @@ int main() {
         assert(damaged.Save(capture(2),bytes(frames),saved) == VoiceStoreResult::Ok && saved.slot == 1);
         assert(std::equal(bad.data.begin(),bad.data.begin()+VoiceOutbox::kSlotBytes,quarantined.begin()));
     }
+    // Version three authenticates dictation intent without touching legacy slots.
+    auto dictation = capture(20); dictation.purpose = VoicePurpose::Dictation;
+    dictation.dictation_session_id[0] = 42; dictation.chunk_sequence = 59; dictation.sample_count = 160000;
+    Flash mixed; mixed.data = stable_image;
+    VoiceOutbox mixed_box(mixed,cipher,buffers.a.data(),buffers.b.data(),buffers.a.size());
+    assert(mixed_box.Save(dictation,bytes(frames),saved) == VoiceStoreResult::Ok && saved.slot == 1);
+    const auto mixed_image = mixed.data;
+    assert(std::equal(mixed.data.begin(),mixed.data.begin()+VoiceOutbox::kSlotBytes,stable_image.begin()));
+    assert(memcmp(mixed.data.data(),"ORBAUD02",8)==0);
+    assert(memcmp(mixed.data.data()+VoiceOutbox::kSlotBytes,"ORBAUD03",8)==0);
+    VoiceOutbox mixed_reboot(mixed,cipher,restarted_buffers.a.data(),restarted_buffers.b.data(),restarted_buffers.a.size());
+    assert(mixed_reboot.Read(0,saved)==VoiceStoreResult::Ok && !saved.capture.IsDictation() && saved.capture.sample_count==0);
+    assert(mixed_reboot.Read(1,saved)==VoiceStoreResult::Ok && saved.capture.IsDictation());
+    assert(saved.capture.dictation_session_id==dictation.dictation_session_id && saved.capture.chunk_sequence==59 && saved.capture.sample_count==160000);
+    for(int field=0;field<4;++field){auto changed=dictation;
+        if(field==0)changed.purpose=VoicePurpose::Command;
+        if(field==1)++changed.dictation_session_id[0];
+        if(field==2)--changed.chunk_sequence;
+        if(field==3)--changed.sample_count;
+        auto result=mixed_box.Save(changed,bytes(frames),saved);
+        assert(result==(field==0?VoiceStoreResult::Invalid:VoiceStoreResult::Conflict));
+        assert(mixed.data==mixed_image);
+    }
+    for(size_t local:{size_t(8),size_t(96),size_t(100),size_t(116),size_t(120),size_t(124),size_t(136)}){
+        Flash bad;bad.data=mixed_image;bad.data[VoiceOutbox::kSlotBytes+local]^=1;
+        VoiceOutbox reader(bad,cipher,buffers.a.data(),buffers.b.data(),buffers.a.size());
+        assert(reader.Read(1,saved)==VoiceStoreResult::Corrupt);
+    }
+    for(int field=0;field<5;++field){auto invalid=dictation;invalid.request_id[0]=21;
+        if(field==0)invalid.purpose=static_cast<VoicePurpose>(2);
+        if(field==1)invalid.dictation_session_id={};
+        if(field==2)invalid.chunk_sequence=60;
+        if(field==3)invalid.sample_count=0;
+        if(field==4)invalid.sample_count=160001;
+        assert(mixed_box.Save(invalid,bytes(frames),saved)==VoiceStoreResult::Invalid && mixed.data==mixed_image);
+    }
+    for(size_t cut=0;cut<VoiceOutbox::kDictationHeaderBytes;++cut){
+        Flash torn;torn.data=stable_image;torn.cut_write=1;torn.cut_bytes=cut;
+        VoiceOutbox writer(torn,cipher,buffers.a.data(),buffers.b.data(),buffers.a.size());
+        assert(writer.Save(dictation,bytes(frames),saved)==VoiceStoreResult::IoError);
+        VoiceOutbox reader(torn,cipher,restarted_buffers.a.data(),restarted_buffers.b.data(),restarted_buffers.a.size());
+        assert(reader.Read(1,saved)!=VoiceStoreResult::Ok);
+        assert(reader.Read(0,saved)==VoiceStoreResult::Ok && !saved.capture.IsDictation());
+        assert(std::equal(torn.data.begin(),torn.data.begin()+VoiceOutbox::kSlotBytes,stable_image.begin()));
+    }
     Cipher other_device;
     VoiceOutbox wrong_key(flash,other_device,buffers.a.data(),buffers.b.data(),buffers.a.size());
     assert(wrong_key.Read(0,saved) == VoiceStoreResult::Corrupt);

@@ -126,6 +126,7 @@ void WebsocketProtocol::CloseAudioChannel(bool send_goodbye) {
     gateway_authenticated_.store(false);
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
     timers_enabled_.store(false);
+    dictation_enabled_.store(false);
 #endif
     connection_generation_.fetch_add(1);
     if (gateway_hello_pending_.exchange(false)) {
@@ -173,6 +174,7 @@ bool WebsocketProtocol::OpenAudioChannel() {
         gateway_authenticated_.store(false);
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
         timers_enabled_.store(false);
+        dictation_enabled_.store(false);
 #endif
         capture_enabled_.store(false);
     }
@@ -194,6 +196,7 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
     gateway_authenticated_.store(false);
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
     timers_enabled_.store(false);
+    dictation_enabled_.store(false);
 #endif
     gateway_hello_pending_.store(false);
     last_gateway_activity_us_.store(0);
@@ -333,6 +336,7 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
                 gateway_authenticated_.store(false);
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
                 timers_enabled_.store(false);
+                dictation_enabled_.store(false);
 #endif
                 ESP_LOGE(TAG, "Rejecting gateway JSON containing an embedded NUL");
                 SetError("Invalid gateway message");
@@ -360,6 +364,7 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
                 gateway_authenticated_.store(false);
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
                 timers_enabled_.store(false);
+                dictation_enabled_.store(false);
 #endif
                 ESP_LOGE(TAG, "Rejecting malformed gateway JSON");
                 SetError("Invalid gateway message");
@@ -376,6 +381,7 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
                         gateway_authenticated_.store(false);
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
                         timers_enabled_.store(false);
+                        dictation_enabled_.store(false);
 #endif
                         SetError("Unexpected gateway hello");
                         cJSON_Delete(root);
@@ -395,6 +401,7 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
                         gateway_authenticated_.store(false);
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
                         timers_enabled_.store(false);
+                        dictation_enabled_.store(false);
 #endif
                         SetError("Invalid gateway message session");
                         cJSON_Delete(root);
@@ -405,6 +412,7 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
                             gateway_authenticated_.store(false);
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
                             timers_enabled_.store(false);
+                            dictation_enabled_.store(false);
 #endif
                             SetError("Invalid gateway pong");
                             cJSON_Delete(root);
@@ -427,6 +435,7 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
                 gateway_authenticated_.store(false);
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
                 timers_enabled_.store(false);
+                dictation_enabled_.store(false);
 #endif
                 ESP_LOGE(TAG, "Rejecting gateway message without a type");
                 SetError("Invalid gateway message");
@@ -458,6 +467,7 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
         gateway_authenticated_.store(false);
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
         timers_enabled_.store(false);
+        dictation_enabled_.store(false);
 #endif
         if (gateway_hello_pending_.exchange(false)) {
             SetError(Lang::Strings::SERVER_NOT_CONNECTED);
@@ -539,6 +549,7 @@ std::string WebsocketProtocol::GetHelloMessage() {
     cJSON_AddBoolToObject(features, "audio_capture", true);
     cJSON_AddBoolToObject(features, "audio_retry", true);
     cJSON_AddBoolToObject(features, "timers_v1", true);
+    cJSON_AddBoolToObject(features, "dictation_v1", true);
 #endif
 #else
     cJSON_AddBoolToObject(features, "mcp", true);
@@ -614,14 +625,18 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
     server_sample_rate_ = sample_rate->valueint;
     server_frame_duration_ = frame_duration->valueint;
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
-    unsigned timer_flags = 0;
+    unsigned timer_flags = 0, dictation_flags = 0;
     const cJSON* feature;
     cJSON_ArrayForEach (feature, provisions) {
         if (feature->string && strcmp(feature->string, "timers_v1") == 0)
             ++timer_flags;
+        if (feature->string && strcmp(feature->string, "dictation_v1") == 0)
+            ++dictation_flags;
     }
     timers_enabled_.store(timer_flags == 1 &&
                           cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(provisions, "timers_v1")));
+    dictation_enabled_.store(dictation_flags == 1 && cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(
+                                                         provisions, "dictation_v1")));
     auto capture_feature = cJSON_GetObjectItemCaseSensitive(provisions, "audio_capture");
     auto capture_context = cJSON_GetObjectItemCaseSensitive(provisions, "capture_context");
     ::provisions::VoiceContext context;
@@ -668,6 +683,7 @@ void WebsocketProtocol::RejectServerHello(const char* message) {
     gateway_authenticated_.store(false);
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
     timers_enabled_.store(false);
+    dictation_enabled_.store(false);
 #endif
     gateway_hello_pending_.store(false);
     SetError(message);
@@ -691,6 +707,7 @@ void WebsocketProtocol::EndOperation() {
         gateway_authenticated_.store(false);
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
         timers_enabled_.store(false);
+        dictation_enabled_.store(false);
 #endif
         capture_enabled_.store(false);
         std::atomic_store(&websocket_, std::shared_ptr<Connection>{});
@@ -717,6 +734,8 @@ bool WebsocketProtocol::AcceptCaptureContext(const provisions::VoiceContext& con
 }
 bool WebsocketProtocol::SendStoredRecording(const provisions::VoiceReplay& replay, bool deferred,
                                             const std::function<bool()>& current) {
+    if (replay.capture.IsDictation() && (!deferred || !DictationNegotiated()))
+        return false;
     if (!BeginOperation())
         return false;
     upload_active_.store(true);
