@@ -358,17 +358,20 @@ class ProvisionsGatewayIntegrationTests(unittest.TestCase):
         self.assertLess(disable, stop_frame)
         self.assertLess(stop_frame, idle)
 
-        release_entrypoint = application.split("void Application::StopListening()", 1)[
-            1
-        ].split("void Application::HandleToggleChatEvent()", 1)[0]
+        from test_provisions_local_capture_integration_review import method
+        release_entrypoint = method(application, "void Application::StopListening()")
+        local_release = release_entrypoint.split("#if CONFIG_PROVISIONS_LOCAL_CAPTURE", 1)[1].split("#else", 1)[0]
+        nonlocal_release = release_entrypoint.split("#else", 1)[1].split("#endif", 1)[0]
         self.assertIn("manual_listening_requested_.store(false", release_entrypoint)
-        self.assertIn("audio_service_.CloseVoiceUploadGate();", release_entrypoint)
-        self.assertLess(
-            release_entrypoint.index("audio_service_.CloseVoiceUploadGate();"),
-            release_entrypoint.index(
-                "xEventGroupSetBits(event_group_, MAIN_EVENT_STOP_LISTENING);"
-            ),
-        )
+        self.assertIn("audio_service_.ReleaseLocalRecordingFence(", local_release)
+        self.assertNotIn("CloseVoiceUploadGate", local_release)
+        self.assertIn("audio_service_.CloseVoiceUploadGate();", nonlocal_release)
+        self.assertLess(release_entrypoint.index("audio_service_.ReleaseLocalRecordingFence("),
+                        release_entrypoint.index("xEventGroupSetBits(event_group_, MAIN_EVENT_STOP_LISTENING);"))
+        end_local = method(application, "void Application::EndLocalRecordingOnMain()")
+        self.assertIn("audio_service_.CloseVoiceUploadGate();", end_local)
+        self.assertLess(end_local.index("audio_service_.CloseVoiceUploadGate();"),
+                        end_local.index("audio_service_.ReconcileLocalRecording(press);"))
         self.assertIn('VoiceUploadGate voice_upload_gate_;', audio_header)
         self.assertIn("voice_upload_gate_.Close();", audio_service)
         self.assertIn("audio_send_queue_.clear();", audio_service)

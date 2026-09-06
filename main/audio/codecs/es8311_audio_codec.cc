@@ -89,8 +89,6 @@ void Es8311AudioCodec::UpdateDeviceState() {
             .data_if = data_if_,
         };
         dev_ = esp_codec_dev_new(&dev_cfg);
-        assert(dev_ != NULL);
-
         esp_codec_dev_sample_info_t fs = {
             .bits_per_sample = 16,
             .channel = 1,
@@ -98,11 +96,36 @@ void Es8311AudioCodec::UpdateDeviceState() {
             .sample_rate = (uint32_t)input_sample_rate_,
             .mclk_multiple = 0,
         };
-        ESP_ERROR_CHECK(esp_codec_dev_open(dev_, &fs));
-        ESP_ERROR_CHECK(esp_codec_dev_set_in_gain(dev_, input_gain_));
-        ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(dev_, output_volume_));
+        const char* stage = "allocate";
+        int result = dev_ ? ESP_CODEC_DEV_OK : ESP_ERR_NO_MEM;
+        if (result == ESP_CODEC_DEV_OK) {
+            stage = "open";
+            result = esp_codec_dev_open(dev_, &fs);
+        }
+        if (result == ESP_CODEC_DEV_OK) {
+            stage = "input gain";
+            result = esp_codec_dev_set_in_gain(dev_, input_gain_);
+        }
+        if (result == ESP_CODEC_DEV_OK) {
+            stage = "output volume";
+            result = esp_codec_dev_set_out_vol(dev_, output_volume_);
+        }
+        if (result != ESP_CODEC_DEV_OK) {
+            ESP_LOGE(TAG, "Codec activation failed at %s: %d", stage, result);
+            // A runtime acquisition failure must reach the recording error
+            // callback, not abort the device. Retry starts with a fresh handle.
+            if (dev_) {
+                esp_codec_dev_close(dev_);
+                esp_codec_dev_delete(dev_);
+                dev_ = nullptr;
+            }
+            input_enabled_ = false;
+            output_enabled_ = false;
+        }
     } else if (!input_enabled_ && !output_enabled_ && dev_ != nullptr) {
-        ESP_ERROR_CHECK(esp_codec_dev_close(dev_));
+        const int result = esp_codec_dev_close(dev_);
+        if (result != ESP_CODEC_DEV_OK)
+            ESP_LOGE(TAG, "Codec close failed: %d", result);
         esp_codec_dev_delete(dev_);
         dev_ = nullptr;
     }
@@ -176,7 +199,11 @@ void Es8311AudioCodec::CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk, gp
 void Es8311AudioCodec::SetOutputVolume(int volume) {
     std::lock_guard<std::mutex> lock(data_if_mutex_);
     if (dev_ != nullptr) {
-        ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(dev_, volume));
+        const int result = esp_codec_dev_set_out_vol(dev_, volume);
+        if (result != ESP_CODEC_DEV_OK) {
+            ESP_LOGE(TAG, "Codec volume failed: %d", result);
+            return;
+        }
     }
     AudioCodec::SetOutputVolume(volume);
 }
@@ -186,7 +213,9 @@ void Es8311AudioCodec::SetOutputVolumeForSession(int volume) {
     output_volume_ = volume;
     ESP_LOGI(TAG, "Set session output volume to %d", output_volume_);
     if (dev_ != nullptr) {
-        ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(dev_, output_volume_));
+        const int result = esp_codec_dev_set_out_vol(dev_, output_volume_);
+        if (result != ESP_CODEC_DEV_OK)
+            ESP_LOGE(TAG, "Codec session volume failed: %d", result);
     }
 }
 

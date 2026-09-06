@@ -42,9 +42,10 @@ class OrbitCrestDisplay final : public SpiLcdDisplay {
     static State StateForStatus(const char* text) {
         if (!text)
             return State::Boot;
-        if (!std::strcmp(text, "Ready"))
+        if (!std::strcmp(text, "Ready") || !std::strcmp(text, "Saved on Orbit"))
             return State::Idle;
-        if (!std::strcmp(text, "Working"))
+        if (!std::strcmp(text, "Working") || !std::strcmp(text, "Saving") ||
+            !std::strcmp(text, "Retry queued") || !std::strcmp(text, "Preparing microphone"))
             return State::Thinking;
         if (!std::strcmp(text, "Listening") || !std::strcmp(text, Lang::Strings::LISTENING))
             return State::Listening;
@@ -54,7 +55,9 @@ class OrbitCrestDisplay final : public SpiLcdDisplay {
             !std::strcmp(text, Lang::Strings::REGISTERING_NETWORK) ||
             !std::strcmp(text, Lang::Strings::LOADING_PROTOCOL))
             return State::Connecting;
-        if (!std::strcmp(text, "Unavailable") || !std::strcmp(text, Lang::Strings::ERROR) ||
+        if (!std::strcmp(text, "Unavailable") || !std::strcmp(text, "Couldn't save") ||
+            !std::strcmp(text, "Capture unavailable") || !std::strcmp(text, "Hold blue to retry") ||
+            !std::strcmp(text, "Recording kept") || !std::strcmp(text, Lang::Strings::ERROR) ||
             !std::strcmp(text, Lang::Strings::SERVER_ERROR) ||
             !std::strcmp(text, Lang::Strings::SERVER_NOT_CONNECTED) ||
             !std::strcmp(text, Lang::Strings::SERVER_TIMEOUT) ||

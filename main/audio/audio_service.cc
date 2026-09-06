@@ -314,6 +314,8 @@ void AudioService::AudioInputTask() {
         {
             std::lock_guard<std::mutex> lock(local_recording_mutex_);
             recording_press = local_recording_press_.load(std::memory_order_acquire);
+            if (local_physical_boundary_.load(std::memory_order_acquire) != recording_press)
+                recording_press = 0;
             local_input_press_.store(recording_press, std::memory_order_release);
         }
         if (recording_press != 0) {
@@ -337,7 +339,8 @@ void AudioService::AudioInputTask() {
                     std::lock_guard<std::mutex> lock(input_resampler_mutex_);
                     prepared = esp_ae_rate_cvt_reset(input_resampler_) == ESP_AE_ERR_OK;
                 }
-                if (local_recording_press_.load(std::memory_order_acquire) != recording_press)
+                if (local_recording_press_.load(std::memory_order_acquire) != recording_press ||
+                    local_physical_boundary_.load(std::memory_order_acquire) != recording_press)
                     continue;
                 if (!prepared) {
                     StopLocalRecording(recording_press);
@@ -355,7 +358,8 @@ void AudioService::AudioInputTask() {
             // newer press) discards an in-flight read instead of admitting any
             // post-release samples into the frozen recording.
             const bool read = ReadAudioData(recording_data, 16000, 160);
-            if (local_recording_press_.load(std::memory_order_acquire) == recording_press) {
+            if (local_recording_press_.load(std::memory_order_acquire) == recording_press &&
+                local_physical_boundary_.load(std::memory_order_acquire) == recording_press) {
                 const size_t channels = codec_->input_channels();
                 if (read && (channels == 1 || channels == 2) &&
                     recording_data.size() % channels == 0 && callbacks_.on_recording_audio) {
@@ -453,7 +457,8 @@ void AudioService::AudioOutputTask() {
         const bool current = task->playback_generation == playback_generation_ &&
                              !service_stopped_.load()
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-                             && local_recording_press_.load() == 0
+                             && local_recording_press_.load() == 0 &&
+                             local_physical_boundary_.load() == local_output_boundary_.load()
 #endif
             ;
         lock.unlock();
@@ -882,9 +887,25 @@ void AudioService::ReleaseWakeWordResources() {
 }
 
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+void AudioService::FenceLocalRecording(uint32_t press) {
+    local_physical_boundary_.store(press, std::memory_order_release);
+    local_recording_press_.store(0, std::memory_order_release);
+}
+void AudioService::ReleaseLocalRecordingFence(uint32_t press) {
+    auto expected = press;
+    if (local_physical_boundary_.compare_exchange_strong(expected, press | 0x80000000U,
+                                                         std::memory_order_acq_rel))
+        local_recording_press_.store(0, std::memory_order_release);
+}
+void AudioService::ReconcileLocalRecording(uint32_t press) {
+    const uint32_t released = press | 0x80000000U;
+    if (local_physical_boundary_.load(std::memory_order_acquire) == released)
+        local_output_boundary_.store(released, std::memory_order_release);
+}
 void AudioService::StartLocalRecording(uint32_t press) {
     std::lock_guard<std::mutex> lock(local_recording_mutex_);
-    if (press == 0 || service_stopped_.load())
+    if (press == 0 || service_stopped_.load() ||
+        local_physical_boundary_.load(std::memory_order_acquire) != press)
         return;
     std::lock_guard<std::mutex> queue_lock(audio_queue_mutex_);
     ++playback_generation_;
@@ -909,6 +930,7 @@ bool AudioService::IsLocalInputIdle() const {
 }
 bool AudioService::IsLocalRecordingReady(uint32_t press) const {
     return press != 0 && local_recording_press_.load(std::memory_order_acquire) == press &&
+           local_physical_boundary_.load(std::memory_order_acquire) == press &&
            local_prepared_press_.load(std::memory_order_acquire) == press;
 }
 void AudioService::StopLocalRecording(uint32_t expected_press) {

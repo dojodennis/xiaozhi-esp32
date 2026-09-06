@@ -151,6 +151,11 @@ public:
     void ReleaseWakeWordResources();
     void EnableVoiceProcessing(bool enable);
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    // Button-task operations: atomics only, no locks, allocation or I/O.
+    void FenceLocalRecording(uint32_t press);
+    void ReleaseLocalRecordingFence(uint32_t press);
+    // Main-task reconciliation after queues/decoder have been cancelled.
+    void ReconcileLocalRecording(uint32_t press);
     void StartLocalRecording(uint32_t press);
     void StopLocalRecording(uint32_t expected_press = 0);
     // Includes a discarded in-flight read, not just the physical button flag.
@@ -249,6 +254,8 @@ private:
     std::atomic<uint32_t> local_recording_press_{0};
     std::atomic<uint32_t> local_input_press_{0};
     std::atomic<uint32_t> local_prepared_press_{0};
+    std::atomic<uint32_t> local_physical_boundary_{0};
+    std::atomic<uint32_t> local_output_boundary_{0};
 #endif
 
     esp_timer_handle_t audio_power_timer_ = nullptr;

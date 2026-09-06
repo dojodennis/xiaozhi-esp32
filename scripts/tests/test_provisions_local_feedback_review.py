@@ -98,7 +98,7 @@ struct Codec {
     size_t size(){std::lock_guard<std::mutex> lock(mutex);return played.size();}
 };
 struct AudioService {
-    std::atomic<bool> service_stopped_{false};std::atomic<uint32_t> local_recording_press_{0};
+    std::atomic<bool> service_stopped_{false};std::atomic<uint32_t> local_recording_press_{0},local_physical_boundary_{0},local_output_boundary_{0};
     std::mutex audio_queue_mutex_,decoder_mutex_;std::condition_variable audio_queue_cv_;
     std::string_view local_feedback_;size_t local_feedback_offset_=0;bool local_feedback_active_=false;
     OggDemuxer local_feedback_demuxer_;

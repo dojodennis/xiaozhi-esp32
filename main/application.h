@@ -187,6 +187,7 @@ private:
 #endif
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
     std::mutex provisions_recording_control_mutex_;
+    uint32_t provisions_recording_started_press_ = 0;  // Main-task owned.
     std::shared_ptr<provisions::VoiceRecorder> provisions_recorder_;
     std::atomic<bool> provisions_recording_failed_{false};
     std::atomic<bool> provisions_recording_saving_{false};
@@ -195,6 +196,8 @@ private:
     void HandleVoiceRecordingResult(provisions::VoiceRecorder::Result result, uint32_t press);
     void SendVoiceRecording(std::shared_ptr<const provisions::VoiceReplay> replay);
     void ReconnectVoiceGateway();
+    bool BeginLocalRecordingOnMain();
+    void EndLocalRecordingOnMain();
 #endif
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;

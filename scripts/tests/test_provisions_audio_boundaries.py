@@ -120,7 +120,7 @@ struct Codec {
 struct Engine{void Feed(std::vector<int16_t>) {}};
 struct AudioService {
  std::atomic<bool> service_stopped_{false},audio_input_need_warmup_{false};
- std::atomic<uint32_t> local_recording_press_{0},local_input_press_{0},local_prepared_press_{0};
+ std::atomic<uint32_t> local_recording_press_{0},local_input_press_{0},local_prepared_press_{0},local_physical_boundary_{0},local_output_boundary_{0};
  std::mutex local_recording_mutex_,audio_queue_mutex_,input_resampler_mutex_;std::condition_variable audio_queue_cv_;
  std::deque<int> audio_decode_queue_{1},audio_playback_queue_{2,3},audio_testing_queue_;
  std::string_view local_feedback_;bool local_feedback_active_=false,output_in_flight_=false;uint32_t playback_generation_=0;
@@ -129,30 +129,31 @@ struct AudioService {
  std::atomic<bool> hold_read{false},read_entered{false},release_read{false};
  bool ReadAudioData(std::vector<int16_t>& data,int,int){read_entered=true;while(hold_read&&!release_read)std::this_thread::sleep_for(100us);data.assign(160,codec.prepares.load());std::this_thread::sleep_for(1ms);return true;}
  void EnableAudioTesting(bool){}void PushTaskToEncodeQueue(int,std::vector<int16_t>){}
- void AudioInputTask();void StartLocalRecording(uint32_t);void StopLocalRecording(uint32_t expected_press=0);bool IsLocalRecordingClosed(uint32_t) const;bool IsLocalInputIdle() const;bool IsLocalRecordingReady(uint32_t) const;
+ void AudioInputTask();void StartLocalRecording(uint32_t);void FenceLocalRecording(uint32_t);void ReleaseLocalRecordingFence(uint32_t);void ReconcileLocalRecording(uint32_t);void StopLocalRecording(uint32_t expected_press=0);bool IsLocalRecordingClosed(uint32_t) const;bool IsLocalInputIdle() const;bool IsLocalRecordingReady(uint32_t) const;
  void stop(){service_stopped_=true;xEventGroupSetBits(event_group_,AS_EVENT_AUDIO_INPUT_STOP_REQUEST);}
 };
 __METHODS__
 template<class F>void wait_for(F f){auto end=std::chrono::steady_clock::now()+2s;while(!f()&&std::chrono::steady_clock::now()<end)std::this_thread::sleep_for(100us);assert(f());}
 int main(){
  {AudioService a;std::atomic<int> seen=0;a.callbacks_.on_recording_audio=[&](uint32_t p,const int16_t* pcm,size_t,size_t){assert(p==1&&pcm[0]==1&&resets>=1);++seen;};
-  a.codec.drained=false;std::thread input([&]{a.AudioInputTask();});a.StartLocalRecording(1);
+  a.codec.drained=false;std::thread input([&]{a.AudioInputTask();});a.FenceLocalRecording(1);a.StartLocalRecording(1);
   assert(a.audio_decode_queue_.empty()&&a.audio_playback_queue_.empty());std::this_thread::sleep_for(10ms);assert(a.codec.prepares==0&&seen==0&&!a.IsLocalRecordingReady(1));
   a.codec.drained=true;wait_for([&]{return seen>0;});assert(a.IsLocalRecordingReady(1));a.StopLocalRecording(1);assert(!a.IsLocalRecordingReady(1));wait_for([&]{return a.IsLocalRecordingClosed(1);});a.stop();input.join();}
  {AudioService a;std::atomic<int> wrong=0,seen=0;a.codec.hold=true;
   a.callbacks_.on_recording_audio=[&](uint32_t p,const int16_t* pcm,size_t,size_t){if(p!=2)++wrong;assert(pcm[0]==2);++seen;};
-  std::thread input([&]{a.AudioInputTask();});a.StartLocalRecording(1);wait_for([&]{return a.codec.entered.load();});
-  a.StopLocalRecording(1);assert(!a.IsLocalRecordingClosed(1));a.StartLocalRecording(2);a.codec.release=true;
+  std::thread input([&]{a.AudioInputTask();});a.FenceLocalRecording(1);a.StartLocalRecording(1);wait_for([&]{return a.codec.entered.load();});
+  a.StopLocalRecording(1);assert(!a.IsLocalRecordingClosed(1));a.FenceLocalRecording(2);a.StartLocalRecording(2);a.codec.release=true;
   wait_for([&]{return seen>0;});assert(wrong==0&&a.codec.prepares==2&&a.IsLocalRecordingClosed(1)&&!a.IsLocalInputIdle());a.StopLocalRecording(2);a.stop();input.join();}
  {AudioService a;std::atomic<int> seen=0;a.hold_read=true;a.callbacks_.on_recording_audio=[&](uint32_t,const int16_t*,size_t,size_t){++seen;};
-  std::thread input([&]{a.AudioInputTask();});a.StartLocalRecording(1);wait_for([&]{return a.read_entered.load();});a.StopLocalRecording(1);
-  assert(!a.IsLocalRecordingClosed(1)&&!a.IsLocalInputIdle());a.release_read=true;wait_for([&]{return a.IsLocalRecordingClosed(1);});assert(seen==0&&a.IsLocalInputIdle());a.stop();input.join();}
+  std::thread input([&]{a.AudioInputTask();});a.FenceLocalRecording(1);a.StartLocalRecording(1);wait_for([&]{return a.read_entered.load();});a.ReleaseLocalRecordingFence(1);
+  // Only the production timer fence has run; main StopLocalRecording is delayed.
+  assert(!a.IsLocalRecordingClosed(1)&&!a.IsLocalInputIdle());a.release_read=true;wait_for([&]{return a.IsLocalRecordingClosed(1);});assert(seen==0&&a.IsLocalInputIdle());a.StopLocalRecording();a.stop();input.join();}
  {AudioService a;std::atomic<int> errors=0,seen=0;a.codec.fail=true;a.callbacks_.on_recording_error=[&](uint32_t p){assert(p==1);++errors;};
-  a.callbacks_.on_recording_audio=[&](uint32_t,const int16_t*,size_t,size_t){++seen;};std::thread input([&]{a.AudioInputTask();});a.StartLocalRecording(1);
+  a.callbacks_.on_recording_audio=[&](uint32_t,const int16_t*,size_t,size_t){++seen;};std::thread input([&]{a.AudioInputTask();});a.FenceLocalRecording(1);a.StartLocalRecording(1);
   wait_for([&]{return errors==1;});assert(seen==0);a.stop();input.join();}
  {AudioService a;std::atomic<int> errors=0;a.codec.drained=false;
   a.callbacks_.on_recording_error=[&](uint32_t p){assert(p==1);++errors;};
-  std::thread input([&]{a.AudioInputTask();});a.StartLocalRecording(1);wait_for([&]{return errors==1;});
+  std::thread input([&]{a.AudioInputTask();});a.FenceLocalRecording(1);a.StartLocalRecording(1);wait_for([&]{return errors==1;});
   wait_for([&]{return a.IsLocalInputIdle();});assert(a.codec.prepares==0&&!a.read_entered);a.stop();input.join();}
 }
 '''
@@ -296,6 +297,8 @@ int main(){
     def test_actual_input_task_fences_preparation_reads_and_output_drain(self):
         run_cpp(INPUT.replace("__METHODS__", "\n".join(method("main/audio/audio_service.cc", signature)
                 for signature in ("void AudioService::AudioInputTask()", "void AudioService::StartLocalRecording(",
+                                  "void AudioService::FenceLocalRecording(", "void AudioService::ReleaseLocalRecordingFence(",
+                                  "void AudioService::ReconcileLocalRecording(",
                                   "void AudioService::StopLocalRecording(", "bool AudioService::IsLocalRecordingClosed(",
                                   "bool AudioService::IsLocalInputIdle(", "bool AudioService::IsLocalRecordingReady("))))
 
@@ -332,13 +335,13 @@ struct Codec{
 struct AudioService{
  std::mutex audio_queue_mutex_,local_recording_mutex_;std::condition_variable audio_queue_cv_;
  std::deque<std::unique_ptr<AudioTask>> audio_playback_queue_;std::deque<int> audio_decode_queue_;
- std::atomic<bool> service_stopped_{false};std::atomic<uint32_t> local_recording_press_{0},local_prepared_press_{0};
+ std::atomic<bool> service_stopped_{false};std::atomic<uint32_t> local_recording_press_{0},local_prepared_press_{0},local_physical_boundary_{0},local_output_boundary_{0};
  bool output_in_flight_=false,decode_in_flight_=false,playback_drained_notified_=false,local_feedback_active_=false;
  uint32_t playback_generation_=5;std::string_view local_feedback_;
  Codec codec;Codec* codec_=&codec;int audio_power_timer_=0,event_group_=0;
  struct{std::function<void()> on_playback_drained;std::function<void(uint32_t)> on_playback_error;std::function<void(uint32_t,uint32_t)> on_playback_progress;}callbacks_;
  struct{uint32_t playback_count=0;}debug_statistics_;std::chrono::steady_clock::time_point last_output_time_;
- void AudioOutputTask();void StartLocalRecording(uint32_t);bool IsPlaybackDrainedLocked()const;bool MarkPlaybackDrainedLocked();
+ void AudioOutputTask();void StartLocalRecording(uint32_t);void FenceLocalRecording(uint32_t);void ReleaseLocalRecordingFence(uint32_t);void ReconcileLocalRecording(uint32_t);bool IsPlaybackDrainedLocked()const;bool MarkPlaybackDrainedLocked();
  void stop(){service_stopped_=true;audio_queue_cv_.notify_all();}
  void enqueue(){audio_playback_queue_.push_back(std::make_unique<AudioTask>());}
 };
@@ -347,10 +350,21 @@ template<class F>void wait_for(F f){auto end=std::chrono::steady_clock::now()+2s
 int main(){
  {AudioService a;a.enqueue();a.enqueue();a.codec.hold_enable=true;std::atomic<int> drained=0;a.callbacks_.on_playback_drained=[&]{++drained;};
   std::thread output([&]{a.AudioOutputTask();});wait_for([&]{return a.codec.enable_entered.load();});
-  a.StartLocalRecording(1);a.codec.enable_release=true;wait_for([&]{return drained==1;});assert(a.codec.writes==0);
+  a.FenceLocalRecording(1);a.StartLocalRecording(1);a.codec.enable_release=true;wait_for([&]{return drained==1;});assert(a.codec.writes==0);
+  a.stop();output.join();}
+ {AudioService a;a.enqueue();a.codec.hold_enable=true;std::atomic<int> drained=0;a.callbacks_.on_playback_drained=[&]{++drained;};
+  std::thread output([&]{a.AudioOutputTask();});wait_for([&]{return a.codec.enable_entered.load();});
+  a.FenceLocalRecording(1);a.ReleaseLocalRecordingFence(1); // Complete tap before any main event.
+  assert(a.local_recording_press_==0&&a.local_physical_boundary_!=a.local_output_boundary_);
+  a.codec.enable_release=true;wait_for([&]{return drained==1;});assert(a.codec.writes==0);
+  a.FenceLocalRecording(2);a.ReconcileLocalRecording(1); // Old reconciliation cannot allow a newer hold.
+  assert(a.local_physical_boundary_!=a.local_output_boundary_);
+  a.ReleaseLocalRecordingFence(1);assert(a.local_physical_boundary_==2);
+  a.ReleaseLocalRecordingFence(2);a.ReconcileLocalRecording(2);
+  assert(a.local_physical_boundary_==a.local_output_boundary_);
   a.stop();output.join();}
  {AudioService a;a.enqueue();a.enqueue();a.codec.hold_write=true;a.codec.drained=false;std::atomic<int> drained=0;a.callbacks_.on_playback_drained=[&]{++drained;};
-  std::thread output([&]{a.AudioOutputTask();});wait_for([&]{return a.codec.write_entered.load();});a.StartLocalRecording(1);a.codec.write_release=true;
+  std::thread output([&]{a.AudioOutputTask();});wait_for([&]{return a.codec.write_entered.load();});a.FenceLocalRecording(1);a.StartLocalRecording(1);a.codec.write_release=true;
   std::this_thread::sleep_for(20ms);assert(drained==0);{std::lock_guard<std::mutex> l(a.audio_queue_mutex_);assert(!a.IsPlaybackDrainedLocked());}
   a.codec.drained=true;wait_for([&]{return drained==1;});assert(a.codec.writes==1);a.stop();output.join();}
  {AudioService a;a.enqueue();a.enqueue();a.codec.fail=true;std::atomic<int> errors=0,drained=0;
@@ -361,6 +375,8 @@ int main(){
 '''
         run_cpp(program.replace("__METHODS__", "\n".join(method("main/audio/audio_service.cc", signature)
                 for signature in ("void AudioService::AudioOutputTask()", "void AudioService::StartLocalRecording(",
+                                  "void AudioService::FenceLocalRecording(", "void AudioService::ReleaseLocalRecordingFence(",
+                                  "void AudioService::ReconcileLocalRecording(",
                                   "bool AudioService::IsPlaybackDrainedLocked() const",
                                   "bool AudioService::MarkPlaybackDrainedLocked()"))))
 

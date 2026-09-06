@@ -1521,8 +1521,8 @@ void Application::HandleVoiceRecordingResult(provisions::VoiceRecorder::Result r
                                              uint32_t press) {
     using Result = provisions::VoiceRecorder::Result;
     auto recorder = std::atomic_load(&provisions_recorder_);
-    // Publish only state under the button lock. Sound and display work must
-    // never delay a physical press or release.
+    // Main-task result publication is serialized with recording startup.
+    // The timer-owned physical-held flag is never changed by a delayed result.
     bool current = false;
     {
         std::lock_guard<std::mutex> lock(provisions_recording_control_mutex_);
@@ -1533,7 +1533,6 @@ void Application::HandleVoiceRecordingResult(provisions::VoiceRecorder::Result r
                 provisions_recording_local_.store(true);
             } else if (result == Result::Failed) {
                 audio_service_.StopLocalRecording(press);
-                manual_listening_requested_.store(false);
                 provisions_recording_saving_.store(false);
                 provisions_recording_failed_.store(true);
             } else if (result == Result::Synced) {
@@ -1561,7 +1560,7 @@ void Application::HandleVoiceRecordingResult(provisions::VoiceRecorder::Result r
         }
         if (recorder)
             recorder->RequestReplay();
-    } else if (result == Result::Failed && current) {
+    } else if (result == Result::Failed && provisions_physical_press_.IsCurrent(press)) {
         SetDeviceState(kDeviceStateIdle);
         Alert("Couldn't save", "I couldn't save that. Please repeat it.", "cancel", {});
         std::lock_guard<std::mutex> lock(provisions_recording_control_mutex_);
@@ -1819,23 +1818,56 @@ void Application::HandleProvisionsGatewayMaintenance() {
 void Application::ToggleChatState() { xEventGroupSetBits(event_group_, MAIN_EVENT_TOGGLE_CHAT); }
 
 void Application::StartListening() {
-#if CONFIG_PROVISIONS_LOCAL_CAPTURE
-    std::lock_guard<std::mutex> lock(provisions_recording_control_mutex_);
-#endif
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-    // Fence reply callbacks immediately, including a press/release pair that
-    // reaches the main task together. The protocol pointer is main-task owned.
     if (!provisions_physical_press_.Begin()) {
         manual_listening_requested_.store(false, std::memory_order_release);
         return;
     }
     manual_listening_requested_.store(true, std::memory_order_release);
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    // ESP_TIMER_TASK owns the physical callback. Only atomic fences and an
+    // event bit belong here; recorder, codec, protocol and locks run on main.
+    audio_service_.FenceLocalRecording(provisions_physical_press_.id());
+#endif
+#endif
+    xEventGroupSetBits(event_group_, MAIN_EVENT_START_LISTENING);
+}
+
+void Application::StopListening() {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    manual_listening_requested_.store(false, std::memory_order_release);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    // Close sample eligibility at the physical edge. Persistence and queue
+    // cleanup are deferred without admitting a post-release microphone read.
+    audio_service_.ReleaseLocalRecordingFence(provisions_physical_press_.id());
+#else
+    audio_service_.CloseVoiceUploadGate();
+#endif
+#endif
+    xEventGroupSetBits(event_group_, MAIN_EVENT_STOP_LISTENING);
+}
+
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+bool Application::BeginLocalRecordingOnMain() {
+    std::lock_guard<std::mutex> lock(provisions_recording_control_mutex_);
+    const uint32_t press = provisions_physical_press_.id();
+    auto recorder = std::atomic_load(&provisions_recorder_);
+    // Event bits may coalesce down/up/down while main is busy. Freeze the older
+    // admitted capture before considering the current still-held press.
+    if (provisions_recording_started_press_ != 0 &&
+        (provisions_recording_started_press_ != press || !manual_listening_requested_.load())) {
+        audio_service_.StopLocalRecording(provisions_recording_started_press_);
+        if (recorder)
+            recorder->Release(provisions_recording_started_press_);
+        provisions_recording_started_press_ = 0;
+    }
+    if (!manual_listening_requested_.load())
+        return false;
+    if (provisions_recording_started_press_ == press)
+        return true;
     audio_service_.CancelLocalFeedback();
     if (auto protocol = GetProtocol())
         static_cast<WebsocketProtocol*>(protocol.get())->InterruptStoredRecording();
-    auto recorder = std::atomic_load(&provisions_recorder_);
-    const uint32_t press = provisions_physical_press_.id();
     uint64_t captured_ms = 0;
     if (has_server_time_) {
         timeval now{};
@@ -1843,43 +1875,48 @@ void Application::StartListening() {
             captured_ms = static_cast<uint64_t>(now.tv_sec) * 1000 + now.tv_usec / 1000;
     }
     if (!recorder || !recorder->Begin(press, captured_ms)) {
-        manual_listening_requested_.store(false);
-        provisions_recording_failed_.store(true);
-        Schedule([this, press]() {
-            HandleVoiceRecordingResult(provisions::VoiceRecorder::Result::Failed, press);
-        });
-        return;
+        if (provisions_physical_press_.id() == press && manual_listening_requested_.load()) {
+            provisions_recording_failed_.store(true);
+            Schedule([this, press]() {
+                HandleVoiceRecordingResult(provisions::VoiceRecorder::Result::Failed, press);
+            });
+        }
+        return false;
     }
+    provisions_recording_started_press_ = press;
     provisions_recording_failed_.store(false);
     provisions_recording_saving_.store(false);
     provisions_recording_local_.store(false);
-    audio_service_.StartLocalRecording(press);
-#endif
-#endif
-    xEventGroupSetBits(event_group_, MAIN_EVENT_START_LISTENING);
-}
-
-void Application::StopListening() {
-#if CONFIG_PROVISIONS_LOCAL_CAPTURE
-    std::lock_guard<std::mutex> lock(provisions_recording_control_mutex_);
-#endif
-#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-    // The physical button callback is the upload boundary. Do not wait for the
-    // main task to process MAIN_EVENT_STOP_LISTENING before closing it.
-    manual_listening_requested_.store(false, std::memory_order_release);
-#if CONFIG_PROVISIONS_LOCAL_CAPTURE
-    audio_service_.StopLocalRecording();
-    if (auto recorder = std::atomic_load(&provisions_recorder_)) {
-        provisions_recording_saving_.store(!provisions_recording_failed_.load());
-        recorder->Release(provisions_physical_press_.id());
+    // A timer callback may have closed or replaced the press while Begin ran.
+    if (manual_listening_requested_.load() && provisions_physical_press_.id() == press)
+        audio_service_.StartLocalRecording(press);
+    if (!manual_listening_requested_.load() || provisions_physical_press_.id() != press) {
+        audio_service_.StopLocalRecording(press);
+        recorder->Release(press);
+        provisions_recording_started_press_ = 0;
+        return false;
     }
-#endif
-    audio_service_.CloseVoiceUploadGate();
-#endif
-    xEventGroupSetBits(event_group_, MAIN_EVENT_STOP_LISTENING);
+    return true;
 }
 
-#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+void Application::EndLocalRecordingOnMain() {
+    std::lock_guard<std::mutex> lock(provisions_recording_control_mutex_);
+    if (manual_listening_requested_.load())
+        return;  // An older stop event cannot close the newer still-held press.
+    const uint32_t press = provisions_physical_press_.id();
+    const uint32_t started = provisions_recording_started_press_;
+    audio_service_.StopLocalRecording();
+    if (started != 0) {
+        if (auto recorder = std::atomic_load(&provisions_recorder_))
+            recorder->Release(started);
+        provisions_recording_saving_.store(!provisions_recording_failed_.load());
+    }
+    provisions_recording_started_press_ = 0;
+    audio_service_.CloseVoiceUploadGate();
+    audio_service_.ResetDecoder();
+    audio_service_.ReconcileLocalRecording(press);
+}
+
 void Application::RetrySavedVoiceRecording() {
     if (manual_listening_requested_.load() || GetDeviceState() != kDeviceStateIdle ||
         provisions_network_busy_.load() || provisions_response_pending_.load())
@@ -1984,15 +2021,15 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
 
 void Application::HandleStartListeningEvent() {
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
-    // Even a press/release coalesced into one main-loop iteration interrupts
-    // the previous playback; recording already followed the physical edges.
+    // Physical atomics already revoked old output and closed released input.
+    // Perform the heavy work here, outside the button's ESP_TIMER_TASK stack.
     AbortSpeaking(kAbortReasonNone);
-    if (manual_listening_requested_.load()) {
+    Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+    if (BeginLocalRecordingOnMain() && manual_listening_requested_.load()) {
         if (GetDeviceState() == kDeviceStateNotifying)
             StopNotification();
         audio_service_.EnableVoiceProcessing(false);
         audio_service_.EnableWakeWordDetection(false);
-        Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
         listening_mode_ = kListeningModeManualStop;
         SetDeviceState(kDeviceStateListening);
     }
@@ -2056,6 +2093,7 @@ void Application::HandleStartListeningEvent() {
 
 void Application::HandleStopListeningEvent() {
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    EndLocalRecordingOnMain();
     if (!manual_listening_requested_.load()) {
         audio_service_.EnableVoiceProcessing(false);
         SetDeviceState(kDeviceStateIdle);

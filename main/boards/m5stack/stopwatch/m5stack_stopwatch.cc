@@ -300,10 +300,7 @@ private:
 
     void InitializeButtons() {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-        button1_.OnPressDown([this]() {
-            ResetDisplayIdleTimer();
-            Application::GetInstance().StartListening();
-        });
+        button1_.OnPressDown([]() { Application::GetInstance().StartListening(); });
         button1_.OnPressUp([]() { Application::GetInstance().StopListening(); });
 
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE

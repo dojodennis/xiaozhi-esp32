@@ -24,6 +24,8 @@ class LocalCaptureIntegrationReview(unittest.TestCase):
         handlers = "\n".join(method(source, signature) for signature in (
             "void Application::StartListening()",
             "void Application::StopListening()",
+            "bool Application::BeginLocalRecordingOnMain()",
+            "void Application::EndLocalRecordingOnMain()",
             "void Application::HandleVoiceRecordingResult(",
         ))
         program = r'''
@@ -85,6 +87,10 @@ struct AudioService {
     void StartLocalRecording(uint32_t press){assert(pending.empty());mic=press;}
     void StopLocalRecording(uint32_t expected=0){if(expected==0||mic==expected)mic=0;}
     void CloseVoiceUploadGate(){}
+    void FenceLocalRecording(uint32_t){mic=0;}
+    void ReleaseLocalRecordingFence(uint32_t){mic=0;}
+    void ResetDecoder(){pending.clear();}
+    void ReconcileLocalRecording(uint32_t){}
     bool PlayLocalFeedback(std::string_view sound){
         assert(mic==0);if(on_play)on_play();if(!allow_feedback)return false;
         ++playing;pending=std::string(sound);feedback.emplace_back(sound);return true;
@@ -109,6 +115,10 @@ struct Application {
     void Alert(const char* status,const char* text,const char*,std::string_view sound){
         alert_status=status;alert_text=text;alert_sound=std::string(sound);
     }
+    uint32_t provisions_recording_started_press_=0;
+    bool BeginLocalRecordingOnMain();void EndLocalRecordingOnMain();
+    void StartAndRun(){StartListening();BeginLocalRecordingOnMain();}
+    void StopAndRun(){StopListening();EndLocalRecordingOnMain();}
     void StartListening();void StopListening();
     void HandleVoiceRecordingResult(provisions::VoiceRecorder::Result,uint32_t);
 };
@@ -126,9 +136,9 @@ int main(){
         app.provisions_recorder_->before_begin=[&]{
             assert(app.audio_service_.cancels==1&&app.audio_service_.pending.empty());
         };
-        app.StartListening();app.provisions_recorder_->before_begin={};
+        app.StartAndRun();app.provisions_recorder_->before_begin={};
         assert(app.audio_service_.mic==1&&app.audio_service_.feedback.empty());
-        app.StopListening();assert(app.audio_service_.feedback.empty()&&app.provisions_recording_saving_);
+        app.StopAndRun();assert(app.audio_service_.feedback.empty()&&app.provisions_recording_saving_);
         app.HandleVoiceRecordingResult(Result::ContextReady,0);
         assert(app.audio_service_.feedback.empty()); // No success without a Saved result.
         app.HandleVoiceRecordingResult(Result::Saved,1);
@@ -138,7 +148,7 @@ int main(){
         if(!online)assert(Board::GetInstance().display.text==provisions::feedback::kSaved);
         app.HandleVoiceRecordingResult(Result::Synced,1);
         assert(!app.provisions_recording_local_&&app.audio_service_.feedback.size()==1);
-        app.StartListening();assert(app.audio_service_.pending.empty()&&app.audio_service_.mic==2);
+        app.StartAndRun();assert(app.audio_service_.pending.empty()&&app.audio_service_.mic==2);
         app.HandleVoiceRecordingResult(Result::Saved,1);
         app.HandleVoiceRecordingResult(Result::Failed,1);
         assert(app.audio_service_.mic==2&&app.manual_listening_requested_&&app.audio_service_.feedback.size()==1);
@@ -147,48 +157,50 @@ int main(){
     }
     {
         Application app;app.provisions_recorder_->allow_begin=false;app.audio_service_.pending="old cue";
-        app.StartListening();assert(app.audio_service_.pending.empty()&&app.audio_service_.mic==0);
-        assert(app.scheduled.size()==1&&!app.manual_listening_requested_&&app.provisions_recording_failed_);
-        assert(app.audio_service_.feedback.empty());app.Drain();
+        app.StartAndRun();assert(app.audio_service_.pending.empty()&&app.audio_service_.mic==0);
+        assert(app.scheduled.size()==1&&app.manual_listening_requested_&&app.provisions_recording_failed_);
+        assert(app.audio_service_.feedback.empty());app.StopAndRun();app.Drain();
         assert(app.alert_status=="Couldn't save"&&app.alert_text==provisions::feedback::kFailed);
         assert(app.alert_sound.empty()&&app.audio_service_.feedback.size()==1);
         assert(app.audio_service_.feedback.back()==provisions::feedback::kFailed);
         assert(app.provisions_recorder_->replays==0&&!app.provisions_recording_local_);
     }
     {
-        Application app;app.StartListening();
+        Application app;app.StartAndRun();
         app.HandleVoiceRecordingResult(Result::Failed,1);
-        assert(app.audio_service_.mic==0&&!app.manual_listening_requested_);
-        assert(app.provisions_recording_failed_&&app.audio_service_.feedback.back()==provisions::feedback::kFailed);
-        app.StartListening();assert(app.audio_service_.mic==2&&app.audio_service_.pending.empty());
+        assert(app.audio_service_.mic==0&&app.manual_listening_requested_);
+        assert(app.provisions_recording_failed_&&app.audio_service_.feedback.empty());
+        app.StopAndRun();
+        app.StartAndRun();assert(app.audio_service_.mic==2&&app.audio_service_.pending.empty());
     }
     {
-        Application app;app.provisions_recorder_->allow_begin=false;app.StartListening();
-        app.provisions_recorder_->allow_begin=true;app.StartListening();app.Drain();
+        Application app;app.provisions_recorder_->allow_begin=false;app.StartAndRun();
+        app.provisions_recorder_->allow_begin=true;app.StartAndRun();app.Drain();
         assert(app.audio_service_.mic==2&&app.manual_listening_requested_);
         assert(app.audio_service_.feedback.empty()&&app.alert_text.empty()); // Failed prior Begin cannot interrupt its successor.
     }
     {
-        Application app;app.StartListening();app.StopListening();
+        Application app;app.StartAndRun();app.StopAndRun();
         app.protocol->before_open=[&]{app.StartListening();};
         app.HandleVoiceRecordingResult(Result::Saved,1);
+        app.BeginLocalRecordingOnMain();
         assert(app.audio_service_.mic==2&&app.manual_listening_requested_);
         assert(app.audio_service_.feedback.empty()&&Board::GetInstance().display.text.empty());
     }
     {
-        Application app;app.StartListening();app.StopListening();app.audio_service_.allow_feedback=false;
+        Application app;app.StartAndRun();app.StopAndRun();app.audio_service_.allow_feedback=false;
         app.HandleVoiceRecordingResult(Result::Saved,1);
         assert(app.provisions_recording_local_&&app.provisions_recorder_->replays==1);
         assert(app.audio_service_.feedback.empty()&&Board::GetInstance().display.text.empty());
     }
     {
-        Application app;app.StartListening();app.StopListening();
+        Application app;app.StartAndRun();app.StopAndRun();
         Signal enqueuing,finish_enqueue,press_attempted;std::atomic<bool> press_finished{false};
         app.audio_service_.on_play=[&]{enqueuing.Send();finish_enqueue.Wait();};
         std::thread result([&]{app.HandleVoiceRecordingResult(Result::Saved,1);});enqueuing.Wait();
-        std::thread press([&]{press_attempted.Send();app.StartListening();press_finished=true;});
+        std::thread press([&]{press_attempted.Send();app.StartAndRun();press_finished=true;});
         press_attempted.Wait();std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        assert(!press_finished); // Enqueue and Cancel/Begin share the physical control gate.
+        assert(!press_finished); // Main-task Cancel/Begin shares the result gate; the timer edge itself does not.
         finish_enqueue.Send();result.join();press.join();
         assert(app.audio_service_.mic==2&&app.audio_service_.pending.empty());
         assert(app.manual_listening_requested_&&app.provisions_recorder_->begun==2);
@@ -328,9 +340,14 @@ int main(){
         header = (ROOT / "main/application.h").read_text()
         handlers = "\n".join(method(application, f"void Application::{name}()")
                              for name in ("StartListening", "StopListening"))
+        handlers += "\n" + method(application, "bool Application::BeginLocalRecordingOnMain()")
+        handlers += "\n" + method(application, "void Application::EndLocalRecordingOnMain()")
         audio_handlers = "\n".join(method(audio, signature) for signature in (
             "void AudioService::StartLocalRecording(uint32_t press)",
             "void AudioService::StopLocalRecording(uint32_t expected_press)",
+            "void AudioService::FenceLocalRecording(",
+            "void AudioService::ReleaseLocalRecordingFence(",
+            "void AudioService::ReconcileLocalRecording(",
         ))
         import re
         mutexes = "\n".join(re.findall(r"std::mutex\s+\w+_;", header))
@@ -379,9 +396,11 @@ struct AudioService {
     std::condition_variable audio_queue_cv_;
     std::vector<int> audio_decode_queue_,audio_playback_queue_,local_feedback_;
     uint32_t playback_generation_=0;bool local_feedback_active_=false;
-    std::atomic<uint32_t> local_recording_press_{0},local_prepared_press_{0};
+    std::atomic<uint32_t> local_recording_press_{0},local_prepared_press_{0},local_physical_boundary_{0},local_output_boundary_{0};
     std::atomic<bool> service_stopped_{false};int event_group_=0;
     void StartLocalRecording(uint32_t);void StopLocalRecording(uint32_t expected_press=0);
+    void FenceLocalRecording(uint32_t);void ReleaseLocalRecordingFence(uint32_t);void ReconcileLocalRecording(uint32_t);
+    void ResetDecoder(){}
     void CloseVoiceUploadGate(){}
     void CancelLocalFeedback(){}
 };
@@ -400,16 +419,43 @@ struct Application {
 ''' + mutexes + r'''
     void Schedule(std::function<void()>){ }
     void HandleVoiceRecordingResult(provisions::VoiceRecorder::Result,uint32_t){}
+    uint32_t provisions_recording_started_press_=0;
+    bool BeginLocalRecordingOnMain();void EndLocalRecordingOnMain();
+    void StartAndRun(){StartListening();BeginLocalRecordingOnMain();}
+    void StopAndRun(){StopListening();EndLocalRecordingOnMain();}
     void StartListening();void StopListening();
 };
 ''' + audio_handlers + "\n" + handlers + r'''
 int main(){
     for(bool start_new:{false,true}) {
+        Application app;unsigned begins=0;
+        app.provisions_recorder_->after_begin=[&](uint32_t press){++begins;assert(press==2);};
+        app.StartListening();app.StopListening();if(start_new)app.StartListening();
+        assert(begins==0&&app.audio_service_.local_recording_press_==0);
+        app.BeginLocalRecordingOnMain();app.EndLocalRecordingOnMain();
+        assert(begins==(start_new?1U:0U));
+        assert(app.protocol_->interruptions==(start_new?1U:0U));
+        if(start_new){
+            assert(app.manual_listening_requested_&&app.audio_service_.local_recording_press_==2);
+            assert(app.provisions_recorder_->core.IsRecording(2)); // Coalesced old STOP did not close press 2.
+            app.BeginLocalRecordingOnMain();assert(begins==1); // Duplicate START is idempotent.
+            app.StopListening();app.EndLocalRecordingOnMain();
+            assert(!app.provisions_recorder_->core.IsRecording(2));
+        } else {
+            assert(!app.manual_listening_requested_&&app.provisions_recording_started_press_==0);
+            assert(!app.provisions_recorder_->core.IsRecording(1)); // Complete tap never opened the recorder.
+        }
+    }
+    for(bool start_new:{false,true}) {
         Application app;Latch begin_entered,begin_release,second_started,second_finished;
         app.provisions_recorder_->after_begin=[&](uint32_t press){if(press==1){begin_entered.signal();begin_release.wait();}};
-        std::thread first([&]{app.StartListening();});begin_entered.wait();
+        std::thread first([&]{app.StartAndRun();});begin_entered.wait();
         std::thread second([&]{second_started.signal();app.StopListening();if(start_new)app.StartListening();second_finished.signal();});
-        second_started.wait();second_finished.wait_briefly();begin_release.signal();first.join();second.join();
+        second_started.wait();second_finished.wait_briefly();
+        assert(second_finished.set); // Both timer callbacks return while Begin is blocked.
+        assert(app.audio_service_.local_recording_press_.load()==0);
+        begin_release.signal();first.join();second.join();
+        app.BeginLocalRecordingOnMain();app.EndLocalRecordingOnMain();
         if(start_new) {
             assert(app.protocol_->interruptions==2);
             assert(app.manual_listening_requested_.load());
