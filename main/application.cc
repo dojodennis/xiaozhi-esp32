@@ -1470,8 +1470,10 @@ const char* Application::GetProvisionsIdleStatus() const {
     if (auto recorder = std::atomic_load(&provisions_recorder_)) {
         if (!recorder->IsReady() || !recorder->HasContext())
             return "Capture unavailable";
+        if (recorder->RetryPending())
+            return "Retry queued";
         if (recorder->NeedsAttention())
-            return "Check recordings";
+            return recorder->CanRetry() ? "Hold blue to retry" : "Recording kept";
         if (recorder->PendingCount() > 0)
             return "Saved on Orbit";
     }
@@ -1548,7 +1550,13 @@ void Application::HandleVoiceRecordingResult(provisions::VoiceRecorder::Result r
             audio_service_.PlayLocalFeedback(provisions::feedback::kFailed);
     } else if (result == Result::NeedsAttention && !manual_listening_requested_.load()) {
         Board::GetInstance().GetDisplay()->SetChatMessage(
-            "system", "Recording kept on Orbit. Check recordings.");
+            "system", recorder && recorder->CanRetry() ? "Recording kept. Hold blue to retry."
+                                                       : "Recording kept. Speech needs attention.");
+    } else if ((result == Result::RetryQueued || result == Result::RetryUnavailable) &&
+               !manual_listening_requested_.load() && GetDeviceState() == kDeviceStateIdle) {
+        Board::GetInstance().GetDisplay()->SetChatMessage(
+            "system", result == Result::RetryQueued ? "Retry queued. Recording stays saved."
+                                                    : "Recording kept. Retry unavailable.");
     }
     if (GetDeviceState() == kDeviceStateIdle)
         Board::GetInstance().GetDisplay()->SetStatus(GetProvisionsIdleStatus());
@@ -1851,6 +1859,29 @@ void Application::StopListening() {
 #endif
     xEventGroupSetBits(event_group_, MAIN_EVENT_STOP_LISTENING);
 }
+
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+void Application::RetrySavedVoiceRecording() {
+    if (manual_listening_requested_.load() || GetDeviceState() != kDeviceStateIdle ||
+        provisions_network_busy_.load() || provisions_response_pending_.load())
+        return;
+    auto display = Board::GetInstance().GetDisplay();
+    auto protocol = GetProtocol();
+    if (!protocol || !protocol->IsAudioChannelOpened()) {
+        provisions_reconnect_attempts_ = 0;
+        provisions_reconnect_wait_ticks_ = 0;
+        ReconnectVoiceGateway();
+        display->SetChatMessage("system", "Connecting. Hold blue again to retry.");
+        return;
+    }
+    auto recorder = std::atomic_load(&provisions_recorder_);
+    if (!recorder || !recorder->RequestRetry()) {
+        display->SetChatMessage("system", "No saved recording is ready to retry.");
+        return;
+    }
+    display->SetChatMessage("system", "Retry queued. Recording stays saved.");
+}
+#endif
 
 void Application::HandleToggleChatEvent() {
     auto state = GetDeviceState();

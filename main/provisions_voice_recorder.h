@@ -18,7 +18,8 @@ struct VoiceReplay {
     size_t bytes = 0;
     uint8_t* frames = nullptr;
     std::array<uint8_t, 32> digest{};
-    uint32_t press = 0;  // Zero after a restart: replay must stay silent.
+    uint32_t press = 0;     // Zero after a restart: replay must stay silent.
+    VoiceId retry_token{};  // Only an explicit retry offers the server challenge.
     ~VoiceReplay();
 };
 struct VoiceCaptureReceipt {
@@ -27,6 +28,8 @@ struct VoiceCaptureReceipt {
     std::array<uint8_t, 32> digest{};
     bool durable = false;
     bool needs_attention = false;
+    VoiceId retry_token{};
+    bool retry_used = false;
 };
 
 // The button and input callbacks only copy bounded PCM/control state. This one
@@ -34,7 +37,15 @@ struct VoiceCaptureReceipt {
 // consumes an immutable replay buffer elsewhere and cannot delay local saves.
 class VoiceRecorder {
 public:
-    enum class Result { Saved, Failed, NeedsAttention, Synced, ContextReady };
+    enum class Result {
+        Saved,
+        Failed,
+        NeedsAttention,
+        Synced,
+        ContextReady,
+        RetryQueued,
+        RetryUnavailable
+    };
     using Notify = std::function<void(Result, uint32_t)>;
     using ReplayReady = std::function<void(std::shared_ptr<const VoiceReplay>)>;
     VoiceRecorder() = default;
@@ -50,11 +61,14 @@ public:
     void Fail(uint32_t press);
     void Release(uint32_t press);
     void RequestReplay();
+    bool RequestRetry();
     bool Acknowledge(const VoiceCaptureReceipt& receipt);
     bool HasContext() const { return has_context_.load(); }
     bool IsReady() const { return storage_ready_.load(); }
     unsigned PendingCount() const { return pending_count_.load(); }
     bool NeedsAttention() const { return needs_attention_.load(); }
+    bool CanRetry() const { return can_retry_.load(); }
+    bool RetryPending() const { return retry_pending_count_.load() != 0; }
 
 private:
     std::array<int16_t*, VoiceRecording::kBufferCount> pcm_{};
@@ -71,6 +85,8 @@ private:
     std::atomic<bool> has_context_{false};
     std::atomic<unsigned> pending_count_{0};
     std::atomic<bool> needs_attention_{false};
+    std::atomic<bool> can_retry_{false};
+    std::atomic<unsigned> retry_pending_count_{0};
     std::mutex mutex_;
     std::condition_variable context_cv_;
     VoiceContext context_{};
@@ -83,12 +99,17 @@ private:
     bool allow_key_creation_ = false;
     bool retry_storage_ = false;
     bool replay_requested_ = false;
+    bool repair_requested_ = false;
+    VoiceId repair_conversation_id_{};
     std::array<VoiceCaptureReceipt, VoiceOutbox::kSlots> receipts_{};
     size_t receipt_count_ = 0;
     std::array<uint32_t, VoiceOutbox::kSlots> presses_{};
     std::array<int64_t, VoiceOutbox::kSlots> retry_after_{};
     std::array<bool, VoiceOutbox::kSlots> attention_{};
     std::array<bool, VoiceOutbox::kSlots> offered_{};
+    std::array<VoiceId, VoiceOutbox::kSlots> retry_tokens_{};
+    std::array<bool, VoiceOutbox::kSlots> retry_used_{};
+    std::array<bool, VoiceOutbox::kSlots> retry_pending_{};
     void Wake();
     void Run();
     bool LoadContext(VoiceContext& context, bool committed = true);
@@ -96,6 +117,7 @@ private:
     bool Encode(const VoiceRecording::Work& work, VoiceCapture& capture, size_t& bytes);
     void Save(const VoiceRecording::Work& work);
     void PrepareReplay();
+    bool PrepareRetry(const VoiceId& conversation_id);
     void ApplyReceipt(const VoiceCaptureReceipt& receipt);
     void RefreshCount();
 };

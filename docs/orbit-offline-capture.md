@@ -113,6 +113,29 @@ Stop, decoder reset and normal drain clear feedback state. A provider
 transcription check on both encoded clips recovered the expected wording; this
 is a software asset check, not microphone/speaker acceptance.
 
+## Retry a held recording
+
+When three automatic speech attempts fail, the recording stays in its encrypted
+slot. A negotiated retry challenge changes the idle hint to "Hold blue to retry".
+Holding blue while idle queues the oldest eligible recording from the current
+assignment. A short blue click still changes volume. Talk, active narration and
+network work take precedence; an offline blue hold reconnects and asks for a
+second hold after connection, without inventing a retry gesture.
+
+The worker freezes the assignment at the gesture, validates the original record,
+and sends its unchanged IDs, context, audio and challenge as a silent deferred
+upload. The backend consumes that challenge once for three extra STT attempts,
+six lifetime attempts total. Reconnection or a lost acknowledgement reuses the
+same challenge; neither opens another budget nor restores business confirmation.
+A restart can reconcile server state but cannot invent a new manual retry.
+
+Receipts must match the complete recording and digest before updating retry
+state or deleting audio. Old receipts cannot reopen consumed retries or affect
+a reused slot. Exhausted, corrupt or unavailable recordings stay held; the idle
+hint becomes "Recording kept". Older gateways send the existing receipt format
+and cannot offer this control. New firmware advertises `audio_retry` alongside
+`audio_capture`; the gateway explicitly negotiates the extension.
+
 ## Validation and activation boundary
 
 The host suite compiles the actual journal, ESP adapter, PCM ownership and wire
@@ -121,9 +144,12 @@ restart, interrupted writes, corrupt/full storage, exact metadata, stale receipt
 nonce faults and rapid press/release interleavings. The canonical ESP-IDF 6.0.2
 StopWatch bench profile builds, including both WebSocket and MQTT protocol code.
 
-This candidate has not been installed. The remaining release work is the
-recording-repair experience, coordinated gateway/backend activation, and
-physical acceptance.
+Actual-worker, wire and blue-button tests also cover lost acknowledgements,
+assignment changes before queued work, restart, old tokens, oldest selection,
+deferred-only retries and Talk/reconnect guards.
+
+This candidate has not been installed. Coordinated gateway/backend activation
+and physical acceptance remain.
 The device must demonstrate real microphone
 recognition and speaker clarity, power loss at each save/cache boundary, full
 storage, repeated presses during reconnection, restart replay, and truthful

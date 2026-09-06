@@ -305,6 +305,15 @@ private:
         });
         button1_.OnPressUp([]() { Application::GetInstance().StopListening(); });
 
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        button2_.OnLongPress([this]() {
+            ResetDisplayIdleTimer();
+            Application::GetInstance().Schedule([]() {
+                Application::GetInstance().RetrySavedVoiceRecording();
+            });
+        });
+#endif
+
         // Keep the second button useful without adding a menu or allowing an
         // accidental mute. It toggles only between the pilot floor and max.
         button2_.OnClick([this]() {

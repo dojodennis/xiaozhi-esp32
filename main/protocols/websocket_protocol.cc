@@ -488,6 +488,7 @@ std::string WebsocketProtocol::GetHelloMessage() {
     cJSON_AddBoolToObject(features, "turn_ids", true);
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
     cJSON_AddBoolToObject(features, "audio_capture", true);
+    cJSON_AddBoolToObject(features, "audio_retry", true);
 #endif
 #else
     cJSON_AddBoolToObject(features, "mcp", true);

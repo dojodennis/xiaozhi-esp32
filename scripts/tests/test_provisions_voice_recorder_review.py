@@ -88,11 +88,12 @@ TestTask* task=nullptr;
 thread_local TestTask* current_task=nullptr;
 std::atomic<int64_t> clock_us{0};
 std::vector<std::pair<VoiceRecorder::Result,uint32_t>> notices;
-struct Offered {VoiceCaptureReceipt receipt;uint32_t press;size_t slot;};
+struct Offered {VoiceCaptureReceipt receipt;uint32_t press;size_t slot;VoiceId retry_token;};
 std::vector<Offered> offered;
 std::shared_ptr<const VoiceReplay> held;
 bool hold_replay=false;
 bool fail_encoder=false;
+bool pause_worker=false;
 int xTaskCreate(void(*function)(void*),const char*,unsigned,void* argument,unsigned,TaskHandle_t* handle) {
     assert(!task);task=new TestTask;*handle=task;
     task->thread=std::thread([=]{current_task=task;function(argument);});return pdPASS;
@@ -103,7 +104,7 @@ void xTaskNotifyGive(TaskHandle_t value) {
 unsigned ulTaskNotifyTake(int clear,unsigned) {
     auto* value=current_task;assert(value);
     std::unique_lock<std::mutex> lock(value->mutex);value->waiting=true;value->changed.notify_all();
-    value->changed.wait(lock,[&]{return value->notifications>0;});value->waiting=false;
+    value->changed.wait(lock,[&]{return value->notifications>0&&!pause_worker;});value->waiting=false;
     const auto count=value->notifications;if(clear)value->notifications=0;else --value->notifications;
     return count;
 }
@@ -139,7 +140,7 @@ void initialize(VoiceRecorder& recorder) {
     assert(recorder.Start([](auto result,uint32_t press){notices.emplace_back(result,press);},
         [](auto replay){
             VoiceCaptureReceipt receipt;receipt.capture=replay->capture;receipt.bytes=replay->bytes;
-            receipt.digest=replay->digest;offered.push_back({receipt,replay->press,replay->slot});
+            receipt.digest=replay->digest;offered.push_back({receipt,replay->press,replay->slot,replay->retry_token});
             if(hold_replay)held=replay;
         }));
     drain();
@@ -302,7 +303,89 @@ void context_cases() {
     join();
     std::cout<<"Two-phase context prepare/activate, failed writes, bounded repair and reboot cases passed\n";
 }
-int main(){normal_cases();context_cases();}
+
+VoiceCaptureReceipt challenge(VoiceCaptureReceipt receipt,uint8_t token=91,bool used=false,bool attention=true) {
+    receipt.durable=false;receipt.needs_attention=attention;receipt.retry_token={};receipt.retry_token[0]=token;receipt.retry_used=used;return receipt;
+}
+void explicit_retry_cases() {
+    fresh();VoiceCaptureReceipt original;
+    {
+        VoiceRecorder recorder;initialize(recorder);authorize(recorder);record(recorder,1);replay(recorder);
+        original=offered.back().receipt;assert(offered.back().retry_token==VoiceId{});
+        assert(!recorder.RequestRetry()&&!recorder.CanRetry()&&!recorder.RetryPending());
+        auto forged=challenge(original);forged.digest[0]^=1;acknowledge(recorder,forged);
+        assert(!recorder.CanRetry()&&!recorder.NeedsAttention());
+        auto no_challenge=original;no_challenge.needs_attention=true;acknowledge(recorder,no_challenge);
+        assert(recorder.NeedsAttention()&&!recorder.CanRetry()&&!recorder.RequestRetry());
+        acknowledge(recorder,challenge(original));assert(recorder.CanRetry()&&!recorder.RetryPending());
+        clock_us=30000000;replay(recorder);assert(offered.size()==1); // A received challenge is never authorization.
+        assert(recorder.RequestRetry());drain();assert(recorder.RetryPending()&&!recorder.CanRetry());
+        assert(offered.size()==2&&offered.back().press==0&&offered.back().retry_token[0]==91);
+        assert(offered.back().receipt.capture.request_id==original.capture.request_id);
+        replay(recorder);assert(offered.size()==2);clock_us=60000000;replay(recorder);
+        assert(offered.size()==3&&offered.back().press==0&&offered.back().retry_token[0]==91); // Lost acknowledgement retries same nonce.
+        acknowledge(recorder,challenge(original,92,true,false));assert(recorder.RetryPending());
+        acknowledge(recorder,challenge(original,91,true,false));assert(!recorder.RetryPending()&&!recorder.CanRetry()&&!recorder.NeedsAttention());
+        acknowledge(recorder,challenge(original));assert(!recorder.RetryPending()&&!recorder.NeedsAttention()); // Delayed unused challenge is fenced.
+        clock_us=90000000;replay(recorder);assert(offered.size()==4&&offered.back().retry_token==VoiceId{}&&offered.back().press==0);
+        acknowledge(recorder,challenge(original,91,true,true));assert(recorder.NeedsAttention()&&!recorder.CanRetry()&&!recorder.RequestRetry());
+        clock_us=120000000;replay(recorder);assert(offered.size()==4); // No endless exhausted retry.
+        auto durable=original;durable.durable=true;acknowledge(recorder,durable);assert(recorder.PendingCount()==0&&!recorder.RetryPending());
+        record(recorder,2);replay(recorder);auto second=offered.back().receipt;assert(second.capture.request_id!=original.capture.request_id);
+        acknowledge(recorder,challenge(original));assert(!recorder.CanRetry()); // Reused slot cannot inherit an older capture's challenge.
+        acknowledge(recorder,challenge(second,92));assert(recorder.CanRetry());assert(recorder.RequestRetry());drain();
+        assert(offered.back().retry_token[0]==92&&offered.back().press==0);
+    }
+    join();
+    // A queued local gesture is not reconstructed on reboot. The first server
+    // receipt either reports its spent nonce or offers a fresh explicit gesture.
+    {
+        VoiceRecorder recorder;initialize(recorder);assert(!recorder.CanRetry()&&!recorder.RetryPending());
+        replay(recorder);assert(offered.back().retry_token==VoiceId{}&&offered.back().press==0);
+        auto receipt=offered.back().receipt;acknowledge(recorder,challenge(receipt,92,true,true));
+        assert(recorder.NeedsAttention()&&!recorder.CanRetry()&&!recorder.RequestRetry());
+    }
+    join();
+    fresh();
+    {
+        VoiceRecorder recorder;initialize(recorder);authorize(recorder);
+        record(recorder,1);replay(recorder);auto first=offered.back().receipt;
+        acknowledge(recorder,challenge(first));
+        record(recorder,2);replay(recorder);auto second=offered.back().receipt;
+        assert(second.capture.request_id!=first.capture.request_id);acknowledge(recorder,challenge(second,92));
+        assert(recorder.RequestRetry());drain();assert(offered.back().receipt.capture.request_id==first.capture.request_id&&offered.back().retry_token[0]==91);
+        const auto count=offered.size();authorize(recorder,context(43));
+        assert(!recorder.CanRetry()&&!recorder.RetryPending()&&!recorder.RequestRetry());
+        clock_us=60000000;replay(recorder);assert(offered.size()==count&&recorder.PendingCount()==2);
+    }
+    join();
+    std::cout<<"Explicit retry challenge, exact capture, same-nonce retransmission, stale receipt, slot reuse, restart and scope cases passed\n";
+}
+
+
+void queued_retry_scope_case() {
+    fresh();
+    {
+        VoiceRecorder recorder;initialize(recorder);authorize(recorder);record(recorder,1);replay(recorder);
+        auto first=offered.back().receipt;acknowledge(recorder,challenge(first));
+        authorize(recorder,context(43));record(recorder,2);replay(recorder);
+        auto second=offered.back().receipt;acknowledge(recorder,challenge(second,92));
+        authorize(recorder,context());assert(recorder.CanRetry());
+        assert(recorder.PrepareContext(context(43)));drain();
+        const auto before=offered.size();
+        {std::lock_guard<std::mutex> lock(task->mutex);pause_worker=true;}
+        assert(recorder.RequestRetry()); // Captures assignment42 on the caller.
+        assert(recorder.ActivateContext(context(43)));
+        {std::lock_guard<std::mutex> lock(task->mutex);pause_worker=false;task->changed.notify_all();}
+        drain();
+        assert(offered.size()==before&&!recorder.RetryPending()&&recorder.CanRetry());
+        assert(notices.back()==std::make_pair(VoiceRecorder::Result::RetryUnavailable,uint32_t(0)));
+        assert(recorder.RequestRetry());drain();assert(offered.back().receipt.capture.request_id==second.capture.request_id&&offered.back().retry_token[0]==92);
+    }
+    join();
+}
+
+int main(){normal_cases();context_cases();explicit_retry_cases();queued_retry_scope_case();}
 '''
 
 

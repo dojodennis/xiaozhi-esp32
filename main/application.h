@@ -114,6 +114,9 @@ public:
      * Sends MAIN_EVENT_STOP_LISTENING to be handled in Run()
      */
     void StopListening();
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    void RetrySavedVoiceRecording();
+#endif
 
     void Reboot();
     void WakeWordInvoke(const std::string& wake_word);

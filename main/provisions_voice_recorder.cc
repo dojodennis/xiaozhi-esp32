@@ -14,6 +14,9 @@ namespace provisions {
 namespace {
 constexpr size_t kContextBytes = 40;
 constexpr int64_t kRetryDelayUs = 30LL * 1000 * 1000;
+bool HasId(const VoiceId& id) {
+    return std::any_of(id.begin(), id.end(), [](uint8_t byte) { return byte != 0; });
+}
 std::array<uint8_t, kContextBytes> ContextBytes(const VoiceContext& context, bool committed) {
     std::array<uint8_t, kContextBytes> data{};
     std::memcpy(data.data(), committed ? "ORC1" : "ORP1", 4);
@@ -168,6 +171,17 @@ void VoiceRecorder::RequestReplay() {
     }
     Wake();
 }
+bool VoiceRecorder::RequestRetry() {
+    if (!CanRetry() || !IsReady() || !HasContext())
+        return false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        repair_requested_ = true;
+        repair_conversation_id_ = context_.conversation_id;
+    }
+    Wake();
+    return true;
+}
 bool VoiceRecorder::Acknowledge(const VoiceCaptureReceipt& receipt) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (receipt_count_ == receipts_.size())
@@ -276,13 +290,22 @@ void VoiceRecorder::Save(const VoiceRecording::Work& work) {
         retry_after_[saved.slot] = 0;
         attention_[saved.slot] = false;
         offered_[saved.slot] = false;
+        retry_tokens_[saved.slot] = {};
+        retry_used_[saved.slot] = retry_pending_[saved.slot] = false;
     }
     RefreshCount();
     notify_(ok ? Result::Saved : Result::Failed, work.press);
 }
 void VoiceRecorder::RefreshCount() {
     unsigned count = 0;
+    unsigned retry_count = 0;
+    bool can_retry = false;
     bool attention = context_write_failed_;
+    VoiceContext context;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        context = context_;
+    }
     if (outbox_.journal()) {
         for (size_t slot = 0; slot < VoiceOutbox::kSlots; ++slot) {
             SavedVoiceCapture saved;
@@ -292,10 +315,49 @@ void VoiceRecorder::RefreshCount() {
             if (result != VoiceStoreResult::Ok && result != VoiceStoreResult::Empty)
                 attention = true;
             attention = attention || attention_[slot];
+            if (result == VoiceStoreResult::Ok &&
+                saved.capture.conversation_id == context.conversation_id) {
+                if (retry_pending_[slot])
+                    ++retry_count;
+                can_retry = can_retry || (attention_[slot] && !retry_used_[slot] &&
+                                          !retry_pending_[slot] && HasId(retry_tokens_[slot]));
+            }
         }
     }
     pending_count_.store(count);
     needs_attention_.store(attention);
+    can_retry_.store(can_retry);
+    retry_pending_count_.store(retry_count);
+}
+bool VoiceRecorder::PrepareRetry(const VoiceId& conversation_id) {
+    if (!outbox_.journal() || !has_context_.load())
+        return false;
+    VoiceContext context;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        context = context_;
+    }
+    if (context.conversation_id != conversation_id)
+        return false;
+    size_t selected = VoiceOutbox::kSlots;
+    uint64_t oldest = UINT64_MAX;
+    for (size_t slot = 0; slot < VoiceOutbox::kSlots; ++slot) {
+        if (!attention_[slot] || retry_used_[slot] || retry_pending_[slot] ||
+            !HasId(retry_tokens_[slot]))
+            continue;
+        SavedVoiceCapture saved;
+        if (outbox_.journal()->Read(slot, saved) == VoiceStoreResult::Ok &&
+            saved.capture.conversation_id == context.conversation_id && saved.sequence < oldest) {
+            selected = slot;
+            oldest = saved.sequence;
+        }
+    }
+    if (selected == VoiceOutbox::kSlots)
+        return false;
+    retry_pending_[selected] = true;
+    retry_after_[selected] = 0;
+    RefreshCount();
+    return true;
 }
 void VoiceRecorder::PrepareReplay() {
     if (!outbox_.journal() || replay_.use_count() != 1 || !has_context_.load())
@@ -308,11 +370,15 @@ void VoiceRecorder::PrepareReplay() {
     size_t selected = VoiceOutbox::kSlots;
     uint64_t oldest = UINT64_MAX;
     for (size_t slot = 0; slot < VoiceOutbox::kSlots; ++slot) {
-        if (attention_[slot] || retry_after_[slot] > esp_timer_get_time())
+        if ((attention_[slot] && !retry_pending_[slot]) ||
+            retry_after_[slot] > esp_timer_get_time())
             continue;
         SavedVoiceCapture saved;
         if (outbox_.journal()->Read(slot, saved) == VoiceStoreResult::Ok &&
-            saved.capture.conversation_id == context.conversation_id && saved.sequence < oldest) {
+            saved.capture.conversation_id == context.conversation_id &&
+            (selected == VoiceOutbox::kSlots ||
+             (retry_pending_[slot] && !retry_pending_[selected]) ||
+             (retry_pending_[slot] == retry_pending_[selected] && saved.sequence < oldest))) {
             selected = slot;
             oldest = saved.sequence;
         }
@@ -324,7 +390,8 @@ void VoiceRecorder::PrepareReplay() {
     replay_->capture = saved.capture;
     replay_->slot = selected;
     replay_->bytes = saved.frames.size;
-    replay_->press = offered_[selected] ? 0 : presses_[selected];
+    replay_->retry_token = retry_pending_[selected] ? retry_tokens_[selected] : VoiceId{};
+    replay_->press = retry_pending_[selected] || offered_[selected] ? 0 : presses_[selected];
     if (!Digest(saved.frames, replay_->digest))
         return;
     std::memcpy(replay_->frames, saved.frames.data, saved.frames.size);
@@ -348,11 +415,26 @@ void VoiceRecorder::ApplyReceipt(const VoiceCaptureReceipt& receipt) {
                                                       receipt.capture.conversation_id) ==
                 VoiceStoreResult::Ok) {
                 attention_[slot] = false;
+                retry_tokens_[slot] = {};
+                retry_used_[slot] = retry_pending_[slot] = false;
                 RefreshCount();
                 notify_(Result::Synced, presses_[slot]);
             }
-        } else if (receipt.needs_attention) {
+        } else if (receipt.retry_used) {
+            if (!HasId(receipt.retry_token) ||
+                (HasId(retry_tokens_[slot]) && retry_tokens_[slot] != receipt.retry_token))
+                return;
+            retry_tokens_[slot] = receipt.retry_token;
+            retry_used_[slot] = true;
+            retry_pending_[slot] = false;
+            attention_[slot] = receipt.needs_attention;
+            RefreshCount();
+            notify_(receipt.needs_attention ? Result::NeedsAttention : Result::RetryQueued, 0);
+        } else if (receipt.needs_attention && !retry_used_[slot]) {
+            if (HasId(retry_tokens_[slot]) && retry_tokens_[slot] != receipt.retry_token)
+                return;
             attention_[slot] = true;
+            retry_tokens_[slot] = receipt.retry_token;
             RefreshCount();
             notify_(Result::NeedsAttention, presses_[slot]);
         }
@@ -380,8 +462,9 @@ void VoiceRecorder::Run() {
     while (!stopping_.load()) {
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
         VoiceContext context;
+        VoiceId repair_conversation;
         bool dirty = false, allow = false, replay = false, retry_storage = false,
-             commit_context = false;
+             commit_context = false, repair = false;
         std::array<VoiceCaptureReceipt, VoiceOutbox::kSlots> receipts;
         size_t count = 0;
         {
@@ -393,6 +476,9 @@ void VoiceRecorder::Run() {
             allow = allow_key_creation_;
             replay = replay_requested_;
             replay_requested_ = false;
+            repair = repair_requested_;
+            repair_conversation = repair_conversation_id_;
+            repair_requested_ = false;
             retry_storage = retry_storage_;
             retry_storage_ = false;
             count = receipt_count_;
@@ -429,6 +515,11 @@ void VoiceRecorder::Run() {
             Save(work);
         for (size_t i = 0; i < count; ++i)
             ApplyReceipt(receipts[i]);
+        if (repair) {
+            const bool queued = PrepareRetry(repair_conversation);
+            notify_(queued ? Result::RetryQueued : Result::RetryUnavailable, 0);
+            replay = replay || queued;
+        }
         if (replay)
             PrepareReplay();
     }

@@ -53,8 +53,9 @@ constexpr std::string_view kSaved="Saved on Orbit. I'll sync when connected.";
 constexpr std::string_view kFailed="I couldn't save that. Please repeat it.";
 }
 struct VoiceRecorder {
-    enum class Result {Saved,Failed,NeedsAttention,Synced,ContextReady};
+    enum class Result {Saved,Failed,NeedsAttention,Synced,ContextReady,RetryQueued,RetryUnavailable};
     bool allow_begin=true;unsigned begun=0,released=0,replays=0;
+    bool CanRetry() const {return false;}
     std::function<void()> before_begin;
     bool Begin(uint32_t press,uint64_t){if(before_begin)before_begin();if(!allow_begin)return false;begun=press;return true;}
     void Release(uint32_t press){released=press;}
@@ -663,6 +664,7 @@ struct Recorder {
     bool ready=false,context=false,attention=false;unsigned count=0;
     bool IsReady(){return ready;}bool HasContext(){return context;}
     bool NeedsAttention(){return attention;}unsigned PendingCount(){return count;}
+    bool CanRetry(){return false;}bool RetryPending(){return false;}
 };
 struct Application {
     std::atomic<bool> provisions_recording_failed_{false},provisions_recording_saving_{false},provisions_response_pending_{false};

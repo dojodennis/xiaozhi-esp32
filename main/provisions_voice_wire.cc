@@ -114,8 +114,19 @@ bool ParseVoiceContext(const cJSON* value, VoiceContext& output) {
 }
 bool ParseVoiceReceipt(const cJSON* value, VoiceCaptureReceipt& output) {
     output = {};
-    if (!Keys(value, {"session_id", "type", "request_id", "capture", "state", "durable"}))
+    const bool retry_fields = Keys(value, {"session_id", "type", "request_id", "capture", "state",
+                                           "durable", "retry_token", "retry_used"});
+    if (!retry_fields &&
+        !Keys(value, {"session_id", "type", "request_id", "capture", "state", "durable"}))
         return false;
+    if (retry_fields) {
+        auto token = cJSON_GetObjectItemCaseSensitive(value, "retry_token");
+        auto used = cJSON_GetObjectItemCaseSensitive(value, "retry_used");
+        if (!cJSON_IsString(token) || !ParseVoiceId(token->valuestring, output.retry_token) ||
+            !cJSON_IsBool(used))
+            return false;
+        output.retry_used = cJSON_IsTrue(used);
+    }
     auto type = cJSON_GetObjectItemCaseSensitive(value, "type");
     auto id = cJSON_GetObjectItemCaseSensitive(value, "request_id");
     auto state = cJSON_GetObjectItemCaseSensitive(value, "state");
@@ -158,6 +169,10 @@ bool ParseVoiceReceipt(const cJSON* value, VoiceCaptureReceipt& output) {
 }
 std::string VoiceCaptureStart(const VoiceReplay& replay, const std::string& session, uint32_t turn,
                               bool deferred) {
+    const bool retry = std::any_of(replay.retry_token.begin(), replay.retry_token.end(),
+                                   [](uint8_t byte) { return byte != 0; });
+    if (retry && !deferred)
+        return {};
     cJSON* root = cJSON_CreateObject();
     if (!root)
         return {};
@@ -168,6 +183,8 @@ std::string VoiceCaptureStart(const VoiceReplay& replay, const std::string& sess
     cJSON_AddNumberToObject(root, "turn_id", turn);
     cJSON_AddStringToObject(root, "request_id", VoiceIdText(replay.capture.request_id).c_str());
     cJSON_AddBoolToObject(root, "deferred", deferred);
+    if (retry)
+        cJSON_AddStringToObject(root, "retry_token", VoiceIdText(replay.retry_token).c_str());
     cJSON* capture = cJSON_AddObjectToObject(root, "capture");
     if (!capture) {
         cJSON_Delete(root);

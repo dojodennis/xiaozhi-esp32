@@ -126,6 +126,29 @@ int main() {
     start=parse(VoiceCaptureStart(replay,session,1,false));cap=cJSON_GetObjectItemCaseSensitive(start.get(),"capture");
     assert(cJSON_IsNull(cJSON_GetObjectItemCaseSensitive(cap,"source_request_id")));
     assert(cJSON_IsNull(cJSON_GetObjectItemCaseSensitive(cap,"source_revision")));
+
+    const std::string retry="44444444-5555-4666-8777-888888888888";
+    for(bool used:{false,true}) {
+        auto value=receipt("needs_attention",false);cJSON_AddStringToObject(value.get(),"retry_token",retry.c_str());cJSON_AddBoolToObject(value.get(),"retry_used",used);
+        assert(ParseVoiceReceipt(value.get(),out));assert(VoiceIdText(out.retry_token)==retry&&out.retry_used==used);
+        for(const char* field:{"retry_token","retry_used"}) {
+            auto missing=Json(cJSON_Duplicate(value.get(),true),cJSON_Delete);cJSON_DeleteItemFromObjectCaseSensitive(missing.get(),field);assert(!ParseVoiceReceipt(missing.get(),out));
+        }
+        auto duplicate=Json(cJSON_Duplicate(value.get(),true),cJSON_Delete);cJSON_AddBoolToObject(duplicate.get(),"retry_used",used);assert(!ParseVoiceReceipt(duplicate.get(),out));
+        for(const std::string invalid:{"null","[]","{}","1","\"true\""}) {
+            auto bad=Json(cJSON_Duplicate(value.get(),true),cJSON_Delete);replace(bad.get(),"retry_used",invalid);assert(!ParseVoiceReceipt(bad.get(),out));
+        }
+        for(const std::string invalid:{"null","[]","{}","1","true","\"\"","\"00000000-0000-0000-0000-000000000000\""}) {
+            auto bad=Json(cJSON_Duplicate(value.get(),true),cJSON_Delete);replace(bad.get(),"retry_token",invalid);assert(!ParseVoiceReceipt(bad.get(),out));
+        }
+    }
+    assert(ParseVoiceId(retry.c_str(),replay.retry_token));
+    assert(VoiceCaptureStart(replay,session,2,false).empty());
+    auto retry_start=parse(VoiceCaptureStart(replay,session,2,true));assert(cJSON_GetArraySize(retry_start.get())==9);
+    assert(retry==cJSON_GetObjectItemCaseSensitive(retry_start.get(),"retry_token")->valuestring);
+    assert(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(retry_start.get(),"deferred")));
+    assert(request==cJSON_GetObjectItemCaseSensitive(retry_start.get(),"request_id")->valuestring);
+
     std::cout<<"Strict wire context, receipt state, bounds and serialization passed\n";
 }
 '''
