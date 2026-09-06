@@ -790,12 +790,12 @@ void AudioService::PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t
 }
 
 bool AudioService::PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait) {
+    std::unique_lock<std::mutex> lock(audio_queue_mutex_);
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
-    const auto timer_owner = timer_output_owner_.load();
+    auto timer_owner = timer_output_owner_.load();
     if (timer_owner != 0 && packet->playback_id != timer_owner)
         return false;
 #endif
-    std::unique_lock<std::mutex> lock(audio_queue_mutex_);
     const uint32_t generation = playback_generation_;
     if (audio_decode_queue_.size() >= MAX_DECODE_PACKETS_IN_QUEUE) {
         if (wait) {
@@ -810,6 +810,13 @@ bool AudioService::PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> pa
     if (service_stopped_.load() || generation != playback_generation_) {
         return false;
     }
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    // Waiting releases the queue mutex, so a timer may have claimed output
+    // before this producer reacquired it. Revalidate at the enqueue boundary.
+    timer_owner = timer_output_owner_.load();
+    if (timer_owner != 0 && packet->playback_id != timer_owner)
+        return false;
+#endif
     playback_drained_notified_ = false;
     audio_decode_queue_.push_back(std::move(packet));
     audio_queue_cv_.notify_all();

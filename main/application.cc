@@ -2748,6 +2748,22 @@ void Application::ResetProtocol() {
 }
 
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
+void Application::HandleTimerOutputEnded() {
+    if (GetDeviceState() != kDeviceStateNotifying ||
+        manual_listening_requested_.load(std::memory_order_acquire) ||
+        !audio_service_.IsLocalInputIdle() || !audio_service_.IsPlaybackIdle())
+        return;
+    if (!SetDeviceState(kDeviceStateIdle))
+        return;
+    // A physical Talk edge or a new foreground output may have arrived while
+    // the state transition was being published. Do not lower its power level.
+    if (GetDeviceState() != kDeviceStateIdle ||
+        manual_listening_requested_.load(std::memory_order_acquire) ||
+        !audio_service_.IsLocalInputIdle() || !audio_service_.IsPlaybackIdle())
+        return;
+    Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+}
+
 void Application::InitializeTimers() {
     provisions::timers::Player::Hooks hooks;
     hooks.claim = [this](uint32_t id) { return audio_service_.ClaimTimerOutput(id); };
@@ -2776,10 +2792,7 @@ void Application::InitializeTimers() {
         SetDeviceState(kDeviceStateNotifying);
         Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
     };
-    hooks.ended = [this]() {
-        if (GetDeviceState() == kDeviceStateNotifying && !manual_listening_requested_.load())
-            SetDeviceState(kDeviceStateIdle);
-    };
+    hooks.ended = [this]() { HandleTimerOutputEnded(); };
     timer_player_.Initialize(std::move(hooks));
 }
 void Application::ServiceTimers() {
