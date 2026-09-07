@@ -48,6 +48,11 @@ bool Id(const cJSON* value, std::string& output) {
     }
     if (!nonzero)
         return false;
+    if (value->valuestring[14] < '1' || value->valuestring[14] > '8')
+        return false;
+    const char variant = value->valuestring[19];
+    if (variant != '8' && variant != '9' && variant != 'a' && variant != 'b')
+        return false;
     output = value->valuestring;
     return true;
 }
@@ -350,6 +355,113 @@ bool ParseRecord(const std::string& text, Record& record) {
         record = std::move(parsed);
     return valid;
 }
+
+std::string DurableSlotJson(const DurableSlot& slot) {
+    if (slot.state == DurableState::Empty && slot.lease_id.empty())
+        return {};
+    if (slot.state == DurableState::Alarm) {
+        if (slot.record.alarm.lease_id != slot.lease_id)
+            return {};
+        return RecordJson(slot.record);
+    }
+    if ((slot.state != DurableState::Empty && slot.state != DurableState::Prepared &&
+         slot.state != DurableState::NoStartPending) ||
+        slot.lease_id.empty())
+        return {};
+    auto root = cJSON_CreateObject();
+    cJSON_AddNumberToObject(root, "version", 2);
+    cJSON_AddStringToObject(root, "state",
+                            slot.state == DurableState::Empty      ? "empty"
+                            : slot.state == DurableState::Prepared ? "prepared"
+                                                                   : "no_start_pending");
+    cJSON_AddStringToObject(root, "lease_id", slot.lease_id.c_str());
+    return Print(root);
+}
+
+bool ParseDurableSlot(const std::string& text, DurableSlot& slot) {
+    Record record;
+    if (ParseRecord(text, record)) {
+        slot = {DurableState::Alarm, record.alarm.lease_id, std::move(record)};
+        return true;
+    }
+    if (!WithinJsonBudget(text) || text.size() > 2048 || text.find('\0') != std::string::npos ||
+        text.find("\\u0000") != std::string::npos)
+        return false;
+    const char* end = nullptr;
+    auto root = cJSON_ParseWithLengthOpts(text.c_str(), text.size() + 1, &end, true);
+    DurableSlot parsed;
+    const auto version = root ? Field(root, "version") : nullptr;
+    const auto state = root ? Field(root, "state") : nullptr;
+    bool valid = root && Keys(root, {"version", "state", "lease_id"}) && cJSON_IsNumber(version) &&
+                 version->valuedouble == 2 && Id(Field(root, "lease_id"), parsed.lease_id);
+    if (valid && Text(state, "empty"))
+        parsed.state = DurableState::Empty;
+    else if (valid && Text(state, "prepared"))
+        parsed.state = DurableState::Prepared;
+    else if (valid && Text(state, "no_start_pending"))
+        parsed.state = DurableState::NoStartPending;
+    else
+        valid = false;
+    cJSON_Delete(root);
+    if (valid)
+        slot = std::move(parsed);
+    return valid;
+}
+
+bool SameDurableSlot(const DurableSlot& a, const DurableSlot& b) {
+    return a.state == b.state && DurableSlotJson(a) == DurableSlotJson(b);
+}
+
+bool ParsePreparationRequest(const cJSON* root, const std::string& transport_session,
+                             std::string& lease_id) {
+    const auto version = Field(root, "version");
+    std::string parsed_session;
+    std::string parsed_lease;
+    if (!Keys(root, {"type", "action", "version", "session_id", "lease_id"}) ||
+        !Text(Field(root, "type"), "timer") ||
+        !Text(Field(root, "action"), "prepare_alarm") || !cJSON_IsNumber(version) ||
+        version->valuedouble != 1 || !Id(Field(root, "session_id"), parsed_session) ||
+        parsed_session != transport_session || !Id(Field(root, "lease_id"), parsed_lease))
+        return false;
+    lease_id = std::move(parsed_lease);
+    return true;
+}
+
+bool MatchesRecoveryRequest(const cJSON* root, const char* action, const std::string& lease_id,
+                            const std::string& transport_session) {
+    const auto version = Field(root, "version");
+    return Keys(root, {"type", "action", "version", "session_id", "lease_id"}) &&
+           Text(Field(root, "type"), "timer") && Text(Field(root, "action"), action) &&
+           cJSON_IsNumber(version) && version->valuedouble == 1 &&
+           Text(Field(root, "session_id"), transport_session.c_str()) &&
+           Text(Field(root, "lease_id"), lease_id.c_str());
+}
+
+bool MatchesNoStartAck(const cJSON* root, const std::string& lease_id,
+                       const std::string& transport_session) {
+    const auto version = Field(root, "version");
+    return Keys(root, {"type", "action", "version", "session_id", "lease_id", "status"}) &&
+           Text(Field(root, "type"), "timer") && Text(Field(root, "action"), "no_start_ack") &&
+           cJSON_IsNumber(version) && version->valuedouble == 1 &&
+           Text(Field(root, "session_id"), transport_session.c_str()) &&
+           Text(Field(root, "lease_id"), lease_id.c_str()) &&
+           Text(Field(root, "status"), "accepted");
+}
+
+std::string RecoveryProofJson(DurableState state, const std::string& lease_id,
+                              const std::string& transport_session) {
+    if (state != DurableState::Prepared && state != DurableState::NoStartPending)
+        return {};
+    auto root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "type", "timer");
+    cJSON_AddStringToObject(root, "action",
+                            state == DurableState::Prepared ? "prepared" : "no_start");
+    cJSON_AddNumberToObject(root, "version", 1);
+    cJSON_AddStringToObject(root, "session_id", transport_session.c_str());
+    cJSON_AddStringToObject(root, "lease_id", lease_id.c_str());
+    return Print(root);
+}
+
 std::string ReceiptJson(const Record& record, const std::string& session) {
     if (record.outcome == Outcome::Unknown)
         return {};

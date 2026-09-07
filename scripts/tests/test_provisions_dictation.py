@@ -99,7 +99,11 @@ class DictationTests(unittest.TestCase):
         cjson = ROOT / 'managed_components/espressif__cjson/cJSON'
         with tempfile.TemporaryDirectory(prefix='orbit-dictation-') as folder:
             path=Path(folder)
-            for name, source in {**HEADERS, 'nvs.h': TIMER_HEADERS['nvs.h']}.items():
+            for name, source in {
+                **HEADERS,
+                'nvs.h': TIMER_HEADERS['nvs.h'],
+                'esp_random.h': TIMER_HEADERS['esp_random.h'],
+            }.items():
                 target=path/name;target.parent.mkdir(parents=True,exist_ok=True);target.write_text(source)
             (path/'test.cc').write_text(PROGRAM.replace('__NVS__',NVS))
             sanitize=['-fsanitize=address,undefined','-fno-omit-frame-pointer']

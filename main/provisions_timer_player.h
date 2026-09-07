@@ -36,19 +36,26 @@ public:
     Snapshot GetSnapshot() const;
 
 private:
+    void ClearPreparationIntent();
     void Fail(Outcome outcome);
+    bool StageAlarm(Alarm alarm, uint32_t press);
     Store& store_;
     Hooks hooks_;
     mutable std::mutex mutex_;
+    DurableSlot slot_;
     Record record_;
+    Record pending_record_;
     Snapshot snapshot_;
     bool occupied_ = false, fault_ = false, persisted_ = false, claimed_ = false;
     bool started_ = false, sentence_ = false, stopped_ = false, admitted_ = false;
     bool cancel_pending_ = false, ack_pending_ = false, digest_ok_ = false;
+    bool alarm_pending_ = false, abandon_pending_ = false, preparation_uncertain_ = false;
     Outcome requested_ = Outcome::Unknown;
-    uint32_t owner_ = 0x80000000u, press_ = 0, received_ = 0, submitted_ = 0, played_ = 0;
-    int64_t deadline_us_ = 0, last_send_us_ = 0;
-    std::string sent_session_;
+    uint32_t owner_ = 0x80000000u, press_ = 0, prepared_press_ = 0,
+             preparation_intent_press_ = 0, received_ = 0, submitted_ = 0, played_ = 0;
+    int64_t deadline_us_ = 0, last_send_us_ = 0, recovery_last_send_us_ = 0;
+    std::string sent_session_, recovery_sent_session_, preparation_intent_session_,
+        preparation_intent_lease_;
     std::deque<std::vector<uint8_t>> packets_;
     psa_hash_operation_t digest_ = PSA_HASH_OPERATION_INIT;
 };

@@ -1074,7 +1074,7 @@ void Application::InitializeProtocol() {
                                cJSON_IsString(reply_state) &&
                                strcmp(reply_state->valuestring, "heartbeat") == 0;
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
-        if (!heartbeat && timer_player_.OwnsOutput()) {
+        if (!heartbeat && timer_player_.Fenced()) {
             reject_gateway_frame();
             return;
         }

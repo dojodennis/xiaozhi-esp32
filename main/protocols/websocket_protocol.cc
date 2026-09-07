@@ -549,6 +549,7 @@ std::string WebsocketProtocol::GetHelloMessage() {
     cJSON_AddBoolToObject(features, "audio_capture", true);
     cJSON_AddBoolToObject(features, "audio_retry", true);
     cJSON_AddBoolToObject(features, "timers_v1", true);
+    cJSON_AddBoolToObject(features, "timer_claim_recovery_v1", true);
     cJSON_AddBoolToObject(features, "dictation_v1", true);
 #endif
 #else
@@ -625,16 +626,20 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
     server_sample_rate_ = sample_rate->valueint;
     server_frame_duration_ = frame_duration->valueint;
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
-    unsigned timer_flags = 0, dictation_flags = 0;
+    unsigned timer_flags = 0, recovery_flags = 0, dictation_flags = 0;
     const cJSON* feature;
     cJSON_ArrayForEach (feature, provisions) {
         if (feature->string && strcmp(feature->string, "timers_v1") == 0)
             ++timer_flags;
+        if (feature->string && strcmp(feature->string, "timer_claim_recovery_v1") == 0)
+            ++recovery_flags;
         if (feature->string && strcmp(feature->string, "dictation_v1") == 0)
             ++dictation_flags;
     }
-    timers_enabled_.store(timer_flags == 1 &&
-                          cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(provisions, "timers_v1")));
+    timers_enabled_.store(
+        timer_flags == 1 && recovery_flags == 1 &&
+        cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(provisions, "timers_v1")) &&
+        cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(provisions, "timer_claim_recovery_v1")));
     dictation_enabled_.store(dictation_flags == 1 && cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(
                                                          provisions, "dictation_v1")));
     auto capture_feature = cJSON_GetObjectItemCaseSensitive(provisions, "audio_capture");

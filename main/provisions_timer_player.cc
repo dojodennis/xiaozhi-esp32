@@ -1,49 +1,94 @@
 #include "provisions_timer_player.h"
+
 #include <cstring>
+
 namespace provisions::timers {
 Player::Player(Store& store) : store_(store) {}
 Player::~Player() { psa_hash_abort(&digest_); }
+
+void Player::ClearPreparationIntent() {
+    preparation_intent_session_.clear();
+    preparation_intent_lease_.clear();
+    preparation_intent_press_ = 0;
+}
+
 void Player::Initialize(Hooks hooks) {
     std::lock_guard<std::mutex> lock(mutex_);
     hooks_ = std::move(hooks);
     if (psa_crypto_init() != PSA_SUCCESS) {
-        fault_ = occupied_ = true;
-        claimed_ = hooks_.claim(owner_);
+        fault_ = true;
         return;
     }
-    const auto loaded = store_.Load(record_);
-    occupied_ = loaded != Store::LoadResult::Empty;
+    const auto loaded = store_.Load(slot_);
     fault_ = loaded == Store::LoadResult::Fault;
-    if (occupied_) {
-        claimed_ = hooks_.claim(owner_);
-        fault_ = fault_ || !claimed_;
-        persisted_ = loaded == Store::LoadResult::Present;
-        // Reboot cannot prove all packets played. Close the initialized output,
-        // then persist an interrupted fact for this original lease.
-        if (persisted_ && record_.outcome == Outcome::Unknown)
-            Fail(Outcome::Interrupted);
+    if (loaded != Store::LoadResult::Present)
+        return;
+    if (slot_.state == DurableState::Prepared) {
+        // A preparation found after boot has an unknown claim result. It must
+        // be durably retired before this device can offer another lease.
+        preparation_uncertain_ = true;
+        return;
     }
+    if (slot_.state == DurableState::NoStartPending)
+        return;
+    if (slot_.state != DurableState::Alarm) {
+        fault_ = true;
+        return;
+    }
+    record_ = slot_.record;
+    occupied_ = persisted_ = true;
+    claimed_ = hooks_.claim(owner_);
+    fault_ = !claimed_;
+    // Reboot cannot prove all packets played. Close the initialized output,
+    // then persist an interrupted fact for this original lease.
+    if (!fault_ && record_.outcome == Outcome::Unknown)
+        Fail(Outcome::Interrupted);
 }
+
 void Player::Fail(Outcome outcome) {
-    if (!occupied_ || record_.outcome != Outcome::Unknown)
+    if ((!occupied_ && !alarm_pending_) || (occupied_ && record_.outcome != Outcome::Unknown))
         return;
     if (requested_ == Outcome::Unknown)
         requested_ = outcome;
     packets_.clear();
     cancel_pending_ = claimed_;
 }
+
+bool Player::StageAlarm(Alarm alarm, uint32_t press) {
+    pending_record_ = {std::move(alarm), Outcome::Unknown};
+    alarm_pending_ = true;
+    press_ = press;
+    started_ = sentence_ = stopped_ = admitted_ = false;
+    cancel_pending_ = ack_pending_ = digest_ok_ = false;
+    requested_ = Outcome::Unknown;
+    received_ = submitted_ = played_ = 0;
+    deadline_us_ = last_send_us_ = 0;
+    sent_session_.clear();
+    packets_.clear();
+    psa_hash_abort(&digest_);
+    if (psa_hash_setup(&digest_, PSA_ALG_SHA_256) != PSA_SUCCESS)
+        requested_ = Outcome::Failed;
+    return true;
+}
+
 bool Player::Fenced() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return occupied_ || fault_;
+    // Durable recovery blocks publication without owning the microphone or
+    // speaker. A physical press may still be captured locally and replayed
+    // after the exact recovery ACK clears this slot.
+    return slot_.state != DurableState::Empty || fault_;
 }
+
 bool Player::OwnsOutput() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return claimed_;
 }
+
 Snapshot Player::GetSnapshot() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return snapshot_;
 }
+
 bool Player::OnJson(const cJSON* root, const std::string& session, bool negotiated,
                     uint32_t press) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -53,9 +98,10 @@ bool Player::OnJson(const cJSON* root, const std::string& session, bool negotiat
     if (!cJSON_IsString(type))
         return false;
     if (std::strcmp(type->valuestring, "tts") == 0) {
+        const Record* active = occupied_ ? &record_ : alarm_pending_ ? &pending_record_ : nullptr;
         std::string state;
-        if (!occupied_ || fault_ || record_.outcome != Outcome::Unknown ||
-            session != record_.alarm.session_id || !MatchesTts(root, record_.alarm, state))
+        if (!active || fault_ || active->outcome != Outcome::Unknown ||
+            session != active->alarm.session_id || !MatchesTts(root, active->alarm, state))
             return false;
         if (state == "start" && !started_ && !stopped_)
             started_ = true;
@@ -75,8 +121,8 @@ bool Player::OnJson(const cJSON* root, const std::string& session, bool negotiat
                 hex[i * 2 + 1] = digits[bytes[i] & 15];
             }
             hex[64] = '\0';
-            digest_ok_ = hashed && received_ == record_.alarm.packet_count &&
-                         record_.alarm.audio_sha256 == hex;
+            digest_ok_ = hashed && received_ == active->alarm.packet_count &&
+                         active->alarm.audio_sha256 == hex;
             if (!digest_ok_)
                 Fail(Outcome::Failed);
         } else {
@@ -87,49 +133,102 @@ bool Player::OnJson(const cJSON* root, const std::string& session, bool negotiat
         const auto action = cJSON_GetObjectItemCaseSensitive(root, "action");
         if (!cJSON_IsString(action))
             return false;
-        if (std::strcmp(action->valuestring, "snapshot") == 0) {
+        if (std::strcmp(action->valuestring, "prepare_alarm") == 0) {
+            std::string lease_id;
+            if (fault_ || !ParsePreparationRequest(root, session, lease_id))
+                return false;
+            if (slot_.state == DurableState::Empty) {
+                if (!preparation_intent_lease_.empty() &&
+                    (preparation_intent_lease_ != lease_id ||
+                     preparation_intent_session_ != session))
+                    return false;
+                if (preparation_intent_lease_.empty()) {
+                    preparation_intent_lease_ = std::move(lease_id);
+                    preparation_intent_session_ = session;
+                    preparation_intent_press_ = press;
+                }
+            } else if (slot_.state == DurableState::Prepared && slot_.lease_id == lease_id) {
+                if (!alarm_pending_ && !abandon_pending_) {
+                    // An exact request retry proves no new owner. Make the main
+                    // task resend the same already-durable preparation immediately.
+                    recovery_sent_session_.clear();
+                    recovery_last_send_us_ = 0;
+                }
+            } else {
+                return false;
+            }
+        } else if (std::strcmp(action->valuestring, "snapshot") == 0) {
             Snapshot parsed;
             if (!ParseSnapshot(root, parsed) || parsed.session_id != session)
                 return false;
             snapshot_ = std::move(parsed);
         } else if (std::strcmp(action->valuestring, "alarm") == 0) {
             Alarm alarm;
-            if (occupied_ || fault_ || owner_ == 0xffffffffu || !ParseAlarm(root, alarm) ||
+            if (fault_ || owner_ == 0xffffffffu || !ParseAlarm(root, alarm) ||
                 alarm.session_id != session)
                 return false;
-            record_ = {std::move(alarm), Outcome::Unknown};
-            occupied_ = true;
-            ++owner_;
-            press_ = press;
-            persisted_ = claimed_ = started_ = sentence_ = stopped_ = admitted_ = false;
-            cancel_pending_ = ack_pending_ = digest_ok_ = false;
-            requested_ = Outcome::Unknown;
-            received_ = submitted_ = played_ = 0;
-            deadline_us_ = last_send_us_ = 0;
-            sent_session_.clear();
-            psa_hash_abort(&digest_);
-            if (psa_hash_setup(&digest_, PSA_ALG_SHA_256) != PSA_SUCCESS)
-                Fail(Outcome::Failed);
+            const Record candidate{alarm, Outcome::Unknown};
+            if (occupied_)
+                return DurableSlotJson(slot_) ==
+                       DurableSlotJson({DurableState::Alarm, alarm.lease_id, candidate});
+            if (alarm_pending_)
+                return RecordJson(pending_record_) == RecordJson(candidate);
+            if (slot_.state != DurableState::Prepared || abandon_pending_ ||
+                slot_.lease_id != alarm.lease_id)
+                return false;
+            StageAlarm(std::move(alarm), press);
+        } else if (std::strcmp(action->valuestring, "abandon_preparation") == 0) {
+            if (slot_.state == DurableState::Empty && !preparation_intent_lease_.empty() &&
+                preparation_intent_session_ == session &&
+                MatchesRecoveryRequest(root, "abandon_preparation", preparation_intent_lease_,
+                                       session)) {
+                ClearPreparationIntent();
+                if (hooks_.wake)
+                    hooks_.wake();
+                return true;
+            }
+            if ((slot_.state != DurableState::Prepared &&
+                 slot_.state != DurableState::NoStartPending &&
+                 slot_.state != DurableState::Alarm) ||
+                !MatchesRecoveryRequest(root, "abandon_preparation", slot_.lease_id, session))
+                return false;
+            // An accepted alarm header wins the serialized transition. The
+            // request is harmless after either terminal durable state.
+            if (slot_.state == DurableState::Prepared && !alarm_pending_)
+                abandon_pending_ = true;
         } else if (std::strcmp(action->valuestring, "drain_ack") == 0) {
             if (!occupied_ || !persisted_ || record_.outcome == Outcome::Unknown ||
                 sent_session_ != session || !MatchesAck(root, record_.alarm, session))
                 return false;
             ack_pending_ = true;
-        } else
+        } else if (std::strcmp(action->valuestring, "no_start_ack") == 0) {
+            if (slot_.state != DurableState::NoStartPending || recovery_sent_session_ != session ||
+                !MatchesNoStartAck(root, slot_.lease_id, session))
+                return false;
+            ack_pending_ = true;
+        } else {
             return false;
+        }
     }
     if (hooks_.wake)
         hooks_.wake();
     return true;
 }
+
 bool Player::OnAudio(const std::vector<uint8_t>& packet, const std::string& source_session) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!occupied_)
-        return false;
-    if (source_session != record_.alarm.session_id || fault_ ||
-        record_.outcome != Outcome::Unknown || requested_ != Outcome::Unknown)
+    // Gateway holder/send-lock ordering forbids ordinary narration until the
+    // exact no-start ACK is ordered. Any binary observed here is therefore
+    // stale timer output and must not fall through to ordinary playback.
+    if (slot_.state == DurableState::NoStartPending)
         return true;
-    if (!started_ || !sentence_ || stopped_ || received_ >= record_.alarm.packet_count ||
+    const Record* active = occupied_ ? &record_ : alarm_pending_ ? &pending_record_ : nullptr;
+    if (!active)
+        return false;
+    if (source_session != active->alarm.session_id || fault_ ||
+        active->outcome != Outcome::Unknown || requested_ != Outcome::Unknown)
+        return true;
+    if (!started_ || !sentence_ || stopped_ || received_ >= active->alarm.packet_count ||
         !IsSixtyMsOpus(packet) || packets_.size() >= 20) {
         Fail(Outcome::Failed);
     } else {
@@ -147,6 +246,7 @@ bool Player::OnAudio(const std::vector<uint8_t>& packet, const std::string& sour
         hooks_.wake();
     return true;
 }
+
 void Player::OnProgress(uint32_t id, uint32_t ordinal) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!occupied_ || id != owner_ || record_.outcome != Outcome::Unknown)
@@ -158,6 +258,7 @@ void Player::OnProgress(uint32_t id, uint32_t ordinal) {
     if (hooks_.wake)
         hooks_.wake();
 }
+
 void Player::OnError(uint32_t id) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (occupied_ && id == owner_) {
@@ -166,27 +267,116 @@ void Player::OnError(uint32_t id) {
             hooks_.wake();
     }
 }
+
 void Player::OnDisconnected() {
     std::lock_guard<std::mutex> lock(mutex_);
     snapshot_ = {};
-    if (occupied_)
+    ClearPreparationIntent();
+    if (occupied_ || alarm_pending_)
         Fail(Outcome::Interrupted);
+    else if (slot_.state == DurableState::Prepared)
+        abandon_pending_ = true;
     if (hooks_.wake)
         hooks_.wake();
 }
+
 void Player::Service(const std::string& session, bool negotiated, bool ready, uint32_t press,
                      int64_t now_us) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!occupied_ || fault_)
+    if (fault_)
         return;
-    if (!persisted_) {
-        if (!store_.Save(record_)) {
-            fault_ = true;
-            if (claimed_)
-                hooks_.cancel();
+
+    if (slot_.state == DurableState::Empty) {
+        if (preparation_intent_lease_.empty())
+            return;
+        if (!negotiated || session.empty() || session != preparation_intent_session_ ||
+            press != preparation_intent_press_) {
+            ClearPreparationIntent();
             return;
         }
-        persisted_ = true;
+        if (!ready)
+            return;
+        DurableSlot prepared{DurableState::Prepared, preparation_intent_lease_, {}};
+        if (!store_.Transition(slot_, prepared)) {
+            ClearPreparationIntent();
+            fault_ = true;
+            return;
+        }
+        slot_ = std::move(prepared);
+        prepared_press_ = press;
+        ClearPreparationIntent();
+        preparation_uncertain_ = abandon_pending_ = ack_pending_ = false;
+        recovery_sent_session_.clear();
+        recovery_last_send_us_ = 0;
+    }
+
+    if (slot_.state == DurableState::Prepared) {
+        if (alarm_pending_) {
+            DurableSlot alarm{DurableState::Alarm, pending_record_.alarm.lease_id, pending_record_};
+            if (!store_.Transition(slot_, alarm)) {
+                fault_ = true;
+                packets_.clear();
+                return;
+            }
+            slot_ = std::move(alarm);
+            record_ = slot_.record;
+            alarm_pending_ = false;
+            occupied_ = persisted_ = true;
+            ++owner_;
+        } else {
+            const bool changed_session =
+                !recovery_sent_session_.empty() && recovery_sent_session_ != session;
+            if (preparation_uncertain_ || abandon_pending_ || press != prepared_press_ ||
+                !negotiated || session.empty() || changed_session) {
+                DurableSlot no_start{DurableState::NoStartPending, slot_.lease_id, {}};
+                if (!store_.Transition(slot_, no_start)) {
+                    fault_ = true;
+                    return;
+                }
+                slot_ = std::move(no_start);
+                preparation_uncertain_ = abandon_pending_ = ack_pending_ = false;
+                recovery_sent_session_.clear();
+                recovery_last_send_us_ = 0;
+            } else if (ready && (recovery_sent_session_ != session ||
+                                 now_us - recovery_last_send_us_ >= 1000000)) {
+                const auto proof =
+                    RecoveryProofJson(DurableState::Prepared, slot_.lease_id, session);
+                if (!proof.empty() && hooks_.send(proof)) {
+                    recovery_sent_session_ = session;
+                    recovery_last_send_us_ = now_us;
+                }
+            }
+            return;
+        }
+    }
+
+    if (slot_.state == DurableState::NoStartPending) {
+        if (ack_pending_) {
+            if (!store_.Erase(slot_)) {
+                fault_ = true;
+                return;
+            }
+            slot_ = {};
+            ack_pending_ = false;
+            recovery_sent_session_.clear();
+            recovery_last_send_us_ = 0;
+            return;
+        }
+        if (negotiated && !session.empty() &&
+            (recovery_sent_session_ != session || now_us - recovery_last_send_us_ >= 1000000)) {
+            const auto proof =
+                RecoveryProofJson(DurableState::NoStartPending, slot_.lease_id, session);
+            if (!proof.empty() && hooks_.send(proof)) {
+                recovery_sent_session_ = session;
+                recovery_last_send_us_ = now_us;
+            }
+        }
+        return;
+    }
+
+    if (slot_.state != DurableState::Alarm || !occupied_ || !persisted_) {
+        fault_ = true;
+        return;
     }
     if (record_.outcome == Outcome::Unknown) {
         if (press != press_ || !negotiated || session != record_.alarm.session_id)
@@ -227,11 +417,13 @@ void Player::Service(const std::string& session, bool negotiated, bool ready, ui
                     ? Outcome::Completed
                     : Outcome::Failed;
             const Record closed{record_.alarm, terminal};
-            if (!store_.Save(closed)) {
+            DurableSlot terminal_slot{DurableState::Alarm, closed.alarm.lease_id, closed};
+            if (!store_.Transition(slot_, terminal_slot)) {
                 fault_ = true;
                 return;
             }
             record_ = closed;
+            slot_ = std::move(terminal_slot);
             if (claimed_)
                 hooks_.ended();
         }
@@ -239,10 +431,11 @@ void Player::Service(const std::string& session, bool negotiated, bool ready, ui
     if (record_.outcome == Outcome::Unknown)
         return;
     if (ack_pending_) {
-        if (!store_.Erase(record_) || (claimed_ && !hooks_.release(owner_))) {
+        if (!store_.Erase(slot_) || (claimed_ && !hooks_.release(owner_))) {
             fault_ = true;
             return;
         }
+        slot_ = {};
         occupied_ = persisted_ = claimed_ = ack_pending_ = false;
         packets_.clear();
         return;

@@ -706,6 +706,7 @@ int main(){
 
     def test_actual_hello_requires_capture_only_for_local_profile_and_status_matches(self):
         websocket = (ROOT / "main/protocols/websocket_protocol.cc").read_text()
+        self.assertIn('cJSON_AddBoolToObject(features, "timer_claim_recovery_v1", true);', websocket)
         application = (ROOT / "main/application.cc").read_text()
         handlers = "\n".join(method(websocket, signature) for signature in (
             "void WebsocketProtocol::ParseServerHello(const cJSON* root)",
@@ -792,14 +793,17 @@ int main(){
         cJSON_Delete(root);
     }
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
-    for (int variant=0;variant<5;++variant) {
+    for (int variant=0;variant<8;++variant) {
         cJSON* root=cJSON_Parse(hello);auto capabilities=cJSON_GetObjectItemCaseSensitive(root,"provisions");
         cJSON_AddTrueToObject(capabilities,"audio_capture");
         cJSON_AddItemToObject(capabilities,"capture_context",cJSON_Parse(context));
         if(variant==1)cJSON_AddFalseToObject(capabilities,"timers_v1");
-        if(variant==2||variant==4)cJSON_AddTrueToObject(capabilities,"timers_v1");
-        if(variant==3)cJSON_AddStringToObject(capabilities,"timers_v1","true");
+        if(variant>=2)cJSON_AddTrueToObject(capabilities,"timers_v1");
+        if(variant==3)cJSON_ReplaceItemInObjectCaseSensitive(capabilities,"timers_v1",cJSON_CreateString("true"));
         if(variant==4)cJSON_AddFalseToObject(capabilities,"timers_v1");
+        if(variant==1||variant==2||variant==3||variant==4)cJSON_AddTrueToObject(capabilities,"timer_claim_recovery_v1");
+        if(variant==6)cJSON_AddFalseToObject(capabilities,"timer_claim_recovery_v1");
+        if(variant==7)cJSON_AddStringToObject(capabilities,"timer_claim_recovery_v1","true");
         WebsocketProtocol p;p.ParseServerHello(root);
         assert(p.gateway_authenticated_&&p.timers_enabled_.load()==(variant==2));
         p.RejectServerHello("test disconnect");assert(!p.timers_enabled_);

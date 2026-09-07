@@ -45,6 +45,16 @@ struct Record {
     Outcome outcome = Outcome::Unknown;
 };
 
+// Version-2 permit states share the existing NVS slot with the immutable
+// version-1 alarm record. An alarm remains encoded exactly as v1 so a firmware
+// upgrade cannot reinterpret an existing physical-drain obligation.
+enum class DurableState { Empty, Prepared, NoStartPending, Alarm };
+struct DurableSlot {
+    DurableState state = DurableState::Empty;
+    std::string lease_id;
+    Record record;
+};
+
 // Bound cJSON recursion as well as bytes before parsing the larger snapshot frame.
 bool WithinJsonBudget(std::string_view text);
 bool ParseTimestamp(const cJSON* value, int64_t& unix_ms);
@@ -52,8 +62,19 @@ bool ParseSnapshot(const cJSON* root, Snapshot& output);
 bool ParseAlarm(const cJSON* root, Alarm& output);
 bool MatchesTts(const cJSON* root, const Alarm& alarm, std::string& state);
 bool MatchesAck(const cJSON* root, const Alarm& alarm, const std::string& transport_session);
+bool ParsePreparationRequest(const cJSON* root, const std::string& transport_session,
+                             std::string& lease_id);
 std::string RecordJson(const Record& record);
 bool ParseRecord(const std::string& text, Record& record);
+std::string DurableSlotJson(const DurableSlot& slot);
+bool ParseDurableSlot(const std::string& text, DurableSlot& slot);
+bool SameDurableSlot(const DurableSlot& a, const DurableSlot& b);
+bool MatchesRecoveryRequest(const cJSON* root, const char* action, const std::string& lease_id,
+                            const std::string& transport_session);
+bool MatchesNoStartAck(const cJSON* root, const std::string& lease_id,
+                       const std::string& transport_session);
+std::string RecoveryProofJson(DurableState state, const std::string& lease_id,
+                              const std::string& transport_session);
 std::string ReceiptJson(const Record& record, const std::string& transport_session);
 bool IsSixtyMsOpus(const std::vector<uint8_t>& packet);
 bool SameAttempt(const Alarm& a, const Alarm& b);
