@@ -1,0 +1,23 @@
+{
+  "sample_rate": 24000,
+  "channels": 1,
+  "frame_duration_ms": 60,
+  "model": "gpt-4o-mini-tts",
+  "voice": "coral",
+  "generated_date": "2026-09-06",
+  "encoding": "libopus, audio application, 24 kbps VBR, 60 ms frames",
+  "phrases": [
+    {
+      "file": "saved_on_orbit.ogg",
+      "text": "Saved on Orbit. I'll sync when connected.",
+      "bytes": 10976,
+      "sha256": "4c461dcf7eea203b7f7e9df7cc2f2f08e6eaadd02c026a3389deeb5df8648011"
+    },
+    {
+      "file": "could_not_save.ogg",
+      "text": "I couldn't save that. Please repeat it.",
+      "bytes": 8621,
+      "sha256": "43480b0cd0fcde24fcb4d802283e2b07774cb91022f93b4a8e7508c6f6235573"
+    }
+  ]
+}

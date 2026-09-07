@@ -129,7 +129,7 @@ bool MqttProtocol::StartMqttClient(bool report_error) {
             auto session_id = cJSON_GetObjectItem(root, "session_id");
             ESP_LOGI(TAG, "Received goodbye message, session_id: %s",
                      cJSON_IsString(session_id) ? session_id->valuestring : "null");
-            if (cJSON_IsString(session_id) && session_id_ == session_id->valuestring) {
+            if (cJSON_IsString(session_id) && this->session_id() == session_id->valuestring) {
                 auto alive = alive_;  // Capture alive flag
                 Application::GetInstance().Schedule([this, alive]() {
                     if (*alive) {
@@ -225,7 +225,7 @@ void MqttProtocol::CloseAudioChannel(bool send_goodbye) {
     // Don't send if server already sent goodbye (to avoid ping-pong)
     if (send_goodbye) {
         std::string message = "{";
-        message += "\"session_id\":\"" + session_id_ + "\",";
+        message += "\"session_id\":\"" + this->session_id() + "\",";
         message += "\"type\":\"goodbye\"";
         message += "}";
         SendText(message);
@@ -245,7 +245,7 @@ bool MqttProtocol::OpenAudioChannel() {
     }
 
     error_occurred_ = false;
-    session_id_ = "";
+    SetSessionId({});
     xEventGroupClearBits(event_group_handle_, MQTT_PROTOCOL_SERVER_HELLO_EVENT);
 
     auto message = GetHelloMessage();
@@ -383,8 +383,8 @@ void MqttProtocol::ParseServerHello(const cJSON* root) {
 
     auto session_id = cJSON_GetObjectItem(root, "session_id");
     if (cJSON_IsString(session_id)) {
-        session_id_ = session_id->valuestring;
-        ESP_LOGI(TAG, "Session ID: %s", session_id_.c_str());
+        SetSessionId(session_id->valuestring);
+        ESP_LOGI(TAG, "Session ID: %s", this->session_id().c_str());
     }
 
     // Get sample rate from hello message

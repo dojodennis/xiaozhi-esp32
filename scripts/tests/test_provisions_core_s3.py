@@ -266,7 +266,7 @@ class ProvisionsGatewayIntegrationTests(unittest.TestCase):
     def test_gateway_heartbeat_and_thin_server_capabilities_are_frozen(self):
         websocket = (ROOT / "main/protocols/websocket_protocol.cc").read_text(encoding="utf-8")
         self.assertIn(
-            'return SendText("{\\\"session_id\\\":\\\"" + session_id_ + "\\\",\\\"type\\\":\\\"ping\\\"}")',
+            'return SendText("{\\\"session_id\\\":\\\"" + this->session_id() + "\\\",\\\"type\\\":\\\"ping\\\"}")',
             websocket,
         )
         self.assertIn('strcmp(type->valuestring, "pong") == 0', websocket)
@@ -282,7 +282,7 @@ class ProvisionsGatewayIntegrationTests(unittest.TestCase):
         self.assertIn('strcmp(type->valuestring, "provisions") != 0', application)
         self.assertIn('strcmp(type->valuestring, "tts") != 0', application)
         self.assertIn("Rejecting unsupported Provisions gateway frame type", application)
-        self.assertIn('{"session_id", "type", "state", "text", "receipt_id"}', application)
+        self.assertIn('"receipt_id", "turn_id"}', " ".join(application.split()))
         self.assertIn('strcmp(state->valuestring, "working") == 0', application)
         self.assertIn('strcmp(text->valuestring, "Working") == 0', application)
         self.assertIn('strcmp(state->valuestring, "result") == 0', application)
@@ -300,7 +300,7 @@ class ProvisionsGatewayIntegrationTests(unittest.TestCase):
             "Not changed",
         ):
             self.assertIn(f'text == "{receipt_text}"', application)
-        self.assertIn('protocol_->session_id() == session->valuestring', application)
+        self.assertIn('GetProtocol()->session_id() == session->valuestring', application)
         self.assertIn('HasExactKeys(root, {"session_id", "type", "state"})', application)
         self.assertIn("ProvisionsTtsText::IsValid", application)
         self.assertIn("ProvisionsTtsTurn provisions_tts_turn_", header)
@@ -333,8 +333,8 @@ class ProvisionsGatewayIntegrationTests(unittest.TestCase):
         self.assertIn("SetPowerSaveLevel(PowerSaveLevel::LOW_POWER)", abort)
         self.assertIn("SetDeviceState(kDeviceStateIdle);", abort)
 
-        network_error = application.split("protocol_->OnNetworkError", 1)[1].split(
-            "protocol_->OnIncomingAudio", 1
+        network_error = application.split("protocol->OnNetworkError", 1)[1].split(
+            "protocol->OnIncomingAudio", 1
         )[0]
         self.assertIn("InvalidateProvisionsTtsTurn();", network_error)
         self.assertIn("SetPowerSaveLevel(PowerSaveLevel::LOW_POWER)", network_error)
@@ -352,22 +352,25 @@ class ProvisionsGatewayIntegrationTests(unittest.TestCase):
             "void Application::HandleStopListeningEvent()", 1
         )[1].split("void Application::HandleWakeWordDetectedEvent()", 1)[0]
         disable = stop_handler.index("audio_service_.EnableVoiceProcessing(false);")
-        stop_frame = stop_handler.index("protocol_->SendStopListening();")
+        stop_frame = stop_handler.index("GetProtocol()->SendStopListening();")
         idle = stop_handler.index("SetDeviceState(kDeviceStateIdle);", stop_frame)
         self.assertLess(disable, stop_frame)
         self.assertLess(stop_frame, idle)
 
-        release_entrypoint = application.split("void Application::StopListening()", 1)[
-            1
-        ].split("void Application::HandleToggleChatEvent()", 1)[0]
+        from test_provisions_local_capture_integration_review import method
+        release_entrypoint = method(application, "void Application::StopListening()")
+        local_release = release_entrypoint.split("#if CONFIG_PROVISIONS_LOCAL_CAPTURE", 1)[1].split("#else", 1)[0]
+        nonlocal_release = release_entrypoint.split("#else", 1)[1].split("#endif", 1)[0]
         self.assertIn("manual_listening_requested_.store(false", release_entrypoint)
-        self.assertIn("audio_service_.CloseVoiceUploadGate();", release_entrypoint)
-        self.assertLess(
-            release_entrypoint.index("audio_service_.CloseVoiceUploadGate();"),
-            release_entrypoint.index(
-                "xEventGroupSetBits(event_group_, MAIN_EVENT_STOP_LISTENING);"
-            ),
-        )
+        self.assertIn("audio_service_.ReleaseLocalRecordingFence(", local_release)
+        self.assertNotIn("CloseVoiceUploadGate", local_release)
+        self.assertIn("audio_service_.CloseVoiceUploadGate();", nonlocal_release)
+        self.assertLess(release_entrypoint.index("audio_service_.ReleaseLocalRecordingFence("),
+                        release_entrypoint.index("xEventGroupSetBits(event_group_, MAIN_EVENT_STOP_LISTENING);"))
+        end_local = method(application, "void Application::EndLocalRecordingOnMain()")
+        self.assertIn("audio_service_.CloseVoiceUploadGate();", end_local)
+        self.assertLess(end_local.index("audio_service_.CloseVoiceUploadGate();"),
+                        end_local.index("audio_service_.ReconcileLocalRecording(press);"))
         self.assertIn('VoiceUploadGate voice_upload_gate_;', audio_header)
         self.assertIn("voice_upload_gate_.Close();", audio_service)
         self.assertIn("audio_send_queue_.clear();", audio_service)
@@ -392,7 +395,11 @@ class ProvisionsGatewayIntegrationTests(unittest.TestCase):
         )
         self.assertIn("SetProvisionsResponsePending(true)", application)
         self.assertIn('return provisions_response_pending_.load() ? "Working" : "Ready"', application)
-        self.assertIn("Ignoring Talk while the previous request is working", application)
+        self.assertNotIn("Ignoring Talk while the previous request is working", application)
+        talk_start = application.split("void Application::HandleStartListeningEvent()", 1)[1].split(
+            "void Application::HandleStopListeningEvent()", 1
+        )[0]
+        self.assertIn("AbortSpeaking(kAbortReasonNone)", talk_start)
         self.assertIn("SendGatewayHeartbeat", application)
         self.assertIn("IsGatewayHeartbeatExpired", application)
         self.assertIn("kProvisionsMaximumReconnectAttempts = 5", application)
@@ -404,7 +411,7 @@ class ProvisionsGatewayIntegrationTests(unittest.TestCase):
         self.assertIn("const int MAX_RETRY = 3", application)
         self.assertIn("int retry_delay = 1", application)
         mark = application.index("ota_->MarkCurrentVersionValid();")
-        authenticated_guard = application.index("!protocol_->IsAudioChannelOpened()")
+        authenticated_guard = application.index("!GetProtocol()->IsAudioChannelOpened()")
         reset = application.index("ota_.reset();")
         self.assertLess(authenticated_guard, mark)
         self.assertLess(mark, reset)

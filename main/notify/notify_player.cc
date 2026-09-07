@@ -137,6 +137,20 @@ NotifyPlayer::FinishedCallback NotifyPlayer::CompleteLocked(uint32_t& playback_i
     return finished_callback_;
 }
 
+void NotifyPlayer::OnPlaybackError(uint32_t failed_id) {
+    FinishedCallback callback;
+    uint32_t playback_id = 0;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!active_ || failed_id == 0 || failed_id != playback_id_)
+            return;
+        cancelled_ = true;
+        callback = CompleteLocked(playback_id);
+    }
+    if (callback)
+        callback(playback_id, false);
+}
+
 void NotifyPlayer::OnPlaybackDrained() {
     FinishedCallback callback;
     uint32_t playback_id = 0;

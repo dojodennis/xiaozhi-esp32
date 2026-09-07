@@ -1,5 +1,6 @@
 # Define source files
 set(SOURCES "audio/audio_codec.cc"
+            "audio/provisions_audio_admission.cc"
             "audio/audio_debugger.cc"
             "audio/audio_service.cc"
             "audio/demuxer/ogg_demuxer.cc"
@@ -33,6 +34,10 @@ set(SOURCES "audio/audio_codec.cc"
             "protocols/text_glyph_payload.cc"
             "protocols/mqtt_protocol.cc"
             "protocols/websocket_protocol.cc"
+            "provisions_output_fence.cc"
+            "provisions_output_fence_store.cc"
+            "provisions_output_fence_wire.cc"
+            "provisions_output_fence_runtime.cc"
             "mcp_server.cc"
             "system_info.cc"
             "application.cc"
@@ -886,7 +891,15 @@ if(PROVISIONS_STOPWATCH_PROFILE)
         )
     endif()
     set(BOARD_NAME "${PROVISIONS_STOPWATCH_BOARD_NAME}")
-    list(APPEND SOURCES "provisions_endpoint_policy.cc")
+    list(APPEND SOURCES "provisions_endpoint_policy.cc"
+        "provisions_voice_outbox.cc" "provisions_voice_outbox_esp.cc")
+    if(CONFIG_PROVISIONS_LOCAL_CAPTURE)
+        list(APPEND SOURCES "provisions_voice_recording.cc" "provisions_voice_recorder.cc"
+            "provisions_dictation.cc" "provisions_dictation_store.cc" "provisions_dictation_recorder.cc"
+            "provisions_dictation_application.cc"
+            "provisions_voice_wire.cc" "protocols/provisions_websocket.cc"
+            "provisions_timers.cc" "provisions_timer_store.cc" "provisions_timer_player.cc")
+    endif()
 endif()
 
 if(NOT BOARD_DIR AND NOT CMAKE_BUILD_EARLY_EXPANSION)
@@ -1093,6 +1106,12 @@ if(CONFIG_IDF_TARGET_ESP32S3
 endif()
 
 set(MAIN_PRIV_REQUIRES_EXTRA "")
+if(CONFIG_PROVISIONS_LOCAL_CAPTURE)
+    list(APPEND MAIN_PRIV_REQUIRES_EXTRA tcp_transport)
+    set(PROVISIONS_FEEDBACK_SOUNDS
+        "assets/provisions/saved_on_orbit.ogg"
+        "assets/provisions/could_not_save.ogg")
+endif()
 if(BOARD_TYPE STREQUAL "m5stack-stick-s3")
     list(APPEND MAIN_PRIV_REQUIRES_EXTRA
         m5stack__m5pm1
@@ -1116,7 +1135,7 @@ if(CONFIG_BOARD_TYPE_ESP32_P4_FUNCTION_EV_BOARD)
     )
 endif()
 idf_component_register(SRCS ${SOURCES}
-                    EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS}
+                    EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS} ${PROVISIONS_FEEDBACK_SOUNDS}
                     INCLUDE_DIRS ${INCLUDE_DIRS}
                     WHOLE_ARCHIVE
                     PRIV_REQUIRES
@@ -1389,6 +1408,9 @@ endfunction()
 
 partition_table_get_partition_info(size "--partition-name assets" "size")
 partition_table_get_partition_info(offset "--partition-name assets" "offset")
+if(PROVISIONS_STOPWATCH_PROFILE AND (CONFIG_FLASH_CUSTOM_ASSETS OR CONFIG_FLASH_EXPRESSION_ASSETS))
+    message(FATAL_ERROR "Provisions StopWatch requires bounded default assets; custom/expression assets can overwrite saved voice recordings")
+endif()
 if ("${size}" AND "${offset}")
     # Flash assets based on configuration
     if(CONFIG_FLASH_DEFAULT_ASSETS)

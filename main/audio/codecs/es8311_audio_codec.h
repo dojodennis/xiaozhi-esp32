@@ -3,12 +3,11 @@
 
 #include "audio_codec.h"
 
-#include <driver/i2c_master.h>
 #include <driver/gpio.h>
+#include <driver/i2c_master.h>
 #include <esp_codec_dev.h>
 #include <esp_codec_dev_defaults.h>
 #include <mutex>
-
 
 class Es8311AudioCodec : public AudioCodec {
 private:
@@ -21,8 +20,16 @@ private:
     gpio_num_t pa_pin_ = GPIO_NUM_NC;
     bool pa_inverted_ = false;
     std::mutex data_if_mutex_;
+    mutable portMUX_TYPE output_dma_mutex_ = portMUX_INITIALIZER_UNLOCKED;
+    bool output_write_active_ = false;
+    uint32_t output_dma_remaining_ = 0;
+#if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
+    std::atomic<bool> fence_rx_closed_{true}, fence_tx_closed_{true};
+#endif
+    static bool OnOutputSent(i2s_chan_handle_t handle, i2s_event_data_t* event, void* context);
 
-    void CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din);
+    void CreateDuplexChannels(gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout,
+                              gpio_num_t din);
     void ResetCodec();
     void UpdateDeviceState();
 
@@ -34,14 +41,25 @@ protected:
     void SetOutputVolumeForSession(int volume);
 
 public:
-    Es8311AudioCodec(void* i2c_master_handle, i2c_port_t i2c_port, int input_sample_rate, int output_sample_rate,
-        gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din,
-        gpio_num_t pa_pin, uint8_t es8311_addr, bool use_mclk = true, bool pa_inverted = false);
+    Es8311AudioCodec(void* i2c_master_handle, i2c_port_t i2c_port, int input_sample_rate,
+                     int output_sample_rate, gpio_num_t mclk, gpio_num_t bclk, gpio_num_t ws,
+                     gpio_num_t dout, gpio_num_t din, gpio_num_t pa_pin, uint8_t es8311_addr,
+                     bool use_mclk = true, bool pa_inverted = false);
     virtual ~Es8311AudioCodec();
 
     virtual void SetOutputVolume(int volume) override;
     virtual void EnableInput(bool enable) override;
     virtual void EnableOutput(bool enable) override;
+    bool PrepareInputCapture() override;
+    bool IsOutputDrained() const override;
+#if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
+    bool SupportsOutputFence() const override { return codec_if_ != nullptr; }
+    bool CloseInputForFence() override;
+    bool CloseOutputForFence() override;
+    bool IsInputClosedForFence() const override { return fence_rx_closed_.load(); }
+    bool IsOutputClosedForFence() const override { return fence_tx_closed_.load(); }
+    bool EnableOutputAdmitted(const provisions::audio_admission::Reservation& token) override;
+#endif
 };
 
-#endif // _ES8311_AUDIO_CODEC_H
+#endif  // _ES8311_AUDIO_CODEC_H

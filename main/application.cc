@@ -14,6 +14,11 @@
 #include "provisions_endpoint_policy.h"
 #include "provisions_tts_text.h"
 #endif
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+#include <sys/time.h>
+#include "provisions_voice_feedback.h"
+#include "provisions_voice_wire.h"
+#endif
 
 #include <driver/gpio.h>
 #include <esp_log.h>
@@ -24,6 +29,7 @@
 #include <cstring>
 #include <initializer_list>
 #include <limits>
+#include <new>
 #include <string_view>
 
 #define TAG "Application"
@@ -72,14 +78,13 @@ bool IsApprovedShortText(const char* text) {
 }
 
 bool IsApprovedReceiptText(std::string_view text) {
-    return text == "Found" || text == "No match" || text == "Draft only" ||
-           text == "Cancelled" || text == "Check app" || text == "Delivered" ||
-           text == "On the way" || text == "Recorded" || text == "Choose one" ||
-           text == "Need unit" || text == "Ready to add" || text == "Added" ||
-           text == "Undone" || text == "Not changed";
+    return text == "Found" || text == "No match" || text == "Draft only" || text == "Cancelled" ||
+           text == "Check app" || text == "Delivered" || text == "On the way" ||
+           text == "Recorded" || text == "Choose one" || text == "Need unit" ||
+           text == "Ready to add" || text == "Added" || text == "Undone" || text == "Not changed";
 }
 
-}
+}  // namespace
 #endif
 
 Application::Application() : notify_player_(audio_service_) {
@@ -132,7 +137,24 @@ void Application::Initialize() {
     // Setup the audio service
     auto codec = board.GetAudioCodec();
     audio_service_.Initialize(codec);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    InitializeTimers();
+#endif
     audio_service_.Start();
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    auto recorder = std::make_shared<provisions::VoiceRecorder>();
+    if (recorder->Start(
+            [this](provisions::VoiceRecorder::Result result, uint32_t press) {
+                Schedule([this, result, press]() { HandleVoiceRecordingResult(result, press); });
+            },
+            [this](std::shared_ptr<const provisions::VoiceReplay> replay) {
+                Schedule([this, replay = std::move(replay)]() { SendVoiceRecording(replay); });
+            })) {
+        std::atomic_store(&provisions_recorder_, recorder);
+    } else {
+        provisions_recording_failed_.store(true);
+    }
+#endif
 
     AudioServiceCallbacks callbacks;
     callbacks.on_send_queue_available = [this]() {
@@ -147,9 +169,51 @@ void Application::Initialize() {
     callbacks.on_playback_drained = [this]() {
         xEventGroupSetBits(event_group_, MAIN_EVENT_PLAYBACK_DRAINED);
     };
+    callbacks.on_playback_error = [this](uint32_t playback_id) {
+    // This player owns its mutex. Invalidate the exact failed notification
+    // before publishing a drain event; an empty queue is not successful audio.
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        timer_player_.OnError(playback_id);
+#endif
+        notify_player_.OnPlaybackError(playback_id);
+        Schedule([this]() {
+            if (!manual_listening_requested_.load())
+                Board::GetInstance().GetDisplay()->SetChatMessage("system", "Audio couldn't play.");
+        });
+    };
     callbacks.on_playback_progress = [this](uint32_t playback_id, uint32_t media_position_ms) {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        timer_player_.OnProgress(playback_id, media_position_ms);
+#endif
         notify_player_.OnPlaybackProgress(playback_id, media_position_ms);
     };
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    callbacks.on_recording_audio = [this](uint32_t press, const int16_t* pcm, size_t frames,
+                                          size_t channels) {
+        auto recorder = std::atomic_load(&provisions_recorder_);
+        if (recorder && !recorder->Append(press, pcm, frames, channels))
+            recorder->Fail(press);
+        if (recorder && recorder->DictationCapped(press)) {
+            audio_service_.ReleaseLocalRecordingFence(press);
+            FenceDictationThrough(press);
+            xEventGroupSetBits(event_group_, MAIN_EVENT_DICTATION_CAP);
+        }
+    };
+    callbacks.on_recording_error = [this](uint32_t press) {
+        if (auto recorder = std::atomic_load(&provisions_recorder_))
+            recorder->Fail(press);
+    };
+    callbacks.on_recording_ready = [this](uint32_t press) {
+        // Re-read current press readiness on the main task. A delayed readiness
+        // callback cannot label a released or superseding press as listening.
+        Schedule([this, press]() {
+            if (GetDeviceState() == kDeviceStateListening && manual_listening_requested_.load() &&
+                provisions_physical_press_.id() == press &&
+                audio_service_.IsLocalRecordingReady(press))
+                Board::GetInstance().GetDisplay()->SetStatus(Lang::Strings::LISTENING);
+        });
+    };
+#endif
     audio_service_.SetCallbacks(callbacks);
 
     // Add state change listeners
@@ -250,7 +314,8 @@ void Application::Run() {
         MAIN_EVENT_VAD_CHANGE | MAIN_EVENT_CLOCK_TICK | MAIN_EVENT_ERROR |
         MAIN_EVENT_NETWORK_CONNECTED | MAIN_EVENT_NETWORK_DISCONNECTED | MAIN_EVENT_TOGGLE_CHAT |
         MAIN_EVENT_START_LISTENING | MAIN_EVENT_STOP_LISTENING | MAIN_EVENT_ACTIVATION_DONE |
-        MAIN_EVENT_STATE_CHANGED | MAIN_EVENT_PLAYBACK_DRAINED;
+        MAIN_EVENT_STATE_CHANGED | MAIN_EVENT_PLAYBACK_DRAINED | MAIN_EVENT_TIMER |
+        MAIN_EVENT_DICTATION_MODE | MAIN_EVENT_DICTATION_CONTROL | MAIN_EVENT_DICTATION_CAP;
 
     while (true) {
         auto bits = xEventGroupWaitBits(event_group_, ALL_EVENTS, pdTRUE, pdFALSE, portMAX_DELAY);
@@ -262,16 +327,22 @@ void Application::Run() {
                 provisions_reconnect_wait_ticks_ = 1;
             }
 #endif
-            if (GetDeviceState() == kDeviceStateNotifying) {
-                StopNotification();
-            }
-            SetDeviceState(kDeviceStateIdle);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+            if (!manual_listening_requested_.load()) {
+#endif
+                if (GetDeviceState() == kDeviceStateNotifying) {
+                    StopNotification();
+                }
+                SetDeviceState(kDeviceStateIdle);
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-            Alert("Unavailable", last_error_message_.c_str(), "cancel",
-                  Lang::Sounds::OGG_EXCLAMATION);
+                Alert("Unavailable", last_error_message_.c_str(), "cancel",
+                      Lang::Sounds::OGG_EXCLAMATION);
 #else
             Alert(Lang::Strings::ERROR, last_error_message_.c_str(), "cancel",
                   Lang::Sounds::OGG_EXCLAMATION);
+#endif
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+            }
 #endif
         }
 
@@ -308,6 +379,15 @@ void Application::Run() {
             HandleToggleChatEvent();
         }
 
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        if (bits &
+            (MAIN_EVENT_DICTATION_MODE | MAIN_EVENT_DICTATION_CONTROL | MAIN_EVENT_DICTATION_CAP)) {
+            CloseDictationInputOnMain();
+            Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+        }
+        if (bits & MAIN_EVENT_DICTATION_CONTROL)
+            HandleDictationControlOnMain();
+#endif
         if (bits & MAIN_EVENT_START_LISTENING) {
             HandleStartListeningEvent();
         }
@@ -335,8 +415,9 @@ void Application::Run() {
                 }
                 bool send_succeeded = false;
                 const bool send_authorized = audio_service_.WithVoiceUploadLease(*packet, [&]() {
-                    if (manual_listening_requested_.load(std::memory_order_acquire) && protocol_) {
-                        send_succeeded = protocol_->SendAudio(std::move(packet));
+                    if (manual_listening_requested_.load(std::memory_order_acquire) &&
+                        GetProtocol()) {
+                        send_succeeded = GetProtocol()->SendAudio(std::move(packet));
                     }
                 });
                 if (!send_authorized) {
@@ -344,7 +425,7 @@ void Application::Run() {
                 }
                 if (!send_succeeded) {
 #else
-                if (protocol_ && !protocol_->SendAudio(std::move(packet))) {
+                if (GetProtocol() && !GetProtocol()->SendAudio(std::move(packet))) {
 #endif
                     // Drop the remaining packets. Leaving them in the queue would
                     // stall the Opus codec task (it waits for queue space), which in
@@ -377,6 +458,12 @@ void Application::Run() {
             }
         }
 
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        // Also reconcile coalesced Talk edges: the atomic press ID changes even
+        // when down/up both arrive before the main task handles their events.
+        ServiceTimers();
+        ServiceDictation();
+#endif
         if (bits & MAIN_EVENT_CLOCK_TICK) {
             clock_ticks_++;
             auto display = Board::GetInstance().GetDisplay();
@@ -384,6 +471,10 @@ void Application::Run() {
 
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
             HandleProvisionsGatewayMaintenance();
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+            if (GetDeviceState() == kDeviceStateIdle)
+                display->SetStatus(GetProvisionsIdleStatus());
+#endif
 #endif
 
             // Print debug info every 10 seconds
@@ -401,9 +492,16 @@ void Application::HandleNetworkConnectedEvent() {
     network_connected_.store(true);
     auto state = GetDeviceState();
 
-    if (state == kDeviceStateStarting || state == kDeviceStateWifiConfiguring) {
-        // Network is ready, start activation
-        SetDeviceState(kDeviceStateActivating);
+    if (state == kDeviceStateStarting || state == kDeviceStateWifiConfiguring
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        || (!GetProtocol() && activation_task_handle_ == nullptr)
+#endif
+    ) {
+        // Offline capture can make the device idle before its first connection.
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        if (!manual_listening_requested_.load())
+#endif
+            SetDeviceState(kDeviceStateActivating);
         if (activation_task_handle_ != nullptr) {
             ESP_LOGW(TAG, "Activation task already running");
             return;
@@ -420,7 +518,7 @@ void Application::HandleNetworkConnectedEvent() {
     }
 
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-    if (state == kDeviceStateIdle && protocol_) {
+    if (state == kDeviceStateIdle && GetProtocol()) {
         provisions_reconnect_attempts_ = 0;
         provisions_reconnect_wait_ticks_ = 0;
     }
@@ -442,22 +540,28 @@ void Application::HandleNetworkDisconnectedEvent() {
         StopNotification();
     }
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-    if (protocol_) {
+    if (GetProtocol()) {
         SetProvisionsResponsePending(false);
         provisions_reconnect_attempts_ = 0;
         provisions_reconnect_wait_ticks_ = 1;
 #else
-    if (protocol_ && (state == kDeviceStateConnecting || state == kDeviceStateListening ||
-                      state == kDeviceStateSpeaking)) {
+    if (GetProtocol() && (state == kDeviceStateConnecting || state == kDeviceStateListening ||
+                          state == kDeviceStateSpeaking)) {
 #endif
         ESP_LOGI(TAG, "Closing audio channel due to network disconnection");
-        protocol_->CloseAudioChannel();
+        GetProtocol()->CloseAudioChannel();
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-        if (state == kDeviceStateConnecting || state == kDeviceStateListening ||
-            state == kDeviceStateSpeaking) {
-            SetDeviceState(kDeviceStateIdle);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        if (!manual_listening_requested_.load()) {
+#endif
+            if (state == kDeviceStateConnecting || state == kDeviceStateListening ||
+                state == kDeviceStateSpeaking) {
+                SetDeviceState(kDeviceStateIdle);
+            }
+            Board::GetInstance().GetDisplay()->SetStatus(GetProvisionsIdleStatus());
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
         }
-        Board::GetInstance().GetDisplay()->SetStatus("Unavailable");
+#endif
 #endif
     }
 
@@ -470,8 +574,12 @@ void Application::HandleActivationDoneEvent() {
     ESP_LOGI(TAG, "Activation done");
 
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-    if (!protocol_ || !protocol_->IsAudioChannelOpened()) {
+    if (!GetProtocol() || !GetProtocol()->IsAudioChannelOpened()) {
         ESP_LOGE(TAG, "Provisions gateway authentication is not ready");
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        if (manual_listening_requested_.load())
+            return;
+#endif
         Alert("Unavailable", "Gateway authentication failed", "cancel",
               Lang::Sounds::OGG_EXCLAMATION);
         return;
@@ -479,7 +587,10 @@ void Application::HandleActivationDoneEvent() {
 #endif
 
     SystemInfo::PrintHeapStats();
-    SetDeviceState(kDeviceStateIdle);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    if (!manual_listening_requested_.load())
+#endif
+        SetDeviceState(kDeviceStateIdle);
 
     has_server_time_ = ota_->HasServerTime();
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
@@ -491,7 +602,8 @@ void Application::HandleActivationDoneEvent() {
 
     auto display = Board::GetInstance().GetDisplay();
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-    display->SetStatus("Ready");
+    if (!manual_listening_requested_.load())
+        display->SetStatus(GetProvisionsIdleStatus());
 #else
     std::string message = std::string(Lang::Strings::VERSION) + ota_->GetCurrentVersion();
     display->ShowNotification(message.c_str());
@@ -504,7 +616,11 @@ void Application::HandleActivationDoneEvent() {
     board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
 
     Schedule([this]() {
-        // Play the success sound to indicate the device is ready
+    // Do not put the boot cue into a locally held microphone recording.
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        if (manual_listening_requested_.load())
+            return;
+#endif
         audio_service_.PlaySound(Lang::Sounds::OGG_SUCCESS);
     });
 }
@@ -537,7 +653,7 @@ void Application::ActivationTask() {
     InitializeProtocol();
 
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-    if (!protocol_ || !protocol_->IsAudioChannelOpened()) {
+    if (!GetProtocol() || !GetProtocol()->IsAudioChannelOpened()) {
         ESP_LOGE(TAG, "Provisions gateway authentication failed during activation");
         return;
     }
@@ -724,7 +840,7 @@ void Application::InitializeProtocol() {
 
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     if (ota_->HasWebsocketConfig()) {
-        protocol_ = std::make_unique<WebsocketProtocol>();
+        SetProtocol(std::make_shared<WebsocketProtocol>());
     } else {
         ESP_LOGE(TAG, "Provisions bootstrap did not return the approved WebSocket");
         last_error_message_ = "Approved gateway configuration is unavailable";
@@ -733,16 +849,21 @@ void Application::InitializeProtocol() {
     }
 #else
     if (ota_->HasMqttConfig()) {
-        protocol_ = std::make_unique<MqttProtocol>();
+        SetProtocol(std::make_shared<MqttProtocol>());
     } else if (ota_->HasWebsocketConfig()) {
-        protocol_ = std::make_unique<WebsocketProtocol>();
+        SetProtocol(std::make_shared<WebsocketProtocol>());
     } else {
         ESP_LOGW(TAG, "No protocol specified in the OTA config, using MQTT");
-        protocol_ = std::make_unique<MqttProtocol>();
+        SetProtocol(std::make_shared<MqttProtocol>());
     }
 #endif
 
-    protocol_->OnConnected([this]() {
+    const auto protocol = GetProtocol();
+    const std::weak_ptr<Protocol> source = protocol;
+    protocol->OnConnected([this, source]() {
+        const auto protocol = source.lock();
+        if (!protocol || GetProtocol() != protocol)
+            return;
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
         provisions_heartbeat_ticks_ = 0;
         provisions_reconnect_attempts_ = 0;
@@ -751,8 +872,15 @@ void Application::InitializeProtocol() {
         DismissAlert();
     });
 
-    protocol_->OnNetworkError([this](const std::string& message) {
+    protocol->OnNetworkError([this, source](const std::string& message) {
+        const auto protocol = source.lock();
+        if (!protocol || GetProtocol() != protocol)
+            return;
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        timer_player_.OnDisconnected();
+#endif
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        protocol->InvalidateVoiceReply();
         InvalidateProvisionsTtsTurn();
         provisions_response_pending_.store(false);
         Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
@@ -761,37 +889,80 @@ void Application::InitializeProtocol() {
         xEventGroupSetBits(event_group_, MAIN_EVENT_ERROR);
     });
 
-    protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
+    protocol->OnIncomingAudio([this, source](std::unique_ptr<AudioStreamPacket> packet) {
+        const auto protocol = source.lock();
+        if (!protocol || GetProtocol() != protocol)
+            return;
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        if (packet->source_session_id != protocol->session_id())
+            return;
+        if (timer_player_.OnAudio(packet->payload, packet->source_session_id))
+            return;
+#endif
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        if (manual_listening_requested_.load(std::memory_order_acquire) ||
+            ProvisionsReplyInterrupted() || !GetProtocol() ||
+            !protocol->IsCurrentVoiceTurn(protocol->voice_turn_id())) {
+            return;
+        }
+#endif
         if (GetDeviceState() == kDeviceStateSpeaking) {
             audio_service_.PushPacketToDecodeQueue(std::move(packet));
         }
     });
 
-    protocol_->OnAudioChannelOpened([this, codec, &board]() {
+    protocol->OnAudioChannelOpened([this, source, codec, &board]() {
+        const auto protocol = source.lock();
+        if (!protocol || GetProtocol() != protocol)
+            return;
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        protocol->InvalidateVoiceReply();
         InvalidateProvisionsTtsTurn();
 #endif
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        provisions::VoiceContext context;
+        if (static_cast<WebsocketProtocol*>(protocol.get())->GetCaptureContext(context)) {
+            auto recorder = std::atomic_load(&provisions_recorder_);
+            if (!recorder || !recorder->UpdateContext(context)) {
+                protocol->CloseAudioChannel();
+                return;
+            }
+        }
+#endif
         board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
-        if (protocol_->server_sample_rate() != codec->output_sample_rate()) {
+        if (protocol->server_sample_rate() != codec->output_sample_rate()) {
             ESP_LOGW(TAG,
                      "Server sample rate %d does not match device output sample rate %d, "
                      "resampling may cause distortion",
-                     protocol_->server_sample_rate(), codec->output_sample_rate());
+                     protocol->server_sample_rate(), codec->output_sample_rate());
         }
     });
 
-    protocol_->OnAudioChannelClosed([this, &board]() {
+    protocol->OnAudioChannelClosed([this, source, &board]() {
+        const auto protocol = source.lock();
+        if (!protocol || GetProtocol() != protocol)
+            return;
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        timer_player_.OnDisconnected();
+#endif
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        protocol->InvalidateVoiceReply();
         InvalidateProvisionsTtsTurn();
 #endif
         board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
-        Schedule([this]() {
+        Schedule([this, source]() {
+            if (source.lock() != GetProtocol())
+                return;
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
             SetProvisionsResponsePending(false);
             provisions_heartbeat_ticks_ = 0;
             if (provisions_reconnect_wait_ticks_ == 0) {
                 provisions_reconnect_wait_ticks_ = 1;
             }
+#endif
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+            if (manual_listening_requested_.load())
+                return;
 #endif
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
@@ -802,7 +973,10 @@ void Application::InitializeProtocol() {
         });
     });
 
-    protocol_->OnIncomingJson([this, display](const cJSON* root) {
+    protocol->OnIncomingJson([this, source, display](const cJSON* root) {
+        const auto protocol = source.lock();
+        if (!protocol || GetProtocol() != protocol)
+            return;
         // Parse JSON data
         auto type = cJSON_GetObjectItem(root, "type");
         if (!cJSON_IsString(type)) {
@@ -810,22 +984,115 @@ void Application::InitializeProtocol() {
             return;
         }
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-        auto reject_gateway_frame = [this]() {
+        auto reject_gateway_frame = [this, source]() {
+            if (source.lock() != GetProtocol())
+                return;
             InvalidateProvisionsTtsTurn();
-            Schedule([this]() {
+            Schedule([this, source]() {
+                if (source.lock() != GetProtocol())
+                    return;
                 SetProvisionsResponsePending(false);
-                if (protocol_) {
-                    protocol_->CloseAudioChannel();
+                if (GetProtocol()) {
+                    GetProtocol()->CloseAudioChannel();
                 }
                 Alert("Unavailable", "Invalid gateway response", "cancel",
                       Lang::Sounds::OGG_EXCLAMATION);
             });
         };
-        if (strcmp(type->valuestring, "provisions") != 0 &&
-            strcmp(type->valuestring, "tts") != 0) {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        if (strcmp(type->valuestring, "dictation") == 0) {
+            auto* websocket = static_cast<WebsocketProtocol*>(protocol.get());
+            provisions::dictation::Reply reply;
+            auto recorder = std::atomic_load(&provisions_recorder_);
+            if (!websocket->DictationNegotiated() ||
+                !provisions::dictation::ParseReply(root, protocol->session_id(), reply) ||
+                !recorder || !recorder->AcknowledgeDictation(reply))
+                reject_gateway_frame();
+            return;
+        }
+        const bool timer_frame = strcmp(type->valuestring, "timer") == 0;
+        const bool timer_tts =
+            strcmp(type->valuestring, "tts") == 0 &&
+            (timer_player_.OwnsOutput() || cJSON_GetObjectItemCaseSensitive(root, "playback_id"));
+        if (timer_frame || timer_tts) {
+            auto* websocket = static_cast<WebsocketProtocol*>(protocol.get());
+            if (!timer_player_.OnJson(root, protocol->session_id(), websocket->TimersNegotiated(),
+                                      provisions_physical_press_.id())) {
+                timer_player_.OnDisconnected();
+                reject_gateway_frame();
+            }
+            return;
+        }
+        // Capture receipts are independent of the audible turn. A later button
+        // press must not prevent reconciliation of an earlier durable recording.
+        if (strcmp(type->valuestring, "capture_receipt") == 0 ||
+            strcmp(type->valuestring, "capture_context") == 0) {
+            auto session = cJSON_GetObjectItemCaseSensitive(root, "session_id");
+            auto* websocket = static_cast<WebsocketProtocol*>(protocol.get());
+            provisions::VoiceContext negotiated;
+            if (!cJSON_IsString(session) || !protocol->IsAudioChannelOpened() ||
+                protocol->session_id() != session->valuestring ||
+                !websocket->GetCaptureContext(negotiated)) {
+                reject_gateway_frame();
+                return;
+            }
+            auto recorder = std::atomic_load(&provisions_recorder_);
+            if (strcmp(type->valuestring, "capture_receipt") == 0) {
+                provisions::VoiceCaptureReceipt receipt;
+                if (!provisions::ParseVoiceReceipt(root, receipt) ||
+                    (receipt.capture.IsDictation() && !websocket->DictationNegotiated())) {
+                    reject_gateway_frame();
+                    return;
+                }
+                if (recorder)
+                    recorder->Acknowledge(receipt);
+            } else {
+                provisions::VoiceContext context;
+                if (!HasExactKeys(root, {"session_id", "type", "context"}) ||
+                    !provisions::ParseVoiceContext(
+                        cJSON_GetObjectItemCaseSensitive(root, "context"), context) ||
+                    !websocket->AcceptCaptureContext(context, true)) {
+                    reject_gateway_frame();
+                    return;
+                }
+                if (!recorder || !recorder->UpdateContext(context)) {
+                    reject_gateway_frame();
+                    return;
+                }
+            }
+            return;
+        }
+#endif
+        if (strcmp(type->valuestring, "provisions") != 0 && strcmp(type->valuestring, "tts") != 0) {
             ESP_LOGE(TAG, "Rejecting unsupported Provisions gateway frame type");
             reject_gateway_frame();
             return;
+        }
+        uint32_t gateway_turn = 0;
+        auto reply_state = cJSON_GetObjectItem(root, "state");
+        const bool heartbeat = strcmp(type->valuestring, "provisions") == 0 &&
+                               cJSON_IsString(reply_state) &&
+                               strcmp(reply_state->valuestring, "heartbeat") == 0;
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        if (!heartbeat && timer_player_.Fenced()) {
+            reject_gateway_frame();
+            return;
+        }
+#endif
+        if (!heartbeat) {
+            auto turn = cJSON_GetObjectItem(root, "turn_id");
+            if (!cJSON_IsNumber(turn) || turn->valuedouble < 1 ||
+                turn->valuedouble > 2147483647.0 ||
+                turn->valuedouble != static_cast<uint32_t>(turn->valuedouble)) {
+                reject_gateway_frame();
+                return;
+            }
+            gateway_turn = static_cast<uint32_t>(turn->valuedouble);
+            if (!GetProtocol() || !GetProtocol()->IsCurrentVoiceTurn(gateway_turn) ||
+                ProvisionsReplyInterrupted() ||
+                manual_listening_requested_.load(std::memory_order_acquire)) {
+                return;
+            }
         }
 #endif
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
@@ -833,8 +1100,8 @@ void Application::InitializeProtocol() {
             auto session = cJSON_GetObjectItem(root, "session_id");
             auto state = cJSON_GetObjectItem(root, "state");
             auto text = cJSON_GetObjectItem(root, "text");
-            const bool valid_session = cJSON_IsString(session) && protocol_ &&
-                                       protocol_->session_id() == session->valuestring;
+            const bool valid_session = cJSON_IsString(session) && GetProtocol() &&
+                                       GetProtocol()->session_id() == session->valuestring;
             bool valid = valid_session && cJSON_IsString(state);
             bool working = false;
             bool terminal = false;
@@ -874,26 +1141,24 @@ void Application::InitializeProtocol() {
                     return;
                 }
             } else if (valid && strcmp(state->valuestring, "working") == 0) {
-                valid = HasExactKeys(root, {"session_id", "type", "state", "text"}) &&
+                valid = HasExactKeys(root, {"session_id", "type", "state", "text", "turn_id"}) &&
                         cJSON_IsString(text) && strcmp(text->valuestring, "Working") == 0;
                 working = valid;
             } else if (valid && strcmp(state->valuestring, "result") == 0) {
                 auto receipt_id = cJSON_GetObjectItem(root, "receipt_id");
-                valid = HasExactKeys(
-                            root, {"session_id", "type", "state", "text", "receipt_id"}) &&
-                        cJSON_IsString(text) &&
-                        IsApprovedReceiptText(text->valuestring) &&
+                valid = HasExactKeys(root, {"session_id", "type", "state", "text", "receipt_id",
+                                            "turn_id"}) &&
+                        cJSON_IsString(text) && IsApprovedReceiptText(text->valuestring) &&
                         cJSON_IsString(receipt_id) &&
                         ProvisionsEndpointPolicy::IsCanonicalUuid(receipt_id->valuestring);
                 terminal = valid;
                 if (valid) {
                     display_text = text->valuestring;
                 }
-            } else if (valid &&
-                       (strcmp(state->valuestring, "success") == 0 ||
-                        strcmp(state->valuestring, "not_found") == 0 ||
-                        strcmp(state->valuestring, "warning") == 0)) {
-                valid = HasExactKeys(root, {"session_id", "type", "state", "text"}) &&
+            } else if (valid && (strcmp(state->valuestring, "success") == 0 ||
+                                 strcmp(state->valuestring, "not_found") == 0 ||
+                                 strcmp(state->valuestring, "warning") == 0)) {
+                valid = HasExactKeys(root, {"session_id", "type", "state", "text", "turn_id"}) &&
                         cJSON_IsString(text) && IsApprovedShortText(text->valuestring);
                 terminal = valid;
                 if (valid) {
@@ -910,12 +1175,28 @@ void Application::InitializeProtocol() {
             }
             if (working) {
                 InvalidateProvisionsTtsTurn();
-                Schedule([this]() { SetProvisionsResponsePending(true); });
+                Schedule(
+                    [this, gateway_turn, gateway_session = std::string(session->valuestring)]() {
+                        if (GetProtocol() && GetProtocol()->IsAudioChannelOpened() &&
+                            GetProtocol()->session_id() == gateway_session &&
+                            GetProtocol()->IsCurrentVoiceTurn(gateway_turn) &&
+                            !ProvisionsReplyInterrupted() && !manual_listening_requested_.load()) {
+                            SetProvisionsResponsePending(true);
+                        }
+                    });
                 return;
             }
             if (terminal) {
                 InvalidateProvisionsTtsTurn();
-                Schedule([this, display, message = std::move(display_text)]() {
+                Schedule([this, display, gateway_turn,
+                          gateway_session = std::string(session->valuestring),
+                          message = std::move(display_text)]() {
+                    if (!GetProtocol() || !GetProtocol()->IsAudioChannelOpened() ||
+                        GetProtocol()->session_id() != gateway_session ||
+                        !GetProtocol()->IsCurrentVoiceTurn(gateway_turn) ||
+                        ProvisionsReplyInterrupted() || manual_listening_requested_.load()) {
+                        return;
+                    }
                     SetProvisionsResponsePending(false);
                     display->ShowNotification(message.c_str(), 3000);
                 });
@@ -923,7 +1204,7 @@ void Application::InitializeProtocol() {
             }
         } else
 #endif
-        if (strcmp(type->valuestring, "notify") == 0) {
+            if (strcmp(type->valuestring, "notify") == 0) {
             auto audio_url = cJSON_GetObjectItem(root, "audio_url");
             if (!cJSON_IsString(audio_url) || audio_url->valuestring[0] == '\0') {
                 ESP_LOGW(TAG, "Notify message requires audio_url");
@@ -960,8 +1241,8 @@ void Application::InitializeProtocol() {
             auto state = cJSON_GetObjectItem(root, "state");
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
             auto session = cJSON_GetObjectItem(root, "session_id");
-            const bool valid_session = cJSON_IsString(session) && protocol_ &&
-                                       protocol_->session_id() == session->valuestring;
+            const bool valid_session = cJSON_IsString(session) && GetProtocol() &&
+                                       GetProtocol()->session_id() == session->valuestring;
             if (!valid_session) {
                 ESP_LOGE(TAG, "Rejecting TTS frame with an invalid session");
                 reject_gateway_frame();
@@ -978,7 +1259,7 @@ void Application::InitializeProtocol() {
             }
             if (strcmp(state->valuestring, "start") == 0) {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-                if (!HasExactKeys(root, {"session_id", "type", "state"})) {
+                if (!HasExactKeys(root, {"session_id", "type", "state", "turn_id"})) {
                     ESP_LOGE(TAG, "Rejecting malformed TTS start frame");
                     reject_gateway_frame();
                     return;
@@ -987,12 +1268,14 @@ void Application::InitializeProtocol() {
                 if (transition.outcome == ProvisionsTtsTurn::Outcome::kDuplicate) {
                     return;
                 }
-                provisions_tts_deadline_us_.store(esp_timer_get_time() +
-                                                  kProvisionsTtsTimeoutUs);
-                Schedule([this, gateway_session, token = transition.token]() {
-                    provisions_tts_turn_.WithCurrent(token, [this, &gateway_session]() {
-                        if (!protocol_ || !protocol_->IsAudioChannelOpened() ||
-                            protocol_->session_id() != gateway_session) {
+                provisions_tts_deadline_us_.store(esp_timer_get_time() + kProvisionsTtsTimeoutUs);
+                Schedule([this, gateway_session, gateway_turn, token = transition.token]() {
+                    provisions_tts_turn_.WithCurrent(token, [this, &gateway_session,
+                                                             gateway_turn]() {
+                        if (!GetProtocol() || !GetProtocol()->IsAudioChannelOpened() ||
+                            GetProtocol()->session_id() != gateway_session ||
+                            !GetProtocol()->IsCurrentVoiceTurn(gateway_turn) ||
+                            ProvisionsReplyInterrupted() || manual_listening_requested_.load()) {
                             return;
                         }
                         SetProvisionsResponsePending(false);
@@ -1009,7 +1292,7 @@ void Application::InitializeProtocol() {
 #endif
             } else if (strcmp(state->valuestring, "stop") == 0) {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-                if (!HasExactKeys(root, {"session_id", "type", "state"})) {
+                if (!HasExactKeys(root, {"session_id", "type", "state", "turn_id"})) {
                     ESP_LOGE(TAG, "Rejecting malformed TTS stop frame");
                     reject_gateway_frame();
                     return;
@@ -1019,10 +1302,13 @@ void Application::InitializeProtocol() {
                     return;
                 }
                 provisions_tts_deadline_us_.store(0);
-                Schedule([this, gateway_session, token = transition.token]() {
-                    provisions_tts_turn_.WithCurrent(token, [this, &gateway_session]() {
-                        if (!protocol_ || !protocol_->IsAudioChannelOpened() ||
-                            protocol_->session_id() != gateway_session) {
+                Schedule([this, gateway_session, gateway_turn, token = transition.token]() {
+                    provisions_tts_turn_.WithCurrent(token, [this, &gateway_session,
+                                                             gateway_turn]() {
+                        if (!GetProtocol() || !GetProtocol()->IsAudioChannelOpened() ||
+                            GetProtocol()->session_id() != gateway_session ||
+                            !GetProtocol()->IsCurrentVoiceTurn(gateway_turn) ||
+                            ProvisionsReplyInterrupted() || manual_listening_requested_.load()) {
                             return;
                         }
                         SetProvisionsResponsePending(false);
@@ -1066,13 +1352,45 @@ void Application::InitializeProtocol() {
 #endif
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
                 auto text = cJSON_GetObjectItem(root, "text");
-                if (!HasExactKeys(root, {"session_id", "type", "state", "text"}) ||
-                    !cJSON_IsString(text) ||
+                bool sentence_keys =
+                    HasExactKeys(root, {"session_id", "type", "state", "text", "turn_id"});
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                auto capture_context = cJSON_GetObjectItemCaseSensitive(root, "capture_context");
+                provisions::VoiceContext sentence_context;
+                const bool has_sentence_context = capture_context != nullptr;
+                if (has_sentence_context) {
+                    provisions::VoiceContext negotiated;
+                    sentence_keys =
+                        HasExactKeys(root, {"session_id", "type", "state", "text", "turn_id",
+                                            "capture_context"}) &&
+                        provisions::ParseVoiceContext(capture_context, sentence_context) &&
+                        static_cast<WebsocketProtocol*>(protocol.get())
+                            ->GetCaptureContext(negotiated) &&
+                        negotiated.conversation_id == sentence_context.conversation_id;
+                }
+#endif
+                if (!sentence_keys || !cJSON_IsString(text) ||
                     !ProvisionsTtsText::IsValid(text->valuestring)) {
                     ESP_LOGE(TAG, "Rejecting malformed TTS sentence frame");
                     reject_gateway_frame();
                     return;
                 }
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                if (has_sentence_context) {
+                    auto recorder = std::atomic_load(&provisions_recorder_);
+                    if (!recorder || !recorder->PrepareContext(sentence_context)) {
+                        reject_gateway_frame();
+                        return;
+                    }
+                    // Storage preparation can wait while a new physical press
+                    // or protocol replacement cancels this answer.
+                    if (GetProtocol() != protocol || !protocol->IsAudioChannelOpened() ||
+                        protocol->session_id() != gateway_session ||
+                        !protocol->IsCurrentVoiceTurn(gateway_turn) ||
+                        ProvisionsReplyInterrupted() || manual_listening_requested_.load())
+                        return;
+                }
+#endif
                 const auto transition = provisions_tts_turn_.Sentence();
                 if (transition.outcome == ProvisionsTtsTurn::Outcome::kDuplicate) {
                     return;
@@ -1086,17 +1404,40 @@ void Application::InitializeProtocol() {
                 // are about to play. Keep the standalone device path direct:
                 // copy the cJSON-owned value, then render it on the main task.
                 // Do not log the text because it can contain private yacht data.
-                Schedule([this, display, gateway_session, token = transition.token,
-                          message = std::string(text->valuestring)]() {
-                    provisions_tts_turn_.WithCurrent(
-                        token, [this, display, &gateway_session, &message]() {
-                            if (!protocol_ || !protocol_->IsAudioChannelOpened() ||
-                                protocol_->session_id() != gateway_session ||
-                                GetDeviceState() != kDeviceStateSpeaking) {
+                Schedule([this, display, gateway_session, gateway_turn, token = transition.token,
+                          message = std::string(text->valuestring)
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                              ,
+                          sentence_context, has_sentence_context
+#endif
+                ]() {
+                    provisions_tts_turn_.WithCurrent(token, [this, display, &gateway_session,
+                                                             gateway_turn, &message
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                                                             ,
+                                                             &sentence_context, has_sentence_context
+#endif
+                    ]() {
+                        if (!GetProtocol() || !GetProtocol()->IsAudioChannelOpened() ||
+                            GetProtocol()->session_id() != gateway_session ||
+                            GetDeviceState() != kDeviceStateSpeaking ||
+                            !GetProtocol()->IsCurrentVoiceTurn(gateway_turn) ||
+                            ProvisionsReplyInterrupted() || manual_listening_requested_.load()) {
+                            return;
+                        }
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                        if (has_sentence_context) {
+                            auto active = GetProtocol();
+                            if (!active || !static_cast<WebsocketProtocol*>(active.get())
+                                                ->AcceptCaptureContext(sentence_context))
                                 return;
-                            }
-                            display->SetChatMessage("assistant", message.c_str());
-                        });
+                            auto recorder = std::atomic_load(&provisions_recorder_);
+                            if (!recorder || !recorder->ActivateContext(sentence_context))
+                                return;
+                        }
+#endif
+                        display->SetChatMessage("assistant", message.c_str());
+                    });
                 });
             } else {
                 ESP_LOGE(TAG, "Rejecting unsupported TTS state");
@@ -1174,7 +1515,7 @@ void Application::InitializeProtocol() {
         }
     });
 
-    if (!protocol_->Start()) {
+    if (!protocol->Start()) {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
         ESP_LOGE(TAG, "Failed to authenticate the Provisions gateway");
 #endif
@@ -1207,6 +1548,12 @@ void Application::ShowActivationCode(const std::string& code, const std::string&
 
 void Application::Alert(const char* status, const char* message, const char* emotion,
                         const std::string_view& sound) {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    // Bootstrap retries can also report errors from the activation task while
+    // cached-context recording continues offline.
+    if (manual_listening_requested_.load())
+        return;
+#endif
     ESP_LOGW(TAG, "Alert [%s] %s: %s", emotion, status, message);
     auto display = Board::GetInstance().GetDisplay();
     display->SetStatus(status);
@@ -1232,7 +1579,25 @@ void Application::DismissAlert() {
 
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
 const char* Application::GetProvisionsIdleStatus() const {
-    if (!protocol_ || !protocol_->IsAudioChannelOpened()) {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    if (provisions_recording_failed_.load())
+        return "Couldn't save";
+    if (provisions_recording_saving_.load())
+        return "Saving";
+    if (provisions_response_pending_.load())
+        return "Working";
+    if (auto recorder = std::atomic_load(&provisions_recorder_)) {
+        if (!recorder->IsReady() || !recorder->HasContext())
+            return "Capture unavailable";
+        if (recorder->RetryPending())
+            return "Retry queued";
+        if (recorder->NeedsAttention())
+            return recorder->CanRetry() ? "Hold blue to retry" : "Recording kept";
+        if (recorder->PendingCount() > 0)
+            return "Saved on Orbit";
+    }
+#endif
+    if (!GetProtocol() || !GetProtocol()->IsAudioChannelOpened()) {
         return "Unavailable";
     }
     return provisions_response_pending_.load() ? "Working" : "Ready";
@@ -1251,7 +1616,208 @@ void Application::InvalidateProvisionsTtsTurn() {
     provisions_tts_turn_.Invalidate();
 }
 
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+void Application::HandleVoiceRecordingResult(provisions::VoiceRecorder::Result result,
+                                             uint32_t press) {
+    using Result = provisions::VoiceRecorder::Result;
+    auto recorder = std::atomic_load(&provisions_recorder_);
+    if (result == Result::DictationReady) {
+        if (dictation_screen_.load() && manual_listening_requested_.load() &&
+            provisions_physical_press_.IsCurrent(press))
+            HandleStartListeningEvent();
+        else if (recorder)
+            recorder->Release(press);
+        ServiceDictation();
+        return;
+    }
+    if (result == Result::DictationChanged || result == Result::DictationAuthorized) {
+        if (provisions_recording_was_dictation_ && recorder && !recorder->DictationBusy() &&
+            provisions_recording_started_press_ == 0)
+            provisions_recording_saving_.store(false);
+        ServiceDictation();
+        return;
+    }
+    // Main-task result publication is serialized with recording startup.
+    // The timer-owned physical-held flag is never changed by a delayed result.
+    bool current = false;
+    {
+        std::lock_guard<std::mutex> lock(provisions_recording_control_mutex_);
+        current = press != 0 && provisions_physical_press_.IsCurrent(press);
+        if (current) {
+            if (result == Result::Saved) {
+                provisions_recording_saving_.store(false);
+                provisions_recording_local_.store(true);
+            } else if (result == Result::Failed) {
+                audio_service_.StopLocalRecording(press);
+                provisions_recording_saving_.store(false);
+                provisions_recording_failed_.store(true);
+            } else if (result == Result::Synced) {
+                provisions_recording_local_.store(false);
+            }
+        }
+    }
+    current = current && provisions_physical_press_.IsCurrent(press) &&
+              !manual_listening_requested_.load();
+    if (result == Result::Saved) {
+        if (current) {
+            auto protocol = GetProtocol();
+            const bool offline = !protocol || !protocol->IsAudioChannelOpened();
+            bool queued = false;
+            {
+                std::lock_guard<std::mutex> lock(provisions_recording_control_mutex_);
+                if (provisions_physical_press_.IsCurrent(press) &&
+                    !manual_listening_requested_.load())
+                    queued = audio_service_.PlayLocalFeedback(offline ? provisions::feedback::kSaved
+                                                                      : Lang::Sounds::OGG_SUCCESS);
+            }
+            if (offline && queued)
+                Board::GetInstance().GetDisplay()->SetChatMessage(
+                    "assistant", "Saved on Orbit. I'll sync when connected.");
+        }
+        if (recorder)
+            recorder->RequestReplay();
+    } else if (result == Result::Failed && provisions_physical_press_.IsCurrent(press)) {
+        SetDeviceState(kDeviceStateIdle);
+        Alert("Couldn't save", "I couldn't save that. Please repeat it.", "cancel", {});
+        std::lock_guard<std::mutex> lock(provisions_recording_control_mutex_);
+        if (provisions_physical_press_.IsCurrent(press) && !manual_listening_requested_.load())
+            audio_service_.PlayLocalFeedback(provisions::feedback::kFailed);
+    } else if (result == Result::NeedsAttention && !manual_listening_requested_.load()) {
+        Board::GetInstance().GetDisplay()->SetChatMessage(
+            "system", recorder && recorder->CanRetry() ? "Recording kept. Hold blue to retry."
+                                                       : "Recording kept. Speech needs attention.");
+    } else if ((result == Result::RetryQueued || result == Result::RetryUnavailable) &&
+               !manual_listening_requested_.load() && GetDeviceState() == kDeviceStateIdle) {
+        Board::GetInstance().GetDisplay()->SetChatMessage(
+            "system", result == Result::RetryQueued ? "Retry queued. Recording stays saved."
+                                                    : "Recording kept. Retry unavailable.");
+    }
+    if (GetDeviceState() == kDeviceStateIdle)
+        Board::GetInstance().GetDisplay()->SetStatus(GetProvisionsIdleStatus());
+}
+
+void Application::SendVoiceRecording(std::shared_ptr<const provisions::VoiceReplay> replay) {
+    if (timer_player_.Fenced())
+        return;
+    auto protocol = GetProtocol();
+    if (!protocol || !protocol->IsAudioChannelOpened() || manual_listening_requested_.load() ||
+        GetDeviceState() != kDeviceStateIdle || provisions_response_pending_.load())
+        return;
+    bool expected = false;
+    if (!provisions_network_busy_.compare_exchange_strong(expected, true))
+        return;
+    const uint32_t physical = provisions_physical_press_.id();
+    const bool deferred =
+        replay->capture.IsDictation() || replay->press == 0 || replay->press != physical;
+    if (!deferred) {
+        provisions_capture_press_.store(physical);
+        SetProvisionsResponsePending(true);
+    }
+    struct Upload {
+        Application* app;
+        std::shared_ptr<Protocol> protocol;
+        std::shared_ptr<const provisions::VoiceReplay> replay;
+        uint32_t physical;
+        bool deferred;
+    };
+    auto* work = new (std::nothrow) Upload{this, protocol, std::move(replay), physical, deferred};
+    if (!work ||
+        xTaskCreate(
+            [](void* argument) {
+                std::unique_ptr<Upload> work(static_cast<Upload*>(argument));
+                auto* app = work->app;
+                const bool sent =
+                    static_cast<WebsocketProtocol*>(work->protocol.get())
+                        ->SendStoredRecording(
+                            *work->replay, work->deferred,
+                            [app, physical = work->physical, protocol = work->protocol]() {
+                                return !app->manual_listening_requested_.load() &&
+                                       app->provisions_physical_press_.id() == physical &&
+                                       app->GetProtocol() == protocol;
+                            });
+                app->Schedule([app, protocol = work->protocol, physical = work->physical, sent]() {
+                    app->provisions_network_busy_.store(false);
+                    if (app->GetProtocol() != protocol)
+                        return;
+                    if (!sent && app->provisions_physical_press_.id() == physical)
+                        app->SetProvisionsResponsePending(false);
+                    if (app->GetDeviceState() == kDeviceStateIdle)
+                        Board::GetInstance().GetDisplay()->SetStatus(
+                            app->GetProvisionsIdleStatus());
+                });
+                work.reset();
+                vTaskDelete(nullptr);
+            },
+            "orbit_upload", 8192, work, 3, nullptr) != pdPASS) {
+        delete work;
+        provisions_network_busy_.store(false);
+        SetProvisionsResponsePending(false);
+    }
+}
+
+void Application::ReconnectVoiceGateway() {
+    auto protocol = GetProtocol();
+    if (!protocol)
+        return;
+    bool expected = false;
+    if (!provisions_network_busy_.compare_exchange_strong(expected, true))
+        return;
+    struct Reconnect {
+        Application* app;
+        std::shared_ptr<Protocol> protocol;
+    };
+    auto* work = new (std::nothrow) Reconnect{this, protocol};
+    if (!work || xTaskCreate(
+                     [](void* argument) {
+                         std::unique_ptr<Reconnect> work(static_cast<Reconnect*>(argument));
+                         const bool opened = work->protocol->OpenAudioChannel();
+                         auto* app = work->app;
+                         app->Schedule([app, protocol = work->protocol, opened]() {
+                             app->provisions_network_busy_.store(false);
+                             if (app->GetProtocol() != protocol)
+                                 return;
+                             if (opened && app->network_connected_.load()) {
+                                 app->provisions_reconnect_attempts_ = 0;
+                                 app->provisions_reconnect_wait_ticks_ = 0;
+                                 if (app->ota_) {
+                                     app->has_server_time_ = app->ota_->HasServerTime();
+                                     app->ota_->MarkCurrentVersionValid();
+                                     app->ota_.reset();
+                                 }
+                             } else {
+                                 protocol->CloseAudioChannel();
+                                 const int attempt = app->provisions_reconnect_attempts_++;
+                                 app->provisions_reconnect_wait_ticks_ = 1 << std::min(attempt, 4);
+                             }
+                             if (app->GetDeviceState() == kDeviceStateIdle)
+                                 Board::GetInstance().GetDisplay()->SetStatus(
+                                     app->GetProvisionsIdleStatus());
+                         });
+                         work.reset();
+                         vTaskDelete(nullptr);
+                     },
+                     "orbit_connect", 8192, work, 3, nullptr) != pdPASS) {
+        delete work;
+        provisions_network_busy_.store(false);
+        provisions_reconnect_wait_ticks_ = 1;
+    }
+}
+#endif
+
 void Application::HandleProvisionsGatewayMaintenance() {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    if (manual_listening_requested_.load())
+        return;
+    if (auto recorder = std::atomic_load(&provisions_recorder_)) {
+        if (GetDeviceState() == kDeviceStateIdle && !provisions_response_pending_.load() &&
+            !timer_player_.Fenced() && !provisions_network_busy_.load() &&
+            audio_service_.IsPlaybackIdle() && GetProtocol() &&
+            GetProtocol()->IsAudioChannelOpened())
+            recorder->RequestReplay();
+    }
+    if (provisions_network_busy_.load())
+        return;
+#endif
     const int64_t tts_deadline = provisions_tts_deadline_us_.load();
     if (tts_deadline > 0 && esp_timer_get_time() >= tts_deadline) {
         ESP_LOGE(TAG, "Provisions TTS turn timed out");
@@ -1259,8 +1825,8 @@ void Application::HandleProvisionsGatewayMaintenance() {
         SetProvisionsResponsePending(false);
         aborted_ = true;
         audio_service_.ResetDecoder();
-        if (protocol_) {
-            protocol_->CloseAudioChannel();
+        if (GetProtocol()) {
+            GetProtocol()->CloseAudioChannel();
         }
         provisions_reconnect_attempts_ = 0;
         provisions_reconnect_wait_ticks_ = 1;
@@ -1272,12 +1838,12 @@ void Application::HandleProvisionsGatewayMaintenance() {
         return;
     }
 
-    if (!protocol_ || activation_task_handle_ != nullptr ||
+    if (!GetProtocol() || activation_task_handle_ != nullptr ||
         GetDeviceState() != kDeviceStateIdle) {
         return;
     }
 
-    auto websocket = static_cast<WebsocketProtocol*>(protocol_.get());
+    auto websocket = static_cast<WebsocketProtocol*>(GetProtocol().get());
     auto display = Board::GetInstance().GetDisplay();
 
     if (provisions_response_pending_.load()) {
@@ -1286,7 +1852,7 @@ void Application::HandleProvisionsGatewayMaintenance() {
             ESP_LOGE(TAG, "Provisions gateway response timed out");
             SetProvisionsResponsePending(false);
             InvalidateProvisionsTtsTurn();
-            protocol_->CloseAudioChannel();
+            GetProtocol()->CloseAudioChannel();
             provisions_reconnect_attempts_ = 0;
             provisions_reconnect_wait_ticks_ = 1;
             Alert("Unavailable", "Request timed out", "cancel", Lang::Sounds::OGG_EXCLAMATION);
@@ -1304,7 +1870,7 @@ void Application::HandleProvisionsGatewayMaintenance() {
         ESP_LOGW(TAG, "Provisions gateway heartbeat expired");
         SetProvisionsResponsePending(false);
         InvalidateProvisionsTtsTurn();
-        protocol_->CloseAudioChannel();
+        GetProtocol()->CloseAudioChannel();
         provisions_heartbeat_ticks_ = 0;
         provisions_reconnect_attempts_ = 0;
         provisions_reconnect_wait_ticks_ = 1;
@@ -1312,7 +1878,7 @@ void Application::HandleProvisionsGatewayMaintenance() {
         return;
     }
 
-    if (protocol_->IsAudioChannelOpened()) {
+    if (GetProtocol()->IsAudioChannelOpened()) {
         provisions_reconnect_attempts_ = 0;
         provisions_reconnect_wait_ticks_ = 0;
         provisions_heartbeat_ticks_++;
@@ -1322,7 +1888,7 @@ void Application::HandleProvisionsGatewayMaintenance() {
                 ESP_LOGW(TAG, "Failed to send Provisions gateway heartbeat");
                 SetProvisionsResponsePending(false);
                 InvalidateProvisionsTtsTurn();
-                protocol_->CloseAudioChannel();
+                GetProtocol()->CloseAudioChannel();
                 provisions_reconnect_wait_ticks_ = 1;
                 display->SetStatus("Unavailable");
             }
@@ -1346,7 +1912,11 @@ void Application::HandleProvisionsGatewayMaintenance() {
     }
 
     display->SetStatus("Connecting");
-    if (protocol_->OpenAudioChannel()) {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    ReconnectVoiceGateway();
+    return;
+#endif
+    if (GetProtocol()->OpenAudioChannel()) {
         provisions_reconnect_attempts_ = 0;
         provisions_reconnect_wait_ticks_ = 0;
         if (ota_) {
@@ -1369,20 +1939,151 @@ void Application::ToggleChatState() { xEventGroupSetBits(event_group_, MAIN_EVEN
 
 void Application::StartListening() {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    if (!provisions_physical_press_.Begin()) {
+        manual_listening_requested_.store(false, std::memory_order_release);
+        return;
+    }
     manual_listening_requested_.store(true, std::memory_order_release);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    // ESP_TIMER_TASK owns the physical callback. Only atomic fences and an
+    // event bit belong here; recorder, codec, protocol and locks run on main.
+    audio_service_.FenceLocalRecording(provisions_physical_press_.id());
+#endif
 #endif
     xEventGroupSetBits(event_group_, MAIN_EVENT_START_LISTENING);
 }
 
 void Application::StopListening() {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-    // The physical button callback is the upload boundary. Do not wait for the
-    // main task to process MAIN_EVENT_STOP_LISTENING before closing it.
     manual_listening_requested_.store(false, std::memory_order_release);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    // Close sample eligibility at the physical edge. Persistence and queue
+    // cleanup are deferred without admitting a post-release microphone read.
+    audio_service_.ReleaseLocalRecordingFence(provisions_physical_press_.id());
+#else
     audio_service_.CloseVoiceUploadGate();
+#endif
 #endif
     xEventGroupSetBits(event_group_, MAIN_EVENT_STOP_LISTENING);
 }
+
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+bool Application::BeginLocalRecordingOnMain() {
+    std::lock_guard<std::mutex> lock(provisions_recording_control_mutex_);
+    const uint32_t press = provisions_physical_press_.id();
+    auto recorder = std::atomic_load(&provisions_recorder_);
+    // Event bits may coalesce down/up/down while main is busy. Freeze the older
+    // admitted capture before considering the current still-held press.
+    if (provisions_recording_started_press_ != 0 &&
+        (provisions_recording_started_press_ != press || !manual_listening_requested_.load())) {
+        audio_service_.StopLocalRecording(provisions_recording_started_press_);
+        if (recorder)
+            recorder->Release(provisions_recording_started_press_);
+        provisions_recording_started_press_ = 0;
+    }
+    if (!manual_listening_requested_.load())
+        return false;
+    if (provisions_recording_started_press_ == press)
+        return true;
+    if (press <= dictation_closed_press_.load())
+        return false;
+    audio_service_.CancelLocalFeedback();
+    if (auto protocol = GetProtocol())
+        static_cast<WebsocketProtocol*>(protocol.get())->InterruptStoredRecording();
+    uint64_t captured_ms = 0;
+    if (has_server_time_) {
+        timeval now{};
+        if (gettimeofday(&now, nullptr) == 0 && now.tv_sec > 0)
+            captured_ms = static_cast<uint64_t>(now.tv_sec) * 1000 + now.tv_usec / 1000;
+    }
+    bool began = false;
+    if (dictation_screen_.load()) {
+        if (recorder && recorder->DictationAuthorization() != dictation_authorization_seen_) {
+            dictation_authorization_seen_ = recorder->DictationAuthorization();
+            FenceDictationThrough(press);
+            return false;
+        }
+        if (!recorder || !dictation_has_assignment_proof_) {
+            FenceDictationThrough(press);
+            return false;
+        }
+        if (!recorder->CanDictate(press, dictation_assignment_proof_, captured_ms)) {
+            if (!recorder->DictationPreparing(press))
+                FenceDictationThrough(press);
+            return false;
+        }
+        began = recorder->BeginDictation(press, captured_ms);
+        if (!began)
+            return false;
+    } else
+        began = recorder && recorder->Begin(press, captured_ms);
+    if (!began) {
+        if (provisions_physical_press_.id() == press && manual_listening_requested_.load()) {
+            provisions_recording_failed_.store(true);
+            Schedule([this, press]() {
+                HandleVoiceRecordingResult(provisions::VoiceRecorder::Result::Failed, press);
+            });
+        }
+        return false;
+    }
+    provisions_recording_started_press_ = press;
+    provisions_recording_was_dictation_ = dictation_screen_.load();
+    provisions_recording_failed_.store(false);
+    provisions_recording_saving_.store(false);
+    provisions_recording_local_.store(false);
+    // A timer callback may have closed or replaced the press while Begin ran.
+    if (manual_listening_requested_.load() && provisions_physical_press_.id() == press)
+        audio_service_.StartLocalRecording(press);
+    if (!manual_listening_requested_.load() || provisions_physical_press_.id() != press) {
+        audio_service_.StopLocalRecording(press);
+        recorder->Release(press);
+        provisions_recording_started_press_ = 0;
+        return false;
+    }
+    return true;
+}
+
+void Application::EndLocalRecordingOnMain() {
+    std::lock_guard<std::mutex> lock(provisions_recording_control_mutex_);
+    if (manual_listening_requested_.load())
+        return;  // An older stop event cannot close the newer still-held press.
+    const uint32_t press = provisions_physical_press_.id();
+    const uint32_t started = provisions_recording_started_press_;
+    if (auto recorder = std::atomic_load(&provisions_recorder_))
+        recorder->Release(press);
+    audio_service_.StopLocalRecording();
+    if (started != 0) {
+        if (auto recorder = std::atomic_load(&provisions_recorder_))
+            recorder->Release(started);
+        provisions_recording_saving_.store(!provisions_recording_failed_.load());
+    }
+    provisions_recording_started_press_ = 0;
+    audio_service_.CloseVoiceUploadGate();
+    audio_service_.ResetDecoder();
+    audio_service_.ReconcileLocalRecording(press);
+}
+
+void Application::RetrySavedVoiceRecording() {
+    if (manual_listening_requested_.load() || GetDeviceState() != kDeviceStateIdle ||
+        provisions_network_busy_.load() || provisions_response_pending_.load())
+        return;
+    auto display = Board::GetInstance().GetDisplay();
+    auto protocol = GetProtocol();
+    if (!protocol || !protocol->IsAudioChannelOpened()) {
+        provisions_reconnect_attempts_ = 0;
+        provisions_reconnect_wait_ticks_ = 0;
+        ReconnectVoiceGateway();
+        display->SetChatMessage("system", "Connecting. Hold blue again to retry.");
+        return;
+    }
+    auto recorder = std::atomic_load(&provisions_recorder_);
+    if (!recorder || !recorder->RequestRetry()) {
+        display->SetChatMessage("system", "No saved recording is ready to retry.");
+        return;
+    }
+    display->SetChatMessage("system", "Retry queued. Recording stays saved.");
+}
+#endif
 
 void Application::HandleToggleChatEvent() {
     auto state = GetDeviceState();
@@ -1405,14 +2106,14 @@ void Application::HandleToggleChatEvent() {
         return;
     }
 
-    if (!protocol_) {
+    if (!GetProtocol()) {
         ESP_LOGE(TAG, "Protocol not initialized");
         return;
     }
 
     if (state == kDeviceStateIdle) {
         ListeningMode mode = GetDefaultListeningMode();
-        if (!protocol_->IsAudioChannelOpened()) {
+        if (!GetProtocol()->IsAudioChannelOpened()) {
             SetDeviceState(kDeviceStateConnecting);
             // Schedule to let the state change be processed first (UI update)
             Schedule([this, mode]() { ContinueOpenAudioChannel(mode); });
@@ -1425,7 +2126,7 @@ void Application::HandleToggleChatEvent() {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
         InvalidateProvisionsTtsTurn();
 #endif
-        protocol_->CloseAudioChannel();
+        GetProtocol()->CloseAudioChannel();
     }
 }
 
@@ -1445,8 +2146,8 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
     auto& board = Board::GetInstance();
     board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
 
-    if (!protocol_->IsAudioChannelOpened()) {
-        if (!protocol_->OpenAudioChannel()) {
+    if (!GetProtocol()->IsAudioChannelOpened()) {
+        if (!GetProtocol()->OpenAudioChannel()) {
             // Return to idle so the device is not stuck in the connecting
             // state (not every failure path reports a network error)
             SetDeviceState(kDeviceStateIdle);
@@ -1465,12 +2166,33 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
 }
 
 void Application::HandleStartListeningEvent() {
-#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-    if (!manual_listening_requested_.load()) {
-        return;
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    // Physical atomics already revoked old output and closed released input.
+    // Perform the heavy work here, outside the button's ESP_TIMER_TASK stack.
+    AbortSpeaking(kAbortReasonNone);
+    Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+    if (BeginLocalRecordingOnMain() && manual_listening_requested_.load()) {
+        if (GetDeviceState() == kDeviceStateNotifying)
+            StopNotification();
+        audio_service_.EnableVoiceProcessing(false);
+        audio_service_.EnableWakeWordDetection(false);
+        listening_mode_ = kListeningModeManualStop;
+        SetDeviceState(kDeviceStateListening);
     }
-    if (provisions_response_pending_.load()) {
-        ESP_LOGW(TAG, "Ignoring Talk while the previous request is working");
+    return;
+#endif
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    if (GetDeviceState() == kDeviceStateListening && ProvisionsReplyInterrupted()) {
+        audio_service_.EnableVoiceProcessing(false);
+        AbortSpeaking(kAbortReasonNone);
+        SetDeviceState(kDeviceStateIdle);
+    }
+    if (provisions_response_pending_.load() || GetDeviceState() == kDeviceStateSpeaking) {
+        // The gateway retains any in-flight business receipt. Interrupt its
+        // publication and start a new correlated talk turn on the same session.
+        AbortSpeaking(kAbortReasonNone);
+    }
+    if (!manual_listening_requested_.load()) {
         return;
     }
 #endif
@@ -1490,7 +2212,7 @@ void Application::HandleStartListeningEvent() {
         return;
     }
 
-    if (!protocol_) {
+    if (!GetProtocol()) {
         ESP_LOGE(TAG, "Protocol not initialized");
         return;
     }
@@ -1499,7 +2221,7 @@ void Application::HandleStartListeningEvent() {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
         InvalidateProvisionsTtsTurn();
 #endif
-        if (!protocol_->IsAudioChannelOpened()) {
+        if (!GetProtocol()->IsAudioChannelOpened()) {
             SetDeviceState(kDeviceStateConnecting);
             // Schedule to let the state change be processed first (UI update)
             Schedule([this]() { ContinueOpenAudioChannel(kListeningModeManualStop); });
@@ -1516,6 +2238,20 @@ void Application::HandleStartListeningEvent() {
 }
 
 void Application::HandleStopListeningEvent() {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    EndLocalRecordingOnMain();
+    if (!manual_listening_requested_.load()) {
+        audio_service_.EnableVoiceProcessing(false);
+        SetDeviceState(kDeviceStateIdle);
+    }
+    return;
+#endif
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    // A newer press supersedes a release queued in the same main-loop batch.
+    if (manual_listening_requested_.load()) {
+        return;
+    }
+#endif
     auto state = GetDeviceState();
 
     if (state == kDeviceStateNotifying) {
@@ -1530,22 +2266,27 @@ void Application::HandleStopListeningEvent() {
         return;
 #endif
     } else if (state == kDeviceStateListening) {
-        if (protocol_) {
+        if (GetProtocol()) {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
             // Button release is the privacy boundary: stop production and
             // invalidate/drain queued microphone frames before the JSON stop
             // marker can be followed by MAIN_EVENT_SEND_AUDIO in this loop.
             audio_service_.EnableVoiceProcessing(false);
+            if (ProvisionsReplyInterrupted() ||
+                !GetProtocol()->IsCurrentVoiceTurn(GetProtocol()->voice_turn_id())) {
+                SetDeviceState(kDeviceStateIdle);
+                return;
+            }
             SetProvisionsResponsePending(true);
 #endif
-            protocol_->SendStopListening();
+            GetProtocol()->SendStopListening();
         }
         SetDeviceState(kDeviceStateIdle);
     }
 }
 
 void Application::HandleWakeWordDetectedEvent() {
-    if (!protocol_) {
+    if (!GetProtocol()) {
         return;
     }
 
@@ -1565,7 +2306,7 @@ void Application::HandleWakeWordDetectedEvent() {
             ;
 
         if (state == kDeviceStateListening) {
-            protocol_->SendStartListening(GetDefaultListeningMode());
+            GetProtocol()->SendStartListening(GetDefaultListeningMode());
             audio_service_.ResetDecoder();
             audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);
             // Re-enable wake word detection as it was stopped by the detection itself
@@ -1595,7 +2336,7 @@ void Application::BeginWakeWordInvoke(const std::string& wake_word) {
         return;
     }
 
-    if (!protocol_->IsAudioChannelOpened()) {
+    if (!GetProtocol()->IsAudioChannelOpened()) {
         // Schedule to let the state change be processed first (UI update),
         // then continue with OpenAudioChannel which may block for ~1 second
         Schedule([this, wake_word]() { ContinueWakeWordInvoke(wake_word); });
@@ -1615,8 +2356,8 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
     auto& board = Board::GetInstance();
     board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
 
-    if (!protocol_->IsAudioChannelOpened()) {
-        if (!protocol_->OpenAudioChannel()) {
+    if (!GetProtocol()->IsAudioChannelOpened()) {
+        if (!GetProtocol()->OpenAudioChannel()) {
             // Return to idle so the device is not stuck in the connecting
             // state (not every failure path reports a network error), and
             // wake word detection is re-enabled by the idle state handler.
@@ -1629,10 +2370,10 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
 #if CONFIG_SEND_WAKE_WORD_DATA
     // Encode and send the wake word data to the server
     while (auto packet = audio_service_.PopWakeWordPacket()) {
-        protocol_->SendAudio(std::move(packet));
+        GetProtocol()->SendAudio(std::move(packet));
     }
     // Set the chat state to wake word detected
-    protocol_->SendWakeWordDetected(wake_word);
+    GetProtocol()->SendWakeWordDetected(wake_word);
     SetListeningMode(GetDefaultListeningMode());
 #else
     // Set flag to play popup sound after state changes to listening
@@ -1673,7 +2414,13 @@ void Application::HandleStateChangedEvent() {
             display->SetChatMessage("system", "");
             break;
         case kDeviceStateListening:
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+            display->SetStatus(audio_service_.IsLocalRecordingReady(provisions_physical_press_.id())
+                                   ? Lang::Strings::LISTENING
+                                   : "Preparing microphone");
+#else
             display->SetStatus(Lang::Strings::LISTENING);
+#endif
             display->SetEmotion("neutral");
 
             // Make sure the audio processor is running
@@ -1717,6 +2464,11 @@ void Application::HandleStateChangedEvent() {
 }
 
 void Application::StartListeningAudio() {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    // Physical callbacks already own the raw local microphone gate. Upload is
+    // allowed only after the released recording has a verified flash receipt.
+    return;
+#endif
     // Runs in the main loop, either directly from HandleStateChangedEvent or
     // deferred via MAIN_EVENT_PLAYBACK_DRAINED once the playback queue drains.
     if (GetDeviceState() != kDeviceStateListening) {
@@ -1729,9 +2481,32 @@ void Application::StartListeningAudio() {
     }
 #endif
 
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    const auto physical_press = provisions_physical_press_.id();
+#endif
     // Send the start listening command
-    protocol_->SendStartListening(listening_mode_);
+    GetProtocol()->SendStartListening(listening_mode_);
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    if (!GetProtocol()->IsCurrentVoiceTurn(GetProtocol()->voice_turn_id())) {
+        SetDeviceState(kDeviceStateIdle);
+        return;
+    }
+    if (!provisions_physical_press_.IsCurrent(physical_press) ||
+        !manual_listening_requested_.load()) {
+        AbortSpeaking(kAbortReasonNone);
+        SetDeviceState(kDeviceStateIdle);
+        return;
+    }
+    // Keep the captured press identity. A later physical press changes the
+    // comparison immediately, even if it arrives during this store.
+    provisions_capture_press_.store(physical_press, std::memory_order_release);
+#endif
     audio_service_.EnableVoiceProcessing(true);
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    if (ProvisionsReplyInterrupted() || !manual_listening_requested_.load()) {
+        audio_service_.EnableVoiceProcessing(false);
+    }
+#endif
 
     ConfigureWakeWordForListening();
 
@@ -1753,6 +2528,10 @@ void Application::ConfigureWakeWordForListening() {
 }
 
 void Application::StartNotification(std::string audio_url, std::vector<NotifySubtitle> subtitles) {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    if (timer_player_.Fenced() || notification_playback_id_ >= 0x7fffffffu)
+        return;
+#endif
     if (GetDeviceState() != kDeviceStateIdle || notify_player_.IsBusy()) {
         ESP_LOGW(TAG, "Ignoring notify message while device is busy");
         return;
@@ -1829,6 +2608,10 @@ void Application::Schedule(std::function<void()>&& callback) {
 void Application::AbortSpeaking(AbortReason reason) {
     ESP_LOGI(TAG, "Abort speaking");
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    provisions_capture_press_.store(0, std::memory_order_release);
+    if (GetProtocol()) {
+        GetProtocol()->InvalidateVoiceReply();
+    }
     InvalidateProvisionsTtsTurn();
     SetProvisionsResponsePending(false);
     Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
@@ -1836,8 +2619,13 @@ void Application::AbortSpeaking(AbortReason reason) {
     audio_service_.ResetDecoder();
 #endif
     aborted_ = true;
-    if (protocol_) {
-        protocol_->SendAbortSpeaking(reason);
+    if (auto protocol = GetProtocol()) {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        // The in-flight upload observes the physical press fence and sends its
+        // own abort. Never compete with its socket write or a handshake.
+        if (!static_cast<WebsocketProtocol*>(protocol.get())->IsTransportBusy())
+#endif
+            protocol->SendAbortSpeaking(reason);
     }
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     if (GetDeviceState() == kDeviceStateSpeaking) {
@@ -1861,13 +2649,13 @@ void Application::Reboot() {
         StopNotification();
     }
     // Disconnect the audio channel
-    if (protocol_ && protocol_->IsAudioChannelOpened()) {
+    if (GetProtocol() && GetProtocol()->IsAudioChannelOpened()) {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
         InvalidateProvisionsTtsTurn();
 #endif
-        protocol_->CloseAudioChannel();
+        GetProtocol()->CloseAudioChannel();
     }
-    protocol_.reset();
+    SetProtocol(nullptr);
     audio_service_.Stop();
 
     vTaskDelay(pdMS_TO_TICKS(1000));
@@ -1886,12 +2674,12 @@ bool Application::UpgradeFirmware(const std::string& url, const std::string& ver
     }
 
     // Close audio channel if it's open
-    if (protocol_ && protocol_->IsAudioChannelOpened()) {
+    if (GetProtocol() && GetProtocol()->IsAudioChannelOpened()) {
         ESP_LOGI(TAG, "Closing audio channel before firmware upgrade");
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
         InvalidateProvisionsTtsTurn();
 #endif
-        protocol_->CloseAudioChannel();
+        GetProtocol()->CloseAudioChannel();
     }
     ESP_LOGI(TAG, "Starting firmware upgrade from URL: %s", upgrade_url.c_str());
 
@@ -1937,7 +2725,7 @@ bool Application::UpgradeFirmware(const std::string& url, const std::string& ver
 }
 
 void Application::WakeWordInvoke(const std::string& wake_word) {
-    if (!protocol_) {
+    if (!GetProtocol()) {
         return;
     }
 
@@ -1962,11 +2750,11 @@ void Application::WakeWordInvoke(const std::string& wake_word) {
         Schedule([this]() { AbortSpeaking(kAbortReasonNone); });
     } else if (state == kDeviceStateListening) {
         Schedule([this]() {
-            if (protocol_) {
+            if (GetProtocol()) {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
                 InvalidateProvisionsTtsTurn();
 #endif
-                protocol_->CloseAudioChannel();
+                GetProtocol()->CloseAudioChannel();
             }
         });
     }
@@ -1977,7 +2765,7 @@ bool Application::CanEnterSleepMode() {
         return false;
     }
 
-    if (protocol_ && protocol_->IsAudioChannelOpened()) {
+    if (GetProtocol() && GetProtocol()->IsAudioChannelOpened()) {
         return false;
     }
 
@@ -2009,8 +2797,8 @@ bool Application::HasProvisionsTimerSnapshotConsumer() {
 void Application::SendMcpMessage(const std::string& payload) {
     // Always schedule to run in main task for thread safety
     Schedule([this, payload]() {
-        if (protocol_) {
-            protocol_->SendMcpMessage(payload);
+        if (GetProtocol()) {
+            GetProtocol()->SendMcpMessage(payload);
         }
         if (mcp_broadcast_callback_) {
             mcp_broadcast_callback_(payload);
@@ -2039,11 +2827,11 @@ void Application::SetAecMode(AecMode mode) {
         }
 
         // If the AEC mode is changed, close the audio channel
-        if (protocol_ && protocol_->IsAudioChannelOpened()) {
+        if (GetProtocol() && GetProtocol()->IsAudioChannelOpened()) {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
             InvalidateProvisionsTtsTurn();
 #endif
-            protocol_->CloseAudioChannel();
+            GetProtocol()->CloseAudioChannel();
         }
     });
 }
@@ -2056,16 +2844,95 @@ void Application::ResetProtocol() {
             StopNotification();
         }
         // Close audio channel if opened
-        if (protocol_ && protocol_->IsAudioChannelOpened()) {
+        if (GetProtocol() && GetProtocol()->IsAudioChannelOpened()) {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
             InvalidateProvisionsTtsTurn();
 #endif
-            protocol_->CloseAudioChannel();
+            GetProtocol()->CloseAudioChannel();
         }
         // Reset protocol
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
         InvalidateProvisionsTtsTurn();
 #endif
-        protocol_.reset();
+        SetProtocol(nullptr);
     });
 }
+
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+void Application::HandleTimerOutputEnded() {
+    if (GetDeviceState() != kDeviceStateNotifying ||
+        manual_listening_requested_.load(std::memory_order_acquire) ||
+        !audio_service_.IsLocalInputIdle() || !audio_service_.IsPlaybackIdle())
+        return;
+    if (!SetDeviceState(kDeviceStateIdle))
+        return;
+    // A physical Talk edge or a new foreground output may have arrived while
+    // the state transition was being published. Do not lower its power level.
+    if (GetDeviceState() != kDeviceStateIdle ||
+        manual_listening_requested_.load(std::memory_order_acquire) ||
+        !audio_service_.IsLocalInputIdle() || !audio_service_.IsPlaybackIdle())
+        return;
+    auto& board = Board::GetInstance();
+    board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+    // The physical edge runs on ESP_TIMER_TASK and can land after the checks
+    // above but before the power write completes. Repair that last-writer race.
+    if (GetDeviceState() != kDeviceStateIdle ||
+        manual_listening_requested_.load(std::memory_order_acquire) ||
+        !audio_service_.IsLocalInputIdle() || !audio_service_.IsPlaybackIdle())
+        board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+}
+
+void Application::InitializeTimers() {
+    provisions::timers::Player::Hooks hooks;
+    hooks.claim = [this](uint32_t id) { return audio_service_.ClaimTimerOutput(id); };
+    hooks.release = [this](uint32_t id) { return audio_service_.ReleaseTimerOutput(id); };
+    hooks.cancel = [this]() { audio_service_.ResetDecoder(); };
+    hooks.drained = [this]() { return audio_service_.IsPlaybackIdle(); };
+    hooks.queue = [this](uint32_t id, uint32_t ordinal, const std::vector<uint8_t>& payload) {
+        auto packet = std::make_unique<AudioStreamPacket>();
+        packet->sample_rate = 24000;
+        packet->frame_duration = 60;
+        packet->playback_id = id;
+        // Timer output uses this progress field as an exact packet ordinal.
+        packet->media_position_ms = ordinal;
+        packet->payload = payload;
+        return audio_service_.PushPacketToDecodeQueue(std::move(packet), false);
+    };
+    hooks.send = [this](const std::string& receipt) {
+        auto protocol = GetProtocol();
+        return protocol &&
+               static_cast<WebsocketProtocol*>(protocol.get())->SendTimerReceipt(receipt);
+    };
+    hooks.wake = [this]() { xEventGroupSetBits(event_group_, MAIN_EVENT_TIMER); };
+    hooks.began = [this]() {
+        audio_service_.EnableVoiceProcessing(false);
+        audio_service_.EnableWakeWordDetection(false);
+        SetDeviceState(kDeviceStateNotifying);
+        Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+    };
+    hooks.ended = [this]() { HandleTimerOutputEnded(); };
+    timer_player_.Initialize(std::move(hooks));
+}
+void Application::ServiceTimers() {
+    const auto protocol = GetProtocol();
+    const bool negotiated =
+        protocol && static_cast<WebsocketProtocol*>(protocol.get())->TimersNegotiated();
+    const auto session = protocol ? protocol->session_id() : std::string{};
+    const bool ready = GetDeviceState() == kDeviceStateIdle &&
+                       !manual_listening_requested_.load() &&
+                       !provisions_response_pending_.load() && !provisions_network_busy_.load() &&
+                       !provisions_recording_saving_.load() && !notify_player_.IsBusy() &&
+                       audio_service_.IsLocalInputIdle() && audio_service_.IsPlaybackIdle();
+    timer_player_.Service(session, negotiated, ready, provisions_physical_press_.id(),
+                          esp_timer_get_time());
+    timeval now{};
+    if (has_server_time_.load())
+        gettimeofday(&now, nullptr);
+    const auto snapshot = timer_player_.GetSnapshot();
+    Board::GetInstance().GetDisplay()->SetTimerText(
+        negotiated && snapshot.session_id == session
+            ? provisions::timers::DisplayText(
+                  snapshot, static_cast<int64_t>(now.tv_sec) * 1000 + now.tv_usec / 1000)
+            : "");
+}
+#endif

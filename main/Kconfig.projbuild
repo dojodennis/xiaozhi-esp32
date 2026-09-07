@@ -910,6 +910,12 @@ config PROVISIONS_GATEWAY_REQUIRED
     bool
     default y if BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3 || BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE || BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH
 
+config PROVISIONS_LOCAL_CAPTURE
+    bool "Keep Orbit microphone captures in the local encrypted journal"
+    depends on PROVISIONS_GATEWAY_REQUIRED && BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH
+    select WS_TRANSPORT
+    default y
+
 config PROVISIONS_PREVIEW_HOST
     string
     default "app.provisions-app.com"

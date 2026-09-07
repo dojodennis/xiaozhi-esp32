@@ -30,6 +30,7 @@ public:
     void Stop();
     void OnPlaybackProgress(uint32_t playback_id, uint32_t media_position_ms);
     void OnPlaybackDrained();
+    void OnPlaybackError(uint32_t playback_id);
     bool IsActive(uint32_t playback_id = 0) const;
     bool IsBusy() const;
 

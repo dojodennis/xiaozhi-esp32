@@ -487,6 +487,13 @@ bool Assets::EmoteStrategy::Apply(Assets* assets, bool refresh_display_theme) {
 
 bool Assets::Download(std::string url,
                       std::function<void(int progress, size_t speed)> progress_callback) {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    // Provisions ships fixed assets. The reserved recording tail must never be
+    // erased by the generic asset downloader, including a direct call.
+    (void)url;
+    (void)progress_callback;
+    return false;
+#else
     ESP_LOGI(TAG, "Downloading new version of assets from %s", url.c_str());
 
     auto network = Board::GetInstance().GetNetwork();
@@ -671,4 +678,5 @@ bool Assets::Download(std::string url,
     }
 
     return true;
+#endif
 }
