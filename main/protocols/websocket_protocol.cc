@@ -3,6 +3,9 @@
 #include "board.h"
 #include "settings.h"
 #include "system_info.h"
+#if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
+#include <new>
+#endif
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
 #include "provisions_endpoint_policy.h"
 #endif
@@ -23,6 +26,83 @@
 #include "assets/lang_config.h"
 
 #define TAG "WS"
+
+namespace {
+// Check every decoded type key, including duplicates. A reserved command never
+// falls through to the generic JSON/App path, even when strict admission fails.
+bool ReservedOutputFence(const cJSON* root) {
+    const cJSON* item;
+    cJSON_ArrayForEach(item, root) {
+        if (item->string && strcasecmp(item->string, "type") == 0 && cJSON_IsString(item) &&
+            std::string_view(item->valuestring).find("output_fence_v1") == 0)
+            return true;
+    }
+    return false;
+}
+#if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
+bool UniqueFenceField(const cJSON* object, const char* key) {
+    unsigned count = 0;
+    const cJSON* item;
+    cJSON_ArrayForEach(item, object) {
+        if (item->string && strcasecmp(item->string, key) == 0)
+            ++count;
+    }
+    return count == 1 && cJSON_GetObjectItemCaseSensitive(object, key) != nullptr;
+}
+#endif
+}  // namespace
+
+#if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
+bool WebsocketProtocol::BindOutputFenceRuntime(
+    const std::shared_ptr<provisions::output_fence::OutputFenceRuntime>& runtime) {
+    if (!runtime || connection_generation_.load() != 0)
+        return false;
+    std::shared_ptr<provisions::output_fence::OutputFenceRuntime> empty;
+    return std::atomic_compare_exchange_strong(&output_fence_runtime_, &empty, runtime);
+}
+bool WebsocketProtocol::BindVoiceClosureHandler(
+    const std::shared_ptr<ProvisionsVoiceClosures>& handler) {
+    if (!handler || connection_generation_.load() != 0)
+        return false;
+    std::shared_ptr<ProvisionsVoiceClosures> empty;
+    return std::atomic_compare_exchange_strong(&voice_closure_handler_, &empty, handler);
+}
+bool WebsocketProtocol::OutputFenceContextCurrent(const FenceDispatch& dispatch) const {
+    return dispatch.protocol.get() == this && output_fence_endpoint_allowed_.load() &&
+           output_fence_selected_.load() && dispatch.authentication_generation != 0 &&
+           dispatch.authentication_generation == output_fence_authentication_generation_.load() &&
+           dispatch.connection_generation == connection_generation_.load() &&
+           dispatch.socket == std::atomic_load(&websocket_) &&
+           dispatch.session == session_id() && dispatch.boot == SystemInfo::GetBootId() &&
+           IsAudioChannelOpened();
+}
+bool WebsocketProtocol::SendOutputFenceReply(const FenceDispatch& dispatch,
+                                           const std::string& text) {
+    // Captured transport only. This bounded queue submission proves neither
+    // delivery nor physical closure, and never reloads a replacement socket.
+    return !text.empty() && text.size() <= 2048 && OutputFenceContextCurrent(dispatch) &&
+           dispatch.socket->SendAsync(text);
+}
+void WebsocketProtocol::HandleOutputFenceFrame(
+    const char* data, size_t size, const std::shared_ptr<ProvisionsWebSocket>& original,
+    uint32_t generation) {
+    using namespace provisions::output_fence;
+    Message message;
+    if (!data || !original || size == 0 || size > 2048 ||
+        !ParseMessage(std::string_view(data, size), message))
+        return;
+    auto owner = weak_from_this().lock();
+    auto runtime = std::atomic_load(&output_fence_runtime_);
+    if (!owner || !runtime)
+        return;
+    // No caller-supplied transport/session context and no reconstruction of the
+    // grant's original device_connection_id from this fresh recovery socket.
+    auto dispatch = std::unique_ptr<FenceDispatch>(new (std::nothrow) FenceDispatch(
+        std::move(owner), original, generation, output_fence_authentication_generation_.load(),
+        session_id(), SystemInfo::GetBootId(), std::string_view(data, size), std::move(message)));
+    runtime->Submit(std::move(dispatch));
+}
+#endif
 
 WebsocketProtocol::WebsocketProtocol() { event_group_handle_ = xEventGroupCreate(); }
 
@@ -188,6 +268,10 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
         return false;
 #endif
     const uint32_t connection_generation = connection_generation_.fetch_add(1) + 1;
+#if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
+    output_fence_selected_.store(false);
+    output_fence_endpoint_allowed_.store(false);
+#endif
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     std::string url = ProvisionsEndpointPolicy::WebsocketUrl();
     Settings provisions_settings("provisions", false);
@@ -254,12 +338,17 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
     websocket->SetHeader("Protocol-Version", std::to_string(version_).c_str());
     websocket->SetHeader("Device-Id", SystemInfo::GetMacAddress().c_str());
     websocket->SetHeader("Client-Id", Board::GetInstance().GetUuid().c_str());
+#if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
+    // Both the compiled TLS URL and provisioned device token were checked above.
+    output_fence_endpoint_allowed_.store(true);
+#endif
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     websocket->SetHeader("X-Provisions-Boot-Id", SystemInfo::GetBootId().c_str());
     websocket->SetHeader("X-Provisions-Firmware-Version", esp_app_get_description()->version);
 #endif
 
-    websocket->OnData([this, connection_generation, owner = weak_from_this()](
+    websocket->OnData([this, connection_generation, owner = weak_from_this(),
+                       original = std::weak_ptr<Connection>(websocket)](
                           const char* data, size_t len, bool binary) {
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
         const auto keep_alive = owner.lock();
@@ -371,6 +460,13 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
 #else
                 ESP_LOGE(TAG, "Invalid JSON message");
 #endif
+                return;
+            }
+            if (ReservedOutputFence(root)) {
+#if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
+                HandleOutputFenceFrame(data, len, original.lock(), connection_generation);
+#endif
+                cJSON_Delete(root);
                 return;
             }
             auto type = cJSON_GetObjectItem(root, "type");
@@ -551,6 +647,26 @@ std::string WebsocketProtocol::GetHelloMessage() {
     cJSON_AddBoolToObject(features, "timers_v1", true);
     cJSON_AddBoolToObject(features, "timer_claim_recovery_v1", true);
     cJSON_AddBoolToObject(features, "dictation_v1", true);
+#if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
+    const auto runtime = std::atomic_load(&output_fence_runtime_);
+    if (runtime && std::atomic_load(&voice_closure_handler_)) {
+        cJSON_AddBoolToObject(features, "output_fence_v1", true);
+        cJSON_AddBoolToObject(features, "output_receipts_v1", true);
+        cJSON_AddBoolToObject(features, "capture_closure_v1", true);
+        const auto snapshot = runtime->Snapshot();
+        auto diagnostic = cJSON_AddObjectToObject(root, "output_fence");
+        cJSON_AddNumberToObject(diagnostic, "version", 1);
+        using provisions::output_fence::Readiness;
+        const char* state = snapshot.state == Readiness::Uncommissioned ? "uncommissioned"
+                            : snapshot.state == Readiness::RecoveryRequired ? "recovery_required"
+                            : snapshot.state == Readiness::Ready ? "ready" : "blocked";
+        cJSON_AddStringToObject(diagnostic, "state", state);
+        if (snapshot.fence_epoch)
+            cJSON_AddNumberToObject(diagnostic, "fence_epoch", *snapshot.fence_epoch);
+        else
+            cJSON_AddNullToObject(diagnostic, "fence_epoch");
+    }
+#endif
 #endif
 #else
     cJSON_AddBoolToObject(features, "mcp", true);
@@ -654,6 +770,35 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
         std::lock_guard<std::mutex> lock(capture_context_mutex_);
         capture_context_ = context;
         capture_enabled_.store(true);
+    }
+#endif
+#if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
+    output_fence_selected_.store(false);
+    const auto selected = cJSON_GetObjectItemCaseSensitive(provisions, "output_fence_v1");
+    if (selected) {
+        bool valid = cJSON_IsBool(selected) && UniqueFenceField(provisions, "output_fence_v1");
+        if (cJSON_IsTrue(selected)) {
+            for (const auto key : {"type", "transport", "version", "session_id", "provisions",
+                                   "audio_params"})
+                valid = valid && UniqueFenceField(root, key);
+            for (const auto key : {"authenticated", "turn_ids", "audio_capture",
+                                   "output_receipts_v1", "capture_closure_v1"})
+                valid = valid && UniqueFenceField(provisions, key) &&
+                        cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(provisions, key));
+            valid = valid && UniqueFenceField(provisions, "capture_context") &&
+                    output_fence_endpoint_allowed_.load() &&
+                    std::atomic_load(&output_fence_runtime_) != nullptr &&
+                    std::atomic_load(&voice_closure_handler_) != nullptr;
+            const auto generation = output_fence_authentication_generation_.load();
+            valid = valid && generation < provisions::output_fence::kMaximumInteger;
+            if (valid)
+                output_fence_authentication_generation_.store(generation + 1);
+        }
+        if (!valid) {
+            RejectServerHello("Invalid output fence selection");
+            return;
+        }
+        output_fence_selected_.store(cJSON_IsTrue(selected));
     }
 #endif
     gateway_authenticated_.store(true);

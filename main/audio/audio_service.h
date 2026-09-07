@@ -7,6 +7,7 @@
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <optional>
 
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
@@ -115,6 +116,9 @@ struct AudioTask {
     uint32_t timestamp = 0;
     uint32_t playback_id = 0;
     uint32_t media_position_ms = 0;
+#if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
+    uint64_t ordinary_owner = 0;
+#endif
 };
 
 struct DebugStatistics {
@@ -139,6 +143,77 @@ public:
     bool IsVoiceDetected() const { return voice_detected_; }
     bool IsIdle();
     bool IsPlaybackIdle();
+#if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
+    struct FenceSnapshot {
+        provisions::audio_admission::ClosureSnapshot metadata;
+        bool supported = false, input_closed = false, output_closed = false;
+    };
+    class CapturePermit final {
+    public:
+        CapturePermit(const CapturePermit&) = delete;
+        CapturePermit& operator=(const CapturePermit&) = delete;
+        uint32_t Press() const { return press_; }
+        uint64_t InputGeneration() const { return input_generation_; }
+        std::optional<uint64_t> SourceInputGeneration() const { return source_input_generation_; }
+        bool IsSealedReplay() const { return replay_; }
+
+    private:
+        friend class AudioService;
+        CapturePermit(uint32_t press, uint64_t generation, std::optional<uint64_t> source,
+                      bool replay)
+            : press_(press),
+              input_generation_(generation),
+              source_input_generation_(source),
+              replay_(replay) {}
+        const uint32_t press_;
+        const uint64_t input_generation_;
+        const std::optional<uint64_t> source_input_generation_;
+        const bool replay_;
+        mutable provisions::audio_admission::Reservation token_;
+        // No RAII release: dropping a holder cannot prove actual work has settled.
+    };
+    using CapturePermitPtr = std::shared_ptr<const CapturePermit>;
+    struct CaptureClosureSnapshot {
+        uint64_t gate_generation = 0, input_generation = 0, closed_input_generation = 0;
+        uint32_t press = 0, active_press = 0, closed_press = 0;
+        size_t preparation = 0, read_or_append = 0, encode = 0, recorder_work = 0, upload = 0;
+        bool exact_parent = false, input_sealed = false, workers_closed = false;
+    };
+    CapturePermitPtr ReserveCaptureParent(uint32_t press);
+    // Root must provide validated immutable loader lineage. Zero press is ONLY post-restart.
+    CapturePermitPtr ReserveSealedReplayParent(uint32_t source_press,
+                                               std::optional<uint64_t> source_input_generation,
+                                               bool post_restart_loader);
+    bool StartLocalRecording(uint32_t press, const CapturePermitPtr& permit);
+    bool SealCaptureInput(const CapturePermitPtr& permit);
+    bool ReserveCaptureWork(const CapturePermitPtr& permit,
+                            provisions::audio_admission::Producer producer,
+                            provisions::audio_admission::Reservation& reservation);
+    bool CanPublishCaptureWork(const CapturePermitPtr& permit,
+                               const provisions::audio_admission::Reservation& reservation);
+    bool CompleteCaptureWork(const CapturePermitPtr& permit,
+                             provisions::audio_admission::Reservation& reservation);
+    bool ReleaseCaptureParent(const CapturePermitPtr& permit);
+    CaptureClosureSnapshot GetCaptureClosureSnapshot(const CapturePermitPtr& permit);
+    provisions::audio_admission::Gate& AudioAdmission() { return audio_admission_; }
+    uint64_t BeginAudioFenceClose();
+    bool HoldAudioFence(const provisions::audio_admission::FenceIdentity& identity,
+                        uint64_t generation);
+    FenceSnapshot GetAudioFenceSnapshot(const provisions::audio_admission::FenceIdentity& identity);
+    bool OpenAudioFenceAfterTerminal(const provisions::audio_admission::FenceIdentity& identity,
+                                     uint64_t generation);
+    bool ReserveTimerPreparation(const provisions::audio_admission::TimerIdentity& identity);
+    bool ReleaseTimerPreparation(const provisions::audio_admission::TimerIdentity& identity);
+    bool ClaimRetainedTimerOutput(uint32_t id,
+                                  const provisions::audio_admission::TimerIdentity& identity);
+    bool PushTimerPacket(uint32_t owner, std::unique_ptr<AudioStreamPacket> packet);
+    bool BeginOrdinaryOutput(uint64_t owner);
+    bool PushOrdinaryPacket(uint64_t owner, std::unique_ptr<AudioStreamPacket> packet);
+    bool SealOrdinaryOutput(uint64_t owner, bool discard = false);
+    bool IsOrdinaryOutputClosed(uint64_t owner);
+    bool RetireOrdinaryOutput(uint64_t owner);
+    void DiscardAudioTesting();
+#endif
     bool IsWakeWordRunning() const {
         return xEventGroupGetBits(event_group_) & AS_EVENT_WAKE_WORD_RUNNING;
     }
@@ -167,8 +242,14 @@ public:
     void CloseVoiceUploadGate();
     template <typename Action>
     bool WithVoiceUploadLease(const AudioStreamPacket& packet, Action&& action) {
+#if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
+        (void)packet;
+        (void)action;
+        return false;  // Unsettled realtime/AFE workers are unsupported in the matched build.
+#else
         return voice_upload_gate_.WithSendLease(packet.voice_upload_generation,
                                                 std::forward<Action>(action));
+#endif
     }
     void EnableAudioTesting(bool enable);
     void EnableDeviceAec(bool enable);
@@ -182,6 +263,10 @@ public:
     // A timer owns output until its durable terminal fact is acknowledged.
     bool ClaimTimerOutput(uint32_t id) {
         std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+#if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
+        if (!timer_preparation_work_ || !timer_preparation_work_->Allowed() || ordinary_owner_ != 0)
+            return false;
+#endif
         if (id == 0 || !IsPlaybackDrainedLocked() || local_recording_press_.load() != 0 ||
             local_input_press_.load() != 0 ||
             local_physical_boundary_.load() != local_output_boundary_.load())
@@ -199,7 +284,16 @@ public:
         return true;
     }
     bool ReleaseTimerOutput(uint32_t id) {
+#if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
+        std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+        if (!IsPlaybackDrainedLocked() || id == 0 ||
+            !timer_output_owner_.compare_exchange_strong(id, 0))
+            return false;
+        timer_recovery_work_.reset();
+        return true;
+#else
         return id != 0 && timer_output_owner_.compare_exchange_strong(id, 0);
+#endif
     }
     // Embedded sounds only: keep their storage alive through playback. These
     // controls never demux, decode, wait for capacity or write to the codec.
@@ -211,6 +305,28 @@ public:
     void SetModelsList(srmodel_list_t* models_list);
 
 private:
+#if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
+    provisions::audio_admission::Gate audio_admission_;  // Blocked before codec acquisition.
+    std::atomic<uint64_t> input_closed_generation_{0}, output_closed_generation_{0};
+    std::atomic<uint64_t> capture_input_generation_{0}, capture_closed_input_generation_{0};
+    std::atomic<uint32_t> capture_last_press_{0}, capture_closed_press_{0};
+    CapturePermitPtr capture_permit_;
+    uint32_t last_capture_reserve_press_ = 0;
+    std::unique_ptr<AudioAdmissionWork> testing_work_, timer_preparation_work_,
+        timer_recovery_work_, ordinary_work_;
+    provisions::audio_admission::TimerIdentity timer_preparation_identity_{};
+    uint64_t ordinary_owner_ = 0, last_ordinary_owner_ = 0;
+    bool ordinary_sealed_ = false;
+    void ServiceInputFence();
+    void ServiceOutputFence();
+    const provisions::audio_admission::Reservation* TimerParentLocked(uint32_t id);
+    bool PushFencedPacket(std::unique_ptr<AudioStreamPacket> packet, bool wait,
+                          uint64_t ordinary_owner, uint32_t timer_owner = 0);
+    bool OrdinaryClosedLocked(uint64_t owner) const;
+    CaptureClosureSnapshot CaptureClosedLocked(const CapturePermitPtr& permit) const;
+    const provisions::audio_admission::Reservation* OutputParentLocked(uint32_t timer,
+                                                                       uint64_t ordinary);
+#endif
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
     std::atomic<uint32_t> timer_output_owner_{0};
 #endif

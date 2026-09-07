@@ -10,6 +10,10 @@
 
 #include <atomic>
 #include <cstdint>
+#if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
+#include "provisions_output_fence_runtime.h"
+class ProvisionsVoiceClosures;
+#endif
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
 #include "provisions_voice_recorder.h"
 #include "provisions_websocket.h"
@@ -27,6 +31,13 @@ public:
     bool OpenAudioChannel() override;
     void CloseAudioChannel(bool send_goodbye = true) override;
     bool IsAudioChannelOpened() const override;
+
+#if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
+    // Install once, before the first connection. Root retains Store/Physical.
+    bool BindOutputFenceRuntime(
+        const std::shared_ptr<provisions::output_fence::OutputFenceRuntime>& runtime);
+    bool BindVoiceClosureHandler(const std::shared_ptr<ProvisionsVoiceClosures>& handler);
+#endif
 
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     bool SendGatewayHeartbeat();
@@ -49,6 +60,20 @@ public:
 #endif
 
 private:
+#if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
+    friend class provisions::output_fence::OutputFenceRuntime;
+    using FenceDispatch = provisions::output_fence::OutputFenceRuntime::Dispatch;
+    std::shared_ptr<provisions::output_fence::OutputFenceRuntime> output_fence_runtime_;
+    std::shared_ptr<ProvisionsVoiceClosures> voice_closure_handler_;
+    std::atomic<bool> output_fence_selected_{false};
+    std::atomic<bool> output_fence_endpoint_allowed_{false};
+    std::atomic<uint64_t> output_fence_authentication_generation_{0};
+    bool OutputFenceContextCurrent(const FenceDispatch& dispatch) const;
+    bool SendOutputFenceReply(const FenceDispatch& dispatch, const std::string& text);
+    void HandleOutputFenceFrame(const char* data, size_t size,
+                                const std::shared_ptr<ProvisionsWebSocket>& original,
+                                uint32_t generation);
+#endif
     EventGroupHandle_t event_group_handle_;
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
     using Connection = ProvisionsWebSocket;

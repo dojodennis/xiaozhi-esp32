@@ -4,6 +4,7 @@
 #include <array>
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -48,6 +49,11 @@ enum class Result { Denied, RecoveryRequired, Acquired, DrainPending, Released, 
 struct Reply {
     Result result = Result::Denied;
     std::string json;
+};
+enum class Readiness { Uncommissioned, Blocked, RecoveryRequired, Ready };
+struct ReadinessSnapshot {
+    Readiness state = Readiness::Blocked;
+    std::optional<uint64_t> fence_epoch;
 };
 
 bool ValidId(std::string_view value);
@@ -113,6 +119,8 @@ public:
     bool Hydrate();
     Reply Handle(std::string_view text);
     bool GateOpen() const;
+    // Cached Core result only: no storage or physical I/O, and no global admission authority.
+    ReadinessSnapshot Snapshot() const;
 
 private:
     Reply Respond(Result result) const;
@@ -126,6 +134,7 @@ private:
     mutable std::mutex mutex_;
     Record record_;
     bool loaded_ = false, gate_open_ = false;
+    Readiness readiness_ = Readiness::Blocked;
 };
 }  // namespace provisions::output_fence
 #endif

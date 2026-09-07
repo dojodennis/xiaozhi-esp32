@@ -33,10 +33,18 @@ bool Core::Hydrate() {
     std::lock_guard<std::mutex> lock(mutex_);
     physical_.BlockAll();
     loaded_ = gate_open_ = false;
+    readiness_ = Readiness::Blocked;
     Record loaded;
     Manifest checked;
-    if (!ValidId(device_id_) || store_.Load(loaded) != Store::LoadResult::Present ||
-        loaded.identity.device_id != device_id_ || !EncodeRecord(loaded, checked))
+    if (!ValidId(device_id_))
+        return false;
+    const auto result = store_.Load(loaded);
+    if (result == Store::LoadResult::Missing) {
+        readiness_ = Readiness::Uncommissioned;
+        return false;
+    }
+    if (result != Store::LoadResult::Present || loaded.identity.device_id != device_id_ ||
+        !EncodeRecord(loaded, checked))
         return false;
     record_ = std::move(loaded);
     loaded_ = true;
@@ -44,25 +52,36 @@ bool Core::Hydrate() {
         return false;
     if (record_.phase == Phase::Terminal)
         return OpenTerminal();
+    readiness_ = Readiness::RecoveryRequired;
     return true;
 }
 bool Core::GateOpen() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return loaded_ && gate_open_;
 }
+ReadinessSnapshot Core::Snapshot() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return {readiness_,
+            loaded_ ? std::optional<uint64_t>(record_.identity.fence_epoch) : std::nullopt};
+}
 Reply Core::Respond(Result result) const { return {result, ReplyJson(result, record_.identity)}; }
 bool Core::Closed() {
-    return !gate_open_ && physical_.Hold(record_.identity) &&
-           physical_.Observe(record_.identity).Closed();
+    const bool closed = !gate_open_ && physical_.Hold(record_.identity) &&
+                        physical_.Observe(record_.identity).Closed();
+    readiness_ = closed && record_.phase != Phase::Terminal ? Readiness::RecoveryRequired
+                                                            : Readiness::Blocked;
+    return closed;
 }
 bool Core::Persist(const Record& next) {
     if (!store_.CompareExchange(record_, next)) {
         physical_.BlockAll();
         loaded_ = gate_open_ =
             false;  // Unknown commit/readback: require a fresh durable hydration.
+        readiness_ = Readiness::Blocked;
         return false;
     }
     record_ = next;
+    readiness_ = Readiness::Blocked;
     return true;
 }
 bool Core::OpenTerminal() {
@@ -77,6 +96,7 @@ bool Core::OpenTerminal() {
         }
         gate_open_ = true;
     }
+    readiness_ = Readiness::Ready;
     return true;
 }
 Reply Core::Handle(std::string_view text) {
