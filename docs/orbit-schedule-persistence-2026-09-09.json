@@ -1,0 +1,161 @@
+{
+  "version": 1,
+  "date": "2026-09-09",
+  "status": "reviewed local preparation; runtime storage not wired",
+  "source_base": "f4da40664b20102d782ae880caa4a677424b1592",
+  "source_state": "Working-tree source prior to this evidence commit; exact file hashes below. Generic build preceded the final Provisions-only silence guard; that branch is excluded from generic. Demo and capture builds include the reviewed final guard.",
+  "source_sha256": {
+    "main/boards/m5stack/stopwatch/m5stack_stopwatch.cc": "42fe3f4348e1c0864d0c5f991de8889152eac5d945d6a2b8625cebe1fe79262f",
+    "main/boards/m5stack/stopwatch/service_schedule_face.h": "d2dc1ab2c3326aa08355ffa82c6ed893286b6bc3a9fb7d01893c019e40180d3e",
+    "main/boards/m5stack/stopwatch/service_schedule_face.cc": "95765ae5621945286bb72221b8a09b39696f3cf7b2ff7f5d5ef956dee640a917",
+    "main/boards/m5stack/stopwatch/service_schedule_storage.h": "898201117ddebb08b855dd87bea275140c03344987a2d644e5e638fd735a0fd2",
+    "main/boards/m5stack/stopwatch/service_schedule_storage.cc": "aed4d54bab16b0af745d07eb9ff0d221a52452d22142f30a889a579b150a7989",
+    "main/boards/m5stack/stopwatch/service_schedule_nvs_store.h": "12bf8bdbd97d4eda7b236cb89dc97e0852a8935384195baf5c7e988cd6e18309",
+    "main/boards/m5stack/stopwatch/service_schedule_nvs_store.cc": "351f3975e01bcd60aa9e1ecbac690b77abf1d83ff8db43f450420b922c6dd1e4",
+    "main/boards/m5stack/stopwatch/tests/service_schedule_face_persistence_test.cc": "bb4cc3751e4ae82289574c9de116f7079eb10483b172939535aef3d8640831e5",
+    "main/boards/m5stack/stopwatch/tests/test_service_schedule_face_persistence.py": "99e6e654651ee4443cac641e92b3bdf63ce130bf4dbe8c8dbfc6e697b2a78b72",
+    "main/boards/m5stack/stopwatch/tests/service_schedule_storage_test.cc": "62e5e6c5a3885f049534d173656674f2c016281f890c97f45f8f30e018bd7dbf",
+    "main/boards/m5stack/stopwatch/tests/test_service_schedule_storage.py": "3d204ac9ab2e111df8d4aee0552c213f68ebb5506b06ffcfe0fcbfe4d09fad45",
+    "scripts/tests/test_provisions_voice_retry_review.py": "29bdcf5ab5bad33e3b3b374c5e3eb5efe6586110d50c8881265bc6fe96e94f5b"
+  },
+  "storage": {
+    "maximum_active_timers_and_cues": 6,
+    "maximum_pending_acks": 6,
+    "maximum_retired_ids": 64,
+    "worst_case_bytes": 3567,
+    "record_bound_bytes": 4096,
+    "nvs_namespace": "orbit_sched_v1",
+    "nvs_key": "state",
+    "physical_free_capacity_measured": false
+  },
+  "checks": {
+    "face_recovery_sanitizer_scenarios": 9,
+    "codec_nvs_sanitizer_scenarios": 15,
+    "scheduler_sanitizer_scenarios": 25,
+    "wire_sanitizer_scenarios": 26,
+    "actual_lvgl_scenarios": 8,
+    "host_build_asset_profile_tests": 301,
+    "total_grouped_checks": 384,
+    "all_passed": true,
+    "independent_review": "GO for face, codec/NVS and real alarm/button regression; removal of silence guard reproduces button failure"
+  },
+  "builds": [
+    {
+      "profile": "generic",
+      "result": "pass",
+      "installed": false,
+      "files": {
+        "build/xiaozhi.bin": {
+          "bytes": 2979248,
+          "sha256": "83d277b8460cf424694877e784691bfa637a4e50fccccf33967a141d44581a2e"
+        },
+        "build/config/sdkconfig.json": {
+          "bytes": 84314,
+          "sha256": "9ecbfe760ccdce935869c7d999db59847ecae8ab5ceebc12ab2c1ad9337737c4"
+        },
+        "dependencies.lock": {
+          "bytes": 33916,
+          "sha256": "3d627e36af969bb3c0847bc92036d6875faa7f266f899a4a63fced3e586cee7c"
+        },
+        "main/boards/m5stack/stopwatch/config.json": {
+          "bytes": 2871,
+          "sha256": "fc1c5953aad7c95eda5445a8ec1d3c4f2321acb113589f11b5664faa0c41e13b"
+        }
+      },
+      "configuration": {
+        "IDF_TARGET": "esp32s3",
+        "BOARD_TYPE_M5STACK_STOPWATCH": true,
+        "BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH": false,
+        "PROVISIONS_LOCAL_CAPTURE": null,
+        "PROVISIONS_SCHEDULE_BENCH_DEMO": null,
+        "PARTITION_TABLE_CUSTOM_FILENAME": "partitions/v2/16m.csv",
+        "SECURE_SIGNED_APPS_NO_SECURE_BOOT": false,
+        "SECURE_BOOT_BUILD_SIGNED_BINARIES": null,
+        "BOOTLOADER_SKIP_VALIDATE_ALWAYS": true
+      }
+    },
+    {
+      "profile": "synthetic demo",
+      "result": "pass",
+      "installed": false,
+      "files": {
+        "build/xiaozhi.bin": {
+          "bytes": 2934016,
+          "sha256": "8822540c1c445d73c90d52cbcef6c7f12944c891c78acc9817401c06d50cc96f"
+        },
+        "build/config/sdkconfig.json": {
+          "bytes": 84552,
+          "sha256": "bd5a64fed66ac56a3370f03dcb8841471c97aad4d50707cdcf43e698d844bb08"
+        },
+        "dependencies.lock": {
+          "bytes": 33916,
+          "sha256": "3d627e36af969bb3c0847bc92036d6875faa7f266f899a4a63fced3e586cee7c"
+        },
+        "main/boards/m5stack/stopwatch/config.json": {
+          "bytes": 2871,
+          "sha256": "fc1c5953aad7c95eda5445a8ec1d3c4f2321acb113589f11b5664faa0c41e13b"
+        }
+      },
+      "configuration": {
+        "IDF_TARGET": "esp32s3",
+        "BOARD_TYPE_M5STACK_STOPWATCH": false,
+        "BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH": true,
+        "PROVISIONS_LOCAL_CAPTURE": false,
+        "PROVISIONS_SCHEDULE_BENCH_DEMO": true,
+        "PARTITION_TABLE_CUSTOM_FILENAME": "partitions/v2/16m.csv",
+        "SECURE_SIGNED_APPS_NO_SECURE_BOOT": false,
+        "SECURE_BOOT_BUILD_SIGNED_BINARIES": null,
+        "BOOTLOADER_SKIP_VALIDATE_ALWAYS": true
+      }
+    },
+    {
+      "profile": "accepted capture-compatible baseline",
+      "result": "pass",
+      "installed": false,
+      "externally_signed": false,
+      "files": {
+        "build/xiaozhi.bin": {
+          "bytes": 3080192,
+          "sha256": "a7adb6123036664d64638b61655fd23a7202ff77001a1aeced0e93e88440e603"
+        },
+        "build/config/sdkconfig.json": {
+          "bytes": 84791,
+          "sha256": "741b38518bc344287410258359704bc7973a31f60994c2ba45891b227e4b0f97"
+        },
+        "dependencies.lock": {
+          "bytes": 33916,
+          "sha256": "3d627e36af969bb3c0847bc92036d6875faa7f266f899a4a63fced3e586cee7c"
+        },
+        "main/boards/m5stack/stopwatch/bench_profile.json": {
+          "bytes": 1738,
+          "sha256": "fbc0eb74a3ef7d1a887f6c70ee6fbff5ed30d91982cc8ddb7187db7ebffab4cf"
+        },
+        "partitions/provisions/16m.csv": {
+          "bytes": 438,
+          "sha256": "e7b8cedf1a8d0c2385b2b6a09a32be3fa1a6f11546e8032c1053102e4e7a1a2b"
+        }
+      },
+      "configuration": {
+        "IDF_TARGET": "esp32s3",
+        "BOARD_TYPE_M5STACK_STOPWATCH": false,
+        "BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH": true,
+        "PROVISIONS_LOCAL_CAPTURE": true,
+        "PROVISIONS_SCHEDULE_BENCH_DEMO": null,
+        "PARTITION_TABLE_CUSTOM_FILENAME": "partitions/provisions/16m.csv",
+        "SECURE_SIGNED_APPS_NO_SECURE_BOOT": true,
+        "SECURE_BOOT_BUILD_SIGNED_BINARIES": false,
+        "BOOTLOADER_SKIP_VALIDATE_ALWAYS": false,
+        "BOOTLOADER_SKIP_VALIDATE_ON_POWER_ON": false,
+        "BOOTLOADER_SKIP_VALIDATE_IN_DEEP_SLEEP": false
+      }
+    }
+  ],
+  "limits": [
+    "No storage runtime owner or new real-audio bench mode wired",
+    "Unsigned build output; no external signature or hardware installation",
+    "No physical NVS capacity, power-cut, sound, haptics, radio, runtime or soak acceptance",
+    "CRC is corruption detection, not authentication or whole-image rollback protection",
+    "Uncertain write outcomes must remain fenced until reread/reconciliation",
+    "Apple sanitizer runs use address/undefined checks; LeakSanitizer is unavailable"
+  ]
+}

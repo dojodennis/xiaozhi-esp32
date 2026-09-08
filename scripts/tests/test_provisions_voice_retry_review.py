@@ -27,6 +27,7 @@ class VoiceRetryUiReview(unittest.TestCase):
             "const char* Application::GetProvisionsIdleStatus() const",
         ))
         buttons = method(board, "void InitializeButtons()")
+        silence = method(board, "bool SilenceTimerAlarm()")
         program = r'''
 #include <atomic>
 #include <cassert>
@@ -34,10 +35,26 @@ class VoiceRetryUiReview(unittest.TestCase):
 #include <functional>
 #include <memory>
 #include <string>
+#include "orbit_dial.h"
 #define CONFIG_PROVISIONS_LOCAL_CAPTURE 1
 #define CONFIG_PROVISIONS_GATEWAY_REQUIRED 1
+using ProvisionsStopwatchOrbit::AlarmOutputChange;
 constexpr int kDeviceStateIdle=0,kDeviceStateListening=1,kDeviceStateSpeaking=2;
-struct Display {std::string text;void SetChatMessage(const char*,const char* value){text=value;}};
+struct DisplayLockGuard {template<typename T>explicit DisplayLockGuard(T*){}};
+void lv_label_set_text(void*,const char*){}
+struct Display {
+    std::string text;int silences=0,alarm_id=0;void* alarm_hint_label_=nullptr;
+    std::atomic<bool> timer_alarm_active_{false};
+    ProvisionsStopwatchOrbit::AlarmState timer_alarm_state_;
+    void SetChatMessage(const char*,const char* value){text=value;}
+    void RaiseAlarm(){
+        ProvisionsTimerSnapshot::Timer timer;timer.id=std::to_string(++alarm_id);
+        timer_alarm_state_.Update({timer});timer_alarm_active_=timer_alarm_state_.active();
+    }
+    bool Audible(){return timer_alarm_state_.active()&&!timer_alarm_state_.silenced();}
+    void ApplyAlarmOutputChange(AlarmOutputChange change){if(change==AlarmOutputChange::kStop)++silences;}
+''' + silence + r'''
+};
 struct Board {Display display;static Board& GetInstance(){static Board value;return value;}Display* GetDisplay(){return &display;}};
 struct Protocol {bool open=true;bool IsAudioChannelOpened(){return open;}};
 struct Recorder {
@@ -72,6 +89,7 @@ struct Button {
 struct Volume {int value=50;int output_volume(){return value;}void SetOutputVolume(int next){value=next;}};
 struct StopWatchBoard {
     Button button1_,button2_;Volume volume;int wakes=0;
+    Display* display_=&Board::GetInstance().display;
     static constexpr int kDefaultOutputVolume=50,kMaximumOutputVolume=100;
     void ResetDisplayIdleTimer(){++wakes;}Volume* GetAudioCodec(){return &volume;}
 ''' + buttons + r'''
@@ -80,6 +98,18 @@ struct StopWatchBoard {
 int main(){
     auto& app=Application::GetInstance();StopWatchBoard board;board.InitializeButtons();
     assert(board.button2_.long_press&&board.button2_.click&&app.provisions_recorder_->retries==0);
+    // The actual queued alarm branch consumes this gesture before volume or retry.
+    board.display_->RaiseAlarm();board.button2_.click();
+    assert(board.display_->Audible()&&board.display_->silences==0&&board.volume.value==50);
+    app.Drain();
+    assert(!board.display_->Audible()&&board.display_->silences==1&&board.volume.value==50);
+    assert(board.display_->timer_alarm_state_.active()); // Finished timer remains on the face.
+    assert(app.provisions_recorder_->retries==0&&!app.manual_listening_requested_);
+    for(auto gesture:{board.button2_.long_press,board.button2_.double_click}){
+        board.display_->RaiseAlarm();gesture();assert(board.display_->Audible());app.Drain();
+        assert(!board.display_->Audible()&&board.volume.value==50&&!app.dictation);
+        assert(app.provisions_recorder_->retries==0&&!app.manual_listening_requested_);
+    }
     board.button2_.click();assert(app.provisions_recorder_->retries==0);app.Drain();assert(board.volume.value==100&&app.provisions_recorder_->retries==0);
     // A new Talk press before the scheduled blue action runs must win.
     board.button2_.long_press();assert(app.provisions_recorder_->retries==0);
@@ -102,7 +132,7 @@ int main(){
     const auto volume_before=board.volume.value;const auto retries_before=app.provisions_recorder_->retries;
     board.button2_.double_click();app.Drain();assert(app.dictation&&app.controls==0&&board.volume.value==volume_before);
     board.button2_.click();board.button2_.long_press();app.Drain();assert(app.controls==1&&app.provisions_recorder_->retries==retries_before&&board.volume.value==volume_before);
-    board.button2_.double_click();assert(!app.dictation&&app.controls==1);
+    board.button2_.double_click();assert(app.dictation);app.Drain();assert(!app.dictation&&app.controls==1);
     app.provisions_recorder_.reset();board.button2_.long_press();app.Drain();assert(Board::GetInstance().display.text=="No saved recording is ready to retry.");
 }
 '''
@@ -110,7 +140,11 @@ int main(){
             path = Path(directory)
             source, binary = path / "review.cc", path / "review"
             source.write_text(program)
+            (path / "sdkconfig.h").write_text("#pragma once\n#define CONFIG_PROVISIONS_GATEWAY_REQUIRED 1\n")
             built = subprocess.run([shutil.which("c++"), "-std=c++17", "-pthread", "-fsanitize=address,undefined",
+                                    "-I", str(path), "-I", str(ROOT / "main"),
+                                    "-I", str(ROOT / "main/boards/m5stack/stopwatch"),
+                                    str(ROOT / "main/boards/m5stack/stopwatch/orbit_dial.cc"),
                                     str(source), "-o", str(binary)], capture_output=True, text=True)
             self.assertEqual(built.returncode, 0, built.stderr)
             result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=10)

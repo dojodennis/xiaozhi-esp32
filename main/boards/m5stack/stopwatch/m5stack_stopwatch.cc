@@ -1256,6 +1256,10 @@ public:
                 return false;
             }
             output_change = timer_alarm_state_.Silence();
+            // An already-silenced due timer stays on the board. It must not
+            // consume every later blue gesture and trap retry/dictation forever.
+            if (output_change != AlarmOutputChange::kStop)
+                return false;
             if (output_change == AlarmOutputChange::kStop) {
                 if (alarm_hint_label_ != nullptr) {
                     lv_label_set_text(alarm_hint_label_, "SILENCED");
@@ -1587,6 +1591,29 @@ private:
         });
         button1_.OnPressUp([]() { Application::GetInstance().StopListening(); });
 
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        // Retain capture controls when the timer surface owns the display. Check
+        // alarm and dictation state on the application task, when the action runs.
+        button2_.OnDoubleClick([this]() {
+            ResetDisplayIdleTimer();
+            Application::GetInstance().Schedule([this]() {
+                if (display_->SilenceTimerAlarm())
+                    return;
+                Application::GetInstance().ToggleDictationScreen();
+            });
+        });
+        button2_.OnLongPress([this]() {
+            ResetDisplayIdleTimer();
+            Application::GetInstance().Schedule([this]() {
+                if (display_->SilenceTimerAlarm())
+                    return;
+                auto& app = Application::GetInstance();
+                if (!app.IsDictationScreen())
+                    app.RetrySavedVoiceRecording();
+            });
+        });
+#endif
+
         // Keep the second button useful without adding a menu or allowing an
         // accidental mute. It toggles only between the pilot floor and max.
         button2_.OnClick([this]() {
@@ -1595,6 +1622,12 @@ private:
                 if (display_->SilenceTimerAlarm()) {
                     return;
                 }
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                if (Application::GetInstance().IsDictationScreen()) {
+                    Application::GetInstance().DictationButton();
+                    return;
+                }
+#endif
                 auto* codec = GetAudioCodec();
                 const bool maximum = codec->output_volume() >= kMaximumOutputVolume;
                 codec->SetOutputVolume(maximum ? kDefaultOutputVolume : kMaximumOutputVolume);
@@ -1605,7 +1638,8 @@ private:
         // Button1: wake / toggle conversation
         button1_.OnClick([this]() {
             auto& app = Application::GetInstance();
-            if (app.GetDeviceState() == kDeviceStateStarting && !WifiManager::GetInstance().IsConnected()) {
+            if (app.GetDeviceState() == kDeviceStateStarting &&
+                !WifiManager::GetInstance().IsConnected()) {
                 EnterWifiConfigMode();
                 return;
             }

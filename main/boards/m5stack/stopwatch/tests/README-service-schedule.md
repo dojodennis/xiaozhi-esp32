@@ -88,8 +88,11 @@ acknowledgement, edit, disconnection and clock behavior.
    Each cue ID belongs to exactly one occurrence. An occurrence switch must supply
    fresh cue IDs; the old IDs are retired so switching back cannot replay an
    acknowledged reminder. Independent timers retain their IDs and acknowledgements.
-5. `ExportState` is a typed persistence seam. No NVS write, readback or backend ACK
-   reconciliation is implemented. Atomically save the full snapshot, active states,
+5. `Scheduler::ExportState` is a typed persistence seam. `FaceModel::ExportState`
+   adds the exact pending ACK outbox. The bounded `service_schedule_storage` codec
+   and separate `service_schedule_nvs_store` now implement whole-state NVS
+   commit/readback, but no runtime owner or backend ACK reconciliation is wired.
+   Atomically save the full snapshot, active states,
    last known time and retired IDs, then verify readback before claiming durable
    acknowledgement. Storage errors must remain visible and prevent an unsupported
    durable receipt. Define rollback/recovery of RAM state in the adapter; the portable
@@ -114,7 +117,7 @@ for long-term turnover; it is not implemented here. Reconnect, a new occurrence 
 an untrusted reset frame must never clear the history or snapshot revision gate.
 
 Still required for **live** use: authenticated scope/current-occurrence admission,
-negotiated delivery and durable revision allocation, NVS transaction/readback,
+negotiated delivery and durable revision allocation, serialized NVS worker integration,
 trusted clock/power-state policy, output-owner composition with the durable audio
 timer player, and authoritative receipt reconciliation. The synthetic board mapping
 uses the existing visual alarm engine and motor callback; its DummyAudioCodec
@@ -127,3 +130,9 @@ blue acknowledges one alert. Both callbacks enqueue onto the Application owner.
 Every face, including alarm takeover, is labelled DEMO. The normal variant defaults
 to demo disabled. See `docs/orbit-service-schedule-demo-2026-09-08.md` for the
 exact build evidence and physical gate. No board was reset, flashed or operated.
+
+The [9 September persistence and control report](../../../../../docs/orbit-schedule-persistence-2026-09-09.md)
+records the six-item/six-pending/64-retired storage bound, failure semantics and
+restored capture controls. Run `test_service_schedule_face_persistence.py` and
+`test_service_schedule_storage.py` here for the sanitizer-backed recovery checks.
+The existing synthetic demo still resets its fixture and does not use this storage.

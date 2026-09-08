@@ -1,6 +1,7 @@
 #include "service_schedule_face.h"
 
 #include <algorithm>
+#include <string_view>
 
 namespace orbit::service_schedule {
 namespace {
@@ -12,6 +13,52 @@ bool Same(const AlarmKey& a, const AlarmKey& b) {
 }
 std::string OutputIdentity(const AlarmKey& key) {
     return key.service_occurrence_id + "/" + key.id + "/" + std::to_string(key.revision);
+}
+bool Uuid(std::string_view value) {
+    if (value.size() != 36)
+        return false;
+    bool nonzero = false;
+    for (size_t i = 0; i < value.size(); ++i) {
+        const char c = value[i];
+        if (i == 8 || i == 13 || i == 18 || i == 23) {
+            if (c != '-')
+                return false;
+        } else {
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
+                return false;
+            nonzero = nonzero || c != '0';
+        }
+    }
+    return nonzero;
+}
+
+bool PendingKeyValid(const AlarmKey& key, const PersistentState& schedule) {
+    if (key.scope.assignment_id != schedule.snapshot.scope.assignment_id ||
+        key.scope.device_id != schedule.snapshot.scope.device_id || !Uuid(key.id) ||
+        key.revision == 0 || key.revision > kMaximumRevision)
+        return false;
+    if (key.kind == ItemKind::Cue) {
+        if (!Uuid(key.service_occurrence_id))
+            return false;
+    } else if (key.kind != ItemKind::Timer || !key.service_occurrence_id.empty()) {
+        return false;
+    }
+    const auto current = std::find_if(schedule.items.begin(), schedule.items.end(),
+                                      [&](const ItemState& item) { return item.key.id == key.id; });
+    if (current != schedule.items.end()) {
+        if (key.kind != current->key.kind ||
+            key.service_occurrence_id != current->key.service_occurrence_id ||
+            key.revision > current->key.revision)
+            return false;
+        // A newer version can still have an older local ACK awaiting reconciliation.
+        // At the exact version, the persisted scheduler must carry the same ACK.
+        return key.revision < current->key.revision || (current->due && current->acknowledged);
+    }
+    // Omission retires identities but must not discard their pending receipts.
+    // The pending key is the retained history; the UUID tombstone cannot prove
+    // its old type/revision independently. This is structural validation, not auth.
+    return std::find(schedule.retired_ids.begin(), schedule.retired_ids.end(), key.id) !=
+           schedule.retired_ids.end();
 }
 }  // namespace
 
@@ -91,6 +138,38 @@ bool FaceModel::AcceptReceipt(const AlarmKey& key) {
         return false;
     pending_.erase(item);
     receipt_confirmed_ = true;
+    return true;
+}
+
+bool FaceModel::ExportState(FacePersistentState& output) const {
+    FacePersistentState candidate;
+    if (!scheduler_.ExportState(candidate.schedule))
+        return false;
+    candidate.pending = pending_;
+    output = std::move(candidate);
+    return true;
+}
+
+bool FaceModel::RestoreState(const FacePersistentState& saved) {
+    if (scheduler_.snapshot() || saved.version != 1 || saved.pending.size() > kMaximumItems)
+        return false;
+    // Restore into a copy so an invalid pending outbox cannot partially install
+    // a valid schedule. Scheduler::Restore owns all scope, snapshot and clock checks.
+    Scheduler restored = scheduler_;
+    restored.SetConnected(false);
+    if (!restored.Restore(saved.schedule))
+        return false;
+    for (size_t i = 0; i < saved.pending.size(); ++i) {
+        const auto& key = saved.pending[i];
+        if (!PendingKeyValid(key, saved.schedule) ||
+            std::any_of(saved.pending.begin(), saved.pending.begin() + i,
+                        [&](const AlarmKey& previous) { return Same(key, previous); }))
+            return false;
+    }
+    scheduler_ = std::move(restored);
+    pending_ = saved.pending;
+    receipt_confirmed_ = false;
+    Refresh();
     return true;
 }
 
