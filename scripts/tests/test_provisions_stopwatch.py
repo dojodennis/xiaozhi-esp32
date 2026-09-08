@@ -25,27 +25,64 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         config = json.loads((BOARD_DIR / "config.json").read_text(encoding="utf-8"))
         self.assertEqual(config["manufacturer"], "m5stack")
         self.assertEqual(config["type"], "m5stack-stopwatch")
+        self.assertEqual(config["target"], "esp32s3")
         builds = {item["name"]: item for item in config["builds"]}
-        self.assertEqual(set(builds), {"m5stack-stopwatch", PROFILE})
+        demo_name = f"{PROFILE}-schedule-demo"
+        expected_symbols = {
+            "m5stack-stopwatch": "CONFIG_BOARD_TYPE_M5STACK_STOPWATCH",
+            PROFILE: PROFILE_SYMBOL,
+            demo_name: PROFILE_SYMBOL,
+        }
+        self.assertEqual(set(builds), set(expected_symbols))
+        self.assertEqual(len(config["builds"]), len(builds), "duplicate variant name")
+
+        for name, expected_symbol in expected_symbols.items():
+            with self.subTest(variant=name):
+                options = builds[name]["sdkconfig_append"]
+                self.assertEqual(
+                    len(options), len(build._sdkconfig_assignments(options)),
+                    "a variant must not redefine the same config key",
+                )
+                self.assertEqual(
+                    build._resolve_board_config(
+                        "m5stack/stopwatch",
+                        config["target"],
+                        builds[name]["sdkconfig_append"],
+                        variant_name=name,
+                    ),
+                    expected_symbol,
+                )
 
         generic = set(builds["m5stack-stopwatch"]["sdkconfig_append"])
         provisions = set(builds[PROFILE]["sdkconfig_append"])
+        demo = set(builds[demo_name]["sdkconfig_append"])
         self.assertIn("CONFIG_USE_AFE_WAKE_WORD=y", generic)
         self.assertNotIn(f"{PROFILE_SYMBOL}=y", generic)
+        self.assertNotIn("CONFIG_PROVISIONS_GATEWAY_REQUIRED=y", generic)
+        self.assertNotIn("CONFIG_WAKE_WORD_DISABLED=y", generic)
         self.assertIn(f"{PROFILE_SYMBOL}=y", provisions)
         self.assertIn("CONFIG_WAKE_WORD_DISABLED=y", provisions)
         self.assertIn("CONFIG_PROVISIONS_GATEWAY_REQUIRED=y", provisions)
         self.assertIn("CONFIG_SPIRAM_MODE_OCT=y", provisions)
         self.assertNotIn("CONFIG_USE_AFE_WAKE_WORD=y", provisions)
-        self.assertEqual(
-            build._resolve_board_config(
-                "m5stack/stopwatch",
-                "esp32s3",
-                builds[PROFILE]["sdkconfig_append"],
-                variant_name=PROFILE,
-            ),
-            PROFILE_SYMBOL,
-        )
+
+        # The isolated fixture shares the Provisions hardware configuration,
+        # but only its distinct variant opts out of capture and into the demo.
+        demo_only = {
+            "CONFIG_PROVISIONS_LOCAL_CAPTURE=n",
+            "CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO=y",
+        }
+        self.assertEqual(demo - provisions, demo_only)
+        self.assertEqual(provisions - demo, set())
+        for name in ("m5stack-stopwatch", PROFILE):
+            with self.subTest(non_demo_variant=name):
+                options = build._sdkconfig_assignments(
+                    builds[name]["sdkconfig_append"]
+                )
+                self.assertNotEqual(
+                    options.get("CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO"), "y"
+                )
+                self.assertNotEqual(options.get("CONFIG_PROVISIONS_LOCAL_CAPTURE"), "n")
 
     def test_provisions_behavior_is_thin_hold_to_talk(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
@@ -240,16 +277,54 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
 
     def test_provisions_blue_button_silences_alarm_or_toggles_high_and_max_volume(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
-        provisions_buttons = source.split("void InitializeButtons()", 1)[1].split("#else", 1)[0]
+        method = re.search(
+            r"^    void InitializeButtons\(\) \{.*?^    \}", source, re.MULTILINE | re.DOTALL
+        )
+        self.assertIsNotNone(method, "missing board button initializer")
+        compiler = shutil.which("clang++") or shutil.which("g++")
+        self.assertIsNotNone(compiler, "host C++ preprocessor is required")
+
+        # Select the actual normal branch with the compiler. Splitting at the
+        # first #else accidentally reads the nested synthetic demo instead.
+        def preprocess(demo):
+            result = subprocess.run(
+                [compiler, "-E", "-P", "-x", "c++",
+                 "-DCONFIG_PROVISIONS_GATEWAY_REQUIRED=1",
+                 f"-DCONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO={int(demo)}", "-"],
+                input=method.group(0), capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return result.stdout
+
+        provisions_buttons = preprocess(False)
 
         self.assertIn("button2_.OnClick", provisions_buttons)
         self.assertIn("Application::GetInstance().Schedule", provisions_buttons)
-        self.assertIn("display_->SilenceTimerAlarm()", provisions_buttons)
+        self.assertRegex(
+            provisions_buttons,
+            r"if\s*\(display_->SilenceTimerAlarm\(\)\)\s*\{\s*return;\s*\}",
+        )
         self.assertIn("kDefaultOutputVolume", provisions_buttons)
         self.assertIn("kMaximumOutputVolume", provisions_buttons)
+        self.assertIn(
+            "codec->SetOutputVolume(maximum ? kDefaultOutputVolume : kMaximumOutputVolume)",
+            provisions_buttons,
+        )
+        self.assertLess(
+            provisions_buttons.index("display_->SilenceTimerAlarm()"),
+            provisions_buttons.index("codec->SetOutputVolume("),
+        )
+        self.assertIn("StartListening", provisions_buttons)
+        self.assertNotIn("AdvanceScheduleDemo", provisions_buttons)
         self.assertNotIn("volume = 0", provisions_buttons)
         self.assertNotIn("SetOutputVolume(0)", provisions_buttons)
         self.assertNotIn("ShowNotification", provisions_buttons)
+
+        demo_buttons = preprocess(True)
+        self.assertIn("AdvanceScheduleDemo", demo_buttons)
+        self.assertIn("display_->SilenceTimerAlarm()", demo_buttons)
+        self.assertNotIn("StartListening", demo_buttons)
+        self.assertNotIn("SetOutputVolume", demo_buttons)
 
     def test_receipt_reset_rejects_stale_timer_callbacks(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
