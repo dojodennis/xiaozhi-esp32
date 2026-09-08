@@ -376,6 +376,7 @@ struct Handle {
     Bytes staged;
 };
 struct NvsFixture {
+    std::string expected_namespace = "orbit_sched_v1";
     bool namespace_present = false;
     bool key_present = false;
     Bytes disk;
@@ -440,6 +441,24 @@ void NvsSaveAndReboot() {
     assert(recovered.due().size() == 5 && recovered.pending().size() == 1);
     assert(recovered.scheduler().clock_state() == ClockState::AwaitingFreshTime);
     assert(!recovered.scheduler().connected());
+}
+
+void NvsBenchNamespace() {
+    ResetNvs();
+    // The NVS substitute rejects any open outside the selected namespace. The
+    // default Live path is independently exercised by all other scenarios.
+    nvs.expected_namespace = "orbit_bench_v1";
+    NvsStore bench(ScopeForTest(), StoreDomain::Bench);
+    Bytes verified;
+    assert(bench.Transition(nullptr, State(), verified) == SaveResult::Saved);
+    FacePersistentState restored;
+    Bytes loaded;
+    assert(bench.Load(restored, loaded) == LoadResult::Present && loaded == verified);
+    const auto opened = nvs.opens;
+    NvsStore invalid(ScopeForTest(), static_cast<StoreDomain>(99));
+    assert(invalid.Load(restored, loaded) == LoadResult::IoError);
+    assert(invalid.Transition(nullptr, State(), verified) == SaveResult::IoError);
+    assert(nvs.opens == opened);
 }
 
 void NvsExpectedPrior() {
@@ -523,7 +542,7 @@ void NvsWriteFailures() {
 // The sole substituted layer is the platform NVS I/O. Any namespace/key access
 // beyond the new adapter's exact pair fails; no erase/init functions are supplied.
 int nvs_open(const char* name, int mode, nvs_handle_t* handle) {
-    assert(std::string(name) == "orbit_sched_v1");
+    assert(std::string(name) == nvs.expected_namespace);
     ++nvs.opens;
     if ((mode == NVS_READONLY && nvs.fault == Fault::OpenRead) ||
         (mode == NVS_READWRITE && nvs.fault == Fault::OpenWrite))
@@ -602,6 +621,7 @@ int main() {
         {"payload_validation_with_valid_crc", PayloadValidation},
         {"nvs_absent_corrupt_present", NvsAbsentAndLoad},
         {"nvs_commit_readback_reboot", NvsSaveAndReboot},
+        {"nvs_explicit_bench_namespace", NvsBenchNamespace},
         {"nvs_expected_prior_and_unchanged", NvsExpectedPrior},
         {"nvs_read_errors", NvsReadFailures},
         {"nvs_uncertain_writes_and_reconciliation", NvsWriteFailures},

@@ -28,6 +28,9 @@ public:
     void Tick(int64_t monotonic_ms);
     void SetConnected(bool connected) { scheduler_.SetConnected(connected); }
     bool AcknowledgeNext();
+    // Bind a physical gesture to the exact alarm the user was shown. Never
+    // substitute a newer/different due item when work is processed later.
+    bool Acknowledge(const AlarmKey& key);
     bool AcceptReceipt(const AlarmKey& key);
     bool ExportState(FacePersistentState& output) const;
     // Fresh model only; validates the complete candidate before mutating this one.

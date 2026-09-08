@@ -1,0 +1,776 @@
+[
+  {
+    "status": "READING STORAGE",
+    "due": 0,
+    "pending": 0,
+    "visible_labels": [
+      {
+        "text": "+",
+        "bounds": [
+          186,
+          59,
+          279,
+          81
+        ]
+      },
+      {
+        "text": "+",
+        "bounds": [
+          319,
+          136,
+          412,
+          158
+        ]
+      },
+      {
+        "text": "+",
+        "bounds": [
+          319,
+          289,
+          412,
+          311
+        ]
+      },
+      {
+        "text": "+",
+        "bounds": [
+          186,
+          365,
+          279,
+          387
+        ]
+      },
+      {
+        "text": "+",
+        "bounds": [
+          53,
+          288,
+          146,
+          310
+        ]
+      },
+      {
+        "text": "+",
+        "bounds": [
+          53,
+          135,
+          146,
+          157
+        ]
+      },
+      {
+        "text": "BENCH",
+        "bounds": [
+          158,
+          187,
+          307,
+          229
+        ]
+      },
+      {
+        "text": "READING STORAGE",
+        "bounds": [
+          158,
+          254,
+          307,
+          276
+        ]
+      }
+    ],
+    "png": "00-reading-storage.png",
+    "png_sha256": "62ab2154ff9ea70198c878d3d9a7f984961f341c48b0428998b181794711c1cf"
+  },
+  {
+    "status": "YELLOW STARTS SIX TEST TIMERS",
+    "due": 0,
+    "pending": 0,
+    "visible_labels": [
+      {
+        "text": "+",
+        "bounds": [
+          186,
+          59,
+          279,
+          81
+        ]
+      },
+      {
+        "text": "+",
+        "bounds": [
+          319,
+          136,
+          412,
+          158
+        ]
+      },
+      {
+        "text": "+",
+        "bounds": [
+          319,
+          289,
+          412,
+          311
+        ]
+      },
+      {
+        "text": "+",
+        "bounds": [
+          186,
+          365,
+          279,
+          387
+        ]
+      },
+      {
+        "text": "+",
+        "bounds": [
+          53,
+          288,
+          146,
+          310
+        ]
+      },
+      {
+        "text": "+",
+        "bounds": [
+          53,
+          135,
+          146,
+          157
+        ]
+      },
+      {
+        "text": "BENCH",
+        "bounds": [
+          158,
+          187,
+          307,
+          229
+        ]
+      },
+      {
+        "text": "YELLOW STARTS SIX TEST TIMERS",
+        "bounds": [
+          158,
+          242,
+          307,
+          287
+        ]
+      }
+    ],
+    "png": "01-boot-absent.png",
+    "png_sha256": "9602b770f5f2d55060537588938d37068f3408ab4c36c0b998e867f0dc227f94"
+  },
+  {
+    "status": "SYNTHETIC CLOCK - NO NETWORK",
+    "due": 0,
+    "pending": 0,
+    "visible_labels": [
+      {
+        "text": "Rice",
+        "bounds": [
+          186,
+          59,
+          279,
+          81
+        ]
+      },
+      {
+        "text": "0:15",
+        "bounds": [
+          186,
+          85,
+          279,
+          107
+        ]
+      },
+      {
+        "text": "Sauce",
+        "bounds": [
+          319,
+          136,
+          412,
+          158
+        ]
+      },
+      {
+        "text": "0:15",
+        "bounds": [
+          319,
+          162,
+          412,
+          184
+        ]
+      },
+      {
+        "text": "Bread",
+        "bounds": [
+          319,
+          289,
+          412,
+          311
+        ]
+      },
+      {
+        "text": "0:15",
+        "bounds": [
+          319,
+          315,
+          412,
+          337
+        ]
+      },
+      {
+        "text": "Stock",
+        "bounds": [
+          186,
+          365,
+          279,
+          387
+        ]
+      },
+      {
+        "text": "0:15",
+        "bounds": [
+          186,
+          391,
+          279,
+          413
+        ]
+      },
+      {
+        "text": "Pasta",
+        "bounds": [
+          53,
+          288,
+          146,
+          310
+        ]
+      },
+      {
+        "text": "0:15",
+        "bounds": [
+          53,
+          314,
+          146,
+          336
+        ]
+      },
+      {
+        "text": "Fish",
+        "bounds": [
+          53,
+          135,
+          146,
+          157
+        ]
+      },
+      {
+        "text": "0:15",
+        "bounds": [
+          53,
+          161,
+          146,
+          183
+        ]
+      },
+      {
+        "text": "BENCH",
+        "bounds": [
+          158,
+          187,
+          307,
+          229
+        ]
+      },
+      {
+        "text": "SYNTHETIC CLOCK - NO NETWORK",
+        "bounds": [
+          158,
+          242,
+          307,
+          287
+        ]
+      }
+    ],
+    "png": "02-six-running.png",
+    "png_sha256": "0795f186d197c9c35a5e53e0104d76b8ef21f99f042023594682af3caf777004"
+  },
+  {
+    "status": "SYNTHETIC CLOCK - NO NETWORK",
+    "due": 6,
+    "pending": 0,
+    "visible_labels": [
+      {
+        "text": "BENCH ALERT",
+        "bounds": [
+          73,
+          96,
+          392,
+          138
+        ]
+      },
+      {
+        "text": "Rice\nSauce\n+4 MORE",
+        "bounds": [
+          63,
+          157,
+          402,
+          301
+        ]
+      },
+      {
+        "text": "BLUE ACKS ONE\nSYNTHETIC CLOCK - NO NETWORK",
+        "bounds": [
+          113,
+          305,
+          352,
+          373
+        ]
+      }
+    ],
+    "png": "03-six-due.png",
+    "png_sha256": "4fb71a90fd26777d13d127b73b02afb23455de5a672b8f5b2f92a0d3b3aafec5"
+  },
+  {
+    "status": "ACK STORED HERE - SYNC PENDING",
+    "due": 5,
+    "pending": 1,
+    "visible_labels": [
+      {
+        "text": "BENCH ALERT",
+        "bounds": [
+          73,
+          96,
+          392,
+          138
+        ]
+      },
+      {
+        "text": "Sauce\nBread\n+3 MORE",
+        "bounds": [
+          63,
+          157,
+          402,
+          301
+        ]
+      },
+      {
+        "text": "BLUE ACKS ONE\nACK STORED HERE - SYNC PENDING",
+        "bounds": [
+          113,
+          305,
+          352,
+          373
+        ]
+      }
+    ],
+    "png": "04-one-ack-five-due.png",
+    "png_sha256": "43bd7ee0c6675b31f60ddda5db6257f2afd1e32ab98b3c76d4d893c6defab90a"
+  },
+  {
+    "status": "STORAGE UNCERTAIN - YELLOW CHECKS",
+    "due": 5,
+    "pending": 1,
+    "visible_labels": [
+      {
+        "text": "BENCH ALERT",
+        "bounds": [
+          73,
+          96,
+          392,
+          138
+        ]
+      },
+      {
+        "text": "Sauce\nBread\n+3 MORE",
+        "bounds": [
+          63,
+          157,
+          402,
+          301
+        ]
+      },
+      {
+        "text": "BLUE ACKS ONE\nSTORAGE UNCERTAIN - YELLOW CHECKS",
+        "bounds": [
+          113,
+          305,
+          352,
+          373
+        ]
+      }
+    ],
+    "png": "05-storage-uncertain-due.png",
+    "png_sha256": "1f2dd569a27c15e0cd1810297a9fac28854350db9d6ca25cebf95b110749dfb5"
+  },
+  {
+    "status": "NEEDS SYNC",
+    "due": 5,
+    "pending": 1,
+    "visible_labels": [
+      {
+        "text": "BENCH ALERT",
+        "bounds": [
+          73,
+          96,
+          392,
+          138
+        ]
+      },
+      {
+        "text": "Sauce\nBread\n+3 MORE",
+        "bounds": [
+          63,
+          157,
+          402,
+          301
+        ]
+      },
+      {
+        "text": "BLUE ACKS ONE\nNEEDS SYNC",
+        "bounds": [
+          113,
+          328,
+          352,
+          373
+        ]
+      }
+    ],
+    "png": "06-restored-due-needs-sync.png",
+    "png_sha256": "3ab2c111091ea01d366e53288ec380beeece8c0f69bde153bdc942a2bf0e5f38"
+  },
+  {
+    "status": "AUDIO FAULT - YELLOW RETRIES",
+    "due": 5,
+    "pending": 1,
+    "visible_labels": [
+      {
+        "text": "BENCH ALERT",
+        "bounds": [
+          73,
+          96,
+          392,
+          138
+        ]
+      },
+      {
+        "text": "Sauce\nBread\n+3 MORE",
+        "bounds": [
+          63,
+          157,
+          402,
+          301
+        ]
+      },
+      {
+        "text": "BLUE ACKS ONE\nAUDIO FAULT - YELLOW RETRIES",
+        "bounds": [
+          113,
+          305,
+          352,
+          373
+        ]
+      }
+    ],
+    "png": "07-audio-fault-due.png",
+    "png_sha256": "dd1a2b72fa3274a8404a5f0ba1c6d8ffca39320f87b6def5cfbf8e79450c48a8"
+  },
+  {
+    "status": "NEEDS SYNC",
+    "due": 0,
+    "pending": 0,
+    "visible_labels": [
+      {
+        "text": "Rice",
+        "bounds": [
+          186,
+          59,
+          279,
+          81
+        ]
+      },
+      {
+        "text": "--:--",
+        "bounds": [
+          186,
+          85,
+          279,
+          107
+        ]
+      },
+      {
+        "text": "Sauce",
+        "bounds": [
+          319,
+          136,
+          412,
+          158
+        ]
+      },
+      {
+        "text": "--:--",
+        "bounds": [
+          319,
+          162,
+          412,
+          184
+        ]
+      },
+      {
+        "text": "Bread",
+        "bounds": [
+          319,
+          289,
+          412,
+          311
+        ]
+      },
+      {
+        "text": "--:--",
+        "bounds": [
+          319,
+          315,
+          412,
+          337
+        ]
+      },
+      {
+        "text": "Stock",
+        "bounds": [
+          186,
+          365,
+          279,
+          387
+        ]
+      },
+      {
+        "text": "--:--",
+        "bounds": [
+          186,
+          391,
+          279,
+          413
+        ]
+      },
+      {
+        "text": "Pasta",
+        "bounds": [
+          53,
+          288,
+          146,
+          310
+        ]
+      },
+      {
+        "text": "--:--",
+        "bounds": [
+          53,
+          314,
+          146,
+          336
+        ]
+      },
+      {
+        "text": "Fish",
+        "bounds": [
+          53,
+          135,
+          146,
+          157
+        ]
+      },
+      {
+        "text": "--:--",
+        "bounds": [
+          53,
+          161,
+          146,
+          183
+        ]
+      },
+      {
+        "text": "BENCH",
+        "bounds": [
+          158,
+          187,
+          307,
+          229
+        ]
+      },
+      {
+        "text": "NEEDS SYNC",
+        "bounds": [
+          158,
+          254,
+          307,
+          276
+        ]
+      }
+    ],
+    "png": "08-restored-future-needs-sync.png",
+    "png_sha256": "5f667de137d3a61a8d2c5495822ca309a384b47656bde19caa33600bb2fbbe9a"
+  },
+  {
+    "status": "STORAGE CORRUPT - NO RESET",
+    "due": 0,
+    "pending": 0,
+    "visible_labels": [
+      {
+        "text": "+",
+        "bounds": [
+          186,
+          59,
+          279,
+          81
+        ]
+      },
+      {
+        "text": "+",
+        "bounds": [
+          319,
+          136,
+          412,
+          158
+        ]
+      },
+      {
+        "text": "+",
+        "bounds": [
+          319,
+          289,
+          412,
+          311
+        ]
+      },
+      {
+        "text": "+",
+        "bounds": [
+          186,
+          365,
+          279,
+          387
+        ]
+      },
+      {
+        "text": "+",
+        "bounds": [
+          53,
+          288,
+          146,
+          310
+        ]
+      },
+      {
+        "text": "+",
+        "bounds": [
+          53,
+          135,
+          146,
+          157
+        ]
+      },
+      {
+        "text": "BENCH",
+        "bounds": [
+          158,
+          187,
+          307,
+          229
+        ]
+      },
+      {
+        "text": "STORAGE CORRUPT - NO RESET",
+        "bounds": [
+          158,
+          231,
+          307,
+          299
+        ]
+      }
+    ],
+    "png": "09-storage-corrupt.png",
+    "png_sha256": "f633031388ea650d9271846d55c5fadc80895f1bbde2abba40b38134382cd78b"
+  },
+  {
+    "status": "STORAGE ERROR - YELLOW CHECKS",
+    "due": 0,
+    "pending": 0,
+    "visible_labels": [
+      {
+        "text": "+",
+        "bounds": [
+          186,
+          59,
+          279,
+          81
+        ]
+      },
+      {
+        "text": "+",
+        "bounds": [
+          319,
+          136,
+          412,
+          158
+        ]
+      },
+      {
+        "text": "+",
+        "bounds": [
+          319,
+          289,
+          412,
+          311
+        ]
+      },
+      {
+        "text": "+",
+        "bounds": [
+          186,
+          365,
+          279,
+          387
+        ]
+      },
+      {
+        "text": "+",
+        "bounds": [
+          53,
+          288,
+          146,
+          310
+        ]
+      },
+      {
+        "text": "+",
+        "bounds": [
+          53,
+          135,
+          146,
+          157
+        ]
+      },
+      {
+        "text": "BENCH",
+        "bounds": [
+          158,
+          187,
+          307,
+          229
+        ]
+      },
+      {
+        "text": "STORAGE ERROR - YELLOW CHECKS",
+        "bounds": [
+          158,
+          242,
+          307,
+          287
+        ]
+      }
+    ],
+    "png": "10-storage-io-error.png",
+    "png_sha256": "1c66827fae35c0df647db7f42ebe6f6f6439faca3fcd1c730cbbfcf7d73cb457"
+  }
+]

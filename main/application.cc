@@ -137,11 +137,11 @@ void Application::Initialize() {
     // Setup the audio service
     auto codec = board.GetAudioCodec();
     audio_service_.Initialize(codec);
-#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE && !CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
     InitializeTimers();
 #endif
     audio_service_.Start();
-#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE && !CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
     auto recorder = std::make_shared<provisions::VoiceRecorder>();
     if (recorder->Start(
             [this](provisions::VoiceRecorder::Result result, uint32_t press) {
@@ -458,7 +458,7 @@ void Application::Run() {
             }
         }
 
-#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE && !CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
         // Also reconcile coalesced Talk edges: the atomic press ID changes even
         // when down/up both arrive before the main task handles their events.
         ServiceTimers();
@@ -469,7 +469,7 @@ void Application::Run() {
             auto display = Board::GetInstance().GetDisplay();
             display->UpdateStatusBar();
 
-#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED && !CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
             HandleProvisionsGatewayMaintenance();
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
             if (GetDeviceState() == kDeviceStateIdle)

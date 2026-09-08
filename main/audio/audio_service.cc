@@ -601,6 +601,10 @@ void AudioService::AudioOutputTask() {
         lock.lock();
         const bool failed = current && !played && task->playback_generation == playback_generation_;
         if (failed) {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+            if (local_feedback_active_)
+                ++local_feedback_errors_;
+#endif
             ++playback_generation_;
             audio_decode_queue_.clear();
             audio_playback_queue_.clear();
@@ -746,6 +750,19 @@ void AudioService::OpusCodecTask() {
             }
 
             lock.lock();
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+            // A local clip must not look successfully drained when its decoder
+            // failed, including on builds without the optional output fence.
+            if (!decoded && local_feedback_active_ && generation == playback_generation_ &&
+                !service_stopped_.load()) {
+                ++local_feedback_errors_;
+                local_feedback_ = {};
+                local_feedback_active_ = false;
+                ++playback_generation_;
+                audio_decode_queue_.clear();
+                audio_playback_queue_.clear();
+            }
+#endif
             if (decoded && generation == playback_generation_ && !service_stopped_.load()
 #if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
                 && decode_work.Allowed() && ordinary_owner == ordinary_owner_
@@ -1334,6 +1351,16 @@ void AudioService::FillLocalFeedbackLocked() {
         local_feedback_demuxer_.Process(byte, 1);
     }
     local_feedback_demuxer_.OnPacket({});
+    if (local_feedback_demuxer_.HasError() ||
+        (local_feedback_offset_ == local_feedback_.size() && !local_feedback_demuxer_.Finish())) {
+        ++local_feedback_errors_;
+        local_feedback_ = {};
+        local_feedback_active_ = false;
+        ++playback_generation_;
+        audio_decode_queue_.clear();
+        audio_playback_queue_.clear();
+        return;
+    }
     if (local_feedback_offset_ == local_feedback_.size() || local_feedback_demuxer_.HasError())
         local_feedback_ = {};
     if (packet

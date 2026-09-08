@@ -91,7 +91,8 @@ acknowledgement, edit, disconnection and clock behavior.
 5. `Scheduler::ExportState` is a typed persistence seam. `FaceModel::ExportState`
    adds the exact pending ACK outbox. The bounded `service_schedule_storage` codec
    and separate `service_schedule_nvs_store` now implement whole-state NVS
-   commit/readback, but no runtime owner or backend ACK reconciliation is wired.
+   commit/readback. The serialized worker is connected in the separate hardware
+   bench; live backend ACK reconciliation is not wired.
    Atomically save the full snapshot, active states,
    last known time and retired IDs, then verify readback before claiming durable
    acknowledgement. Storage errors must remain visible and prevent an unsupported
@@ -117,7 +118,7 @@ for long-term turnover; it is not implemented here. Reconnect, a new occurrence 
 an untrusted reset frame must never clear the history or snapshot revision gate.
 
 Still required for **live** use: authenticated scope/current-occurrence admission,
-negotiated delivery and durable revision allocation, serialized NVS worker integration,
+negotiated delivery and durable revision allocation, live binding of the serialized NVS worker,
 trusted clock/power-state policy, output-owner composition with the durable audio
 timer player, and authoritative receipt reconciliation. The synthetic board mapping
 uses the existing visual alarm engine and motor callback; its DummyAudioCodec
@@ -136,3 +137,21 @@ records the six-item/six-pending/64-retired storage bound, failure semantics and
 restored capture controls. Run `test_service_schedule_face_persistence.py` and
 `test_service_schedule_storage.py` here for the sanitizer-backed recovery checks.
 The existing synthetic demo still resets its fixture and does not use this storage.
+
+## Isolated real-speaker bench
+
+`provisions-kitchen-helper-stopwatch-schedule-bench` uses
+`hardware_bench_profile.json`, preserving the accepted capture-compatible profile
+with an explicit distinct identity. Its worker stores synthetic state only in
+`orbit_bench_v1/state`; capture/read/upload and network activity are not started.
+Yellow after verified absent storage seeds six short test timers; blue persists
+one exact shown ACK. Restore stays NEEDS SYNC. No remote receipt or reset is faked.
+
+Run `test_service_schedule_worker.py`, `test_service_schedule_hardware_bench.py`
+and `test_service_schedule_alarm_output.py` for threaded persistence, coordinator
+and output regressions. The repository-level
+`scripts/tests/test_provisions_hardware_bench_adapter.py` extracts the actual board
+methods to exercise render/gesture races and bounded callback admission.
+
+See the [hardware bench report](../../../../../docs/orbit-schedule-hardware-bench-2026-09-09.md)
+for output failure semantics, build evidence and the remaining physical gates.

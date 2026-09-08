@@ -12,6 +12,10 @@
 #include "orbit_dial.h"
 #include "provisions_timer_snapshot.h"
 #include "utf8_ellipsis.h"
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+#include <esp_pthread.h>
+#include "service_schedule_hardware_bench.h"
+#endif
 #if CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO
 #include "codecs/dummy_audio_codec.h"
 #include "service_schedule_demo.h"
@@ -100,6 +104,12 @@ constexpr std::array<uint32_t, ProvisionsStopwatchOrbit::kMaximumSlots> kOrbitCo
 class ProvisionsStopwatchAudioCodec final : public Es8311AudioCodec {
 public:
     using Es8311AudioCodec::Es8311AudioCodec;
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+    void EnableInput(bool enable) override {
+        (void)enable;
+        Es8311AudioCodec::EnableInput(false);
+    }
+#endif
 
     void Start() override {
         Es8311AudioCodec::Start();
@@ -111,6 +121,26 @@ public:
     }
 };
 
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+class BenchScheduleStore final : public orbit::service_schedule::WorkerStore {
+    orbit::service_schedule::storage::NvsStore store_{
+        orbit::service_schedule::HardwareBenchScope(),
+        orbit::service_schedule::storage::StoreDomain::Bench};
+
+public:
+    orbit::service_schedule::storage::LoadResult Load(
+        orbit::service_schedule::FacePersistentState& state,
+        orbit::service_schedule::storage::Bytes& bytes) override {
+        return store_.Load(state, bytes);
+    }
+    orbit::service_schedule::storage::SaveResult Transition(
+        const orbit::service_schedule::storage::Bytes* expected,
+        const orbit::service_schedule::FacePersistentState& state,
+        orbit::service_schedule::storage::Bytes& bytes) override {
+        return store_.Transition(expected, state, bytes);
+    }
+};
+#endif
 }  // namespace
 
 LV_FONT_DECLARE(font_noto_sans_basic_16_4);
@@ -209,6 +239,10 @@ private:
     ProvisionsStopwatchOrbit::SlotBoard orbit_slot_board_;
     ProvisionsStopwatchOrbit::AlarmState timer_alarm_state_;
     std::function<void(bool)> timer_alarm_output_callback_;
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+    int64_t bench_clock_ms_ = 0;
+    bool bench_clock_trusted_ = false;
+#endif
 #if CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO
     orbit::service_schedule::ScheduleDemo schedule_demo_;
     orbit::service_schedule::ScheduleView schedule_view_;
@@ -233,6 +267,9 @@ private:
     }
 
     int64_t EffectiveServerNowMs() const {
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+        return bench_clock_ms_;
+#endif
         if (!orbit_snapshot_received_) {
             return 0;
         }
@@ -337,7 +374,9 @@ private:
         }
 
         const int64_t now_ms = EffectiveServerNowMs();
+#if !CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
         ProvisionsStopwatchOrbit::LatchDueTimers(timer_snapshot_.timers, now_ms);
+#endif
         orbit_slot_board_.Update(timer_snapshot_.timers, now_ms);
         const auto colliding_ids =
             ProvisionsStopwatchOrbit::CollidingIds(timer_snapshot_.timers, now_ms);
@@ -363,8 +402,12 @@ private:
             }
 
             const bool finished =
-                slot.timer.status == ProvisionsTimerSnapshot::TimerStatus::kAttention ||
-                slot.timer.deadline_ms <= now_ms;
+                slot.timer.status == ProvisionsTimerSnapshot::TimerStatus::kAttention
+#if !CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+                || slot.timer.deadline_ms <= now_ms;
+#else
+                ;
+#endif
             const bool colliding = std::find(colliding_ids.begin(), colliding_ids.end(),
                                              slot.timer.id) != colliding_ids.end();
             const uint32_t color = finished ? kColorRed : kOrbitColors[index];
@@ -377,9 +420,13 @@ private:
             lv_obj_set_style_arc_width(objects.arc, colliding ? 10 : 6, LV_PART_MAIN);
             lv_label_set_text(objects.label, slot.timer.label.c_str());
             lv_obj_set_style_text_color(objects.label, lv_color_hex(kColorCream), 0);
-            const std::string remaining = finished ? "DONE"
-                                                   : ProvisionsStopwatchOrbit::FormatRemaining(
-                                                         slot.timer.deadline_ms, now_ms);
+            const std::string remaining =
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+                !bench_clock_trusted_ && !finished ? "--:--" :
+#endif
+                finished
+                    ? "DONE"
+                    : ProvisionsStopwatchOrbit::FormatRemaining(slot.timer.deadline_ms, now_ms);
             lv_label_set_text(objects.remaining, remaining.c_str());
             lv_obj_set_style_text_color(objects.remaining, lv_color_hex(color), 0);
         }
@@ -425,7 +472,17 @@ private:
         }
 
         const auto finished =
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+            [&]() {
+                std::vector<ProvisionsTimerSnapshot::Timer> due;
+                for (const auto& timer : timer_snapshot_.timers)
+                    if (timer.status == ProvisionsTimerSnapshot::TimerStatus::kAttention)
+                        due.push_back(timer);
+                return due;
+            }();
+#else
             ProvisionsStopwatchOrbit::FinishedTimers(timer_snapshot_.timers, now_ms);
+#endif
         const AlarmOutputChange output_change = timer_alarm_state_.Update(finished);
         timer_alarm_active_.store(timer_alarm_state_.active());
         if (!finished.empty()) {
@@ -1167,7 +1224,9 @@ public:
             lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
         }
         ApplyVisualStateLocked(VisualState::kBoot);
+#if !CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
         ESP_ERROR_CHECK(esp_timer_start_periodic(orbit_tick_timer_, kOrbitTickIntervalUs));
+#endif
 #else
         // Generic StopWatch layout remains unchanged.
         lv_obj_set_style_pad_left(status_bar_, LV_HOR_RES * 0.2, 0);
@@ -1197,6 +1256,63 @@ public:
             change = RefreshOrbitLocked();
         }
         ApplyAlarmOutputChange(change);
+    }
+#endif
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+    void RenderHardwareBench(
+        const std::shared_ptr<const orbit::service_schedule::WorkerPublication>& publication,
+        const std::string& status) {
+        DisplayLockGuard lock(this);
+        timer_snapshot_.timers.clear();
+        bench_clock_trusted_ = false;
+        bench_clock_ms_ = 0;
+        if (publication && publication->face) {
+            const auto& model = *publication->face;
+            bench_clock_ms_ = model.scheduler().now_ms();
+            bench_clock_trusted_ =
+                model.scheduler().clock_state() == orbit::service_schedule::ClockState::Trusted;
+            if (const auto* snapshot = model.scheduler().snapshot()) {
+                for (const auto& item : model.scheduler().items()) {
+                    if (item.acknowledged)
+                        continue;
+                    ProvisionsTimerSnapshot::Timer timer;
+                    timer.id = item.key.id + "/" + std::to_string(item.key.revision);
+                    timer.status = item.due ? ProvisionsTimerSnapshot::TimerStatus::kAttention
+                                            : ProvisionsTimerSnapshot::TimerStatus::kActive;
+                    if (item.key.kind == orbit::service_schedule::ItemKind::Timer) {
+                        for (const auto& source : snapshot->timers)
+                            if (source.id == item.key.id) {
+                                timer.label = source.label;
+                                timer.deadline_ms = source.deadline_ms;
+                            }
+                    } else {
+                        for (const auto& source : snapshot->cues)
+                            if (source.id == item.key.id) {
+                                timer.label = source.label;
+                                timer.deadline_ms = source.deadline_ms;
+                            }
+                    }
+                    timer_snapshot_.timers.push_back(std::move(timer));
+                }
+            }
+        }
+        orbit_snapshot_received_ = true;
+        resting_state_.store(VisualState::kReady);
+        receipt_visible_.store(false);
+        reply_visible_.store(false);
+        // Reuse the existing dial geometry/labels; only the worker authors due
+        // and ACK state. No ordinary alarm-output callback is registered here.
+        RefreshOrbitLocked();
+        lv_label_set_text(orbit_center_label_, "BENCH");
+        lv_obj_align(orbit_center_label_, LV_ALIGN_CENTER, 0, -25);
+        lv_obj_set_width(orbit_overflow_label_, 150);
+        lv_label_set_long_mode(orbit_overflow_label_, LV_LABEL_LONG_WRAP);
+        lv_obj_align(orbit_overflow_label_, LV_ALIGN_CENTER, 0, 32);
+        lv_label_set_text(orbit_overflow_label_, status.c_str());
+        SetVisible(orbit_overflow_label_, true);
+        lv_label_set_text(alarm_title_label_, "BENCH ALERT");
+        const std::string hint = "BLUE ACKS ONE\n" + status;
+        lv_label_set_text(alarm_hint_label_, hint.c_str());
     }
 #endif
     void SetTimerAlarmOutputCallback(std::function<void(bool)> callback) {
@@ -1452,6 +1568,106 @@ private:
     esp_timer_handle_t display_idle_timer_ = nullptr;
     std::atomic<int64_t> display_idle_deadline_us_{0};
     bool display_dimmed_ = false;
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+    std::unique_ptr<orbit::service_schedule::HardwareBench> bench_;
+    std::atomic<orbit::service_schedule::HardwareBench*> bench_published_{nullptr};
+    std::shared_ptr<const orbit::service_schedule::WorkerPublication> bench_rendered_;
+    esp_timer_handle_t bench_timer_ = nullptr;
+    std::atomic<bool> bench_tick_queued_{false}, bench_gesture_queued_{false},
+        bench_gesture_rejected_{false};
+    bool bench_motor_fault_ = false;
+    uint64_t bench_display_sequence_ = 0;
+    std::string bench_display_status_;
+
+    void PollHardwareBench() {
+        if (!bench_)
+            return;
+        if (bench_gesture_rejected_.exchange(false))
+            bench_->RejectGesture();
+        bench_->Poll(esp_timer_get_time() / 1000);
+        const auto& publication = bench_->current();
+        const auto status = bench_motor_fault_ ? std::string("HAPTIC FAULT") : bench_->Status();
+        const auto sequence = publication ? publication->sequence : 0;
+        if (sequence != bench_display_sequence_ || status != bench_display_status_) {
+            bench_display_sequence_ = sequence;
+            bench_display_status_ = status;
+            display_->RenderHardwareBench(publication, status);
+            // A physical press binds only after the new state is rendered, not
+            // in the gap between worker publication and the display mutation.
+            std::atomic_store(&bench_rendered_, publication);
+        }
+    }
+    void QueueBenchGesture(bool blue) {
+        auto* bench = bench_published_.load();
+        if (!bench)
+            return;
+        if (bench_gesture_queued_.exchange(true)) {
+            bench_gesture_rejected_.store(true);
+            return;
+        }
+        auto observed = std::atomic_load(&bench_rendered_);
+        Application::GetInstance().Schedule([this, bench, observed = std::move(observed), blue]() {
+            bench_gesture_queued_.store(false);
+            if (bench_published_.load() != bench)
+                return;
+            if (blue)
+                bench->Blue(observed);
+            else
+                bench->Yellow(observed, esp_timer_get_time() / 1000);
+            PollHardwareBench();
+        });
+    }
+    void StartHardwareBench() {
+        auto prior = esp_pthread_get_default_config();
+        esp_pthread_get_cfg(&prior);
+        auto config = esp_pthread_get_default_config();
+        config.stack_size = 40 * 1024;
+        config.prio = 2;
+        config.thread_name = "orbit_schedule";
+        config.inherit_cfg = false;
+        if (esp_pthread_set_cfg(&config) != ESP_OK) {
+            display_->RenderHardwareBench({}, "WORKER CONFIG FAILED");
+            return;
+        }
+        auto& audio = Application::GetInstance().GetAudioService();
+        orbit::service_schedule::AlarmOutputHooks hooks{
+            [&audio]() { return audio.PlayLocalFeedback(Lang::Sounds::OGG_EXCLAMATION); },
+            [&audio]() { audio.CancelLocalFeedback(); },
+            [&audio]() { return audio.IsPlaybackIdle(); },
+            [&audio]() { return audio.LocalFeedbackErrors(); },
+            [this](bool active) {
+                // After any I2C fault, later pulse requests may only attempt
+                // LOW. A failed haptic channel must not keep reasserting HIGH.
+                active = active && !bench_motor_fault_;
+                m5ioe1_err_t error = M5IOE1_OK;
+                ioe_.digitalWriteWithRes(IOE_PIN_MOTOR, active ? HIGH : LOW, &error);
+                if (error != M5IOE1_OK)
+                    bench_motor_fault_ = true;
+            }};
+        bench_ = std::make_unique<orbit::service_schedule::HardwareBench>(
+            std::make_unique<BenchScheduleStore>(), std::move(hooks));
+        esp_pthread_set_cfg(&prior);
+        bench_published_.store(bench_.get());
+        esp_timer_create_args_t args = {.callback =
+                                            [](void* raw) {
+                                                auto* self =
+                                                    static_cast<M5StackStopwatchBoard*>(raw);
+                                                if (self->bench_tick_queued_.exchange(true))
+                                                    return;
+                                                Application::GetInstance().Schedule([self]() {
+                                                    self->bench_tick_queued_.store(false);
+                                                    self->PollHardwareBench();
+                                                });
+                                            },
+                                        .arg = this,
+                                        .dispatch_method = ESP_TIMER_TASK,
+                                        .name = "orbit_bench",
+                                        .skip_unhandled_events = true};
+        ESP_ERROR_CHECK(esp_timer_create(&args, &bench_timer_));
+        ESP_ERROR_CHECK(esp_timer_start_periodic(bench_timer_, 50000));
+        PollHardwareBench();
+    }
+#endif
 #endif
 
     void InitializeI2c() {
@@ -1575,7 +1791,10 @@ private:
 
     void InitializeButtons() {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-#if CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+        button1_.OnClick([this]() { QueueBenchGesture(false); });
+        button2_.OnClick([this]() { QueueBenchGesture(true); });
+#elif CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO
         // Physical callbacks only enqueue onto the same Application owner as ticks.
         // No Talk/microphone, volume mutation or business confirmation in this demo.
         button1_.OnClick([this]() {
@@ -1743,16 +1962,18 @@ public:
         InitializeSpi();
         InitializeDisplay();
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-#if !CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO
+#if !CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO && !CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
         InitializeDisplayIdleTimer();
 #endif
+#if !CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
         display_->SetTimerAlarmOutputCallback([this](bool active) {
             ioe_.digitalWrite(IOE_PIN_MOTOR, active ? HIGH : LOW);
             if (active) {
                 ResetDisplayIdleTimer();
             }
         });
-#if !CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO
+#endif
+#if !CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO && !CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
         Application::GetInstance().RegisterProvisionsTimerSnapshotCallback(
             [this](const ProvisionsTimerSnapshot::Update& update) {
                 if (update.kind == ProvisionsTimerSnapshot::Update::Kind::kReset) {
@@ -1796,7 +2017,13 @@ public:
         return display_;
     }
 
-#if CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+    void StartNetwork() override {
+        ESP_LOGI(TAG,
+                 "Isolated schedule BENCH: real speaker, no network/capture; orbit_bench_v1 only");
+        StartHardwareBench();
+    }
+#elif CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO
     void StartNetwork() override {
         // No Wi-Fi, bootstrap, OTA, credential use or gateway connection. The
         // Application event loop still services the two local fixture buttons.

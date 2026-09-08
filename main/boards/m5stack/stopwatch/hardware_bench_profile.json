@@ -1,0 +1,41 @@
+{
+    "manufacturer": "m5stack",
+    "type": "m5stack-stopwatch",
+    "target": "esp32s3",
+    "builds": [
+        {
+            "name": "provisions-kitchen-helper-stopwatch-schedule-bench",
+            "sdkconfig_append": [
+                "CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH=y",
+                "CONFIG_SPIRAM=y",
+                "CONFIG_SPIRAM_MODE_OCT=y",
+                "CONFIG_SPIRAM_SPEED_80M=y",
+                "CONFIG_LOG_DEFAULT_LEVEL_INFO=y",
+                "CONFIG_LOG_MAXIMUM_LEVEL_INFO=y",
+                "CONFIG_OTA_URL=\"https://app.provisions-app.com/kitchen-helper/preview/v1/bootstrap\"",
+                "CONFIG_PARTITION_TABLE_CUSTOM=y",
+                "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=\"partitions/provisions/16m.csv\"",
+                "CONFIG_BOOTLOADER_SKIP_VALIDATE_ALWAYS=n",
+                "CONFIG_BOOTLOADER_SKIP_VALIDATE_ON_POWER_ON=n",
+                "CONFIG_BOOTLOADER_SKIP_VALIDATE_IN_DEEP_SLEEP=n",
+                "CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y",
+                "CONFIG_PROVISIONS_GATEWAY_REQUIRED=y",
+                "CONFIG_WAKE_WORD_DISABLED=y",
+                "CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=y",
+                "CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y",
+                "CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=n",
+                "CONFIG_SECURE_BOOT=n",
+                "CONFIG_SECURE_BOOT_V2_ENABLED=n",
+                "CONFIG_SECURE_FLASH_ENC_ENABLED=n",
+                "CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=n",
+                "CONFIG_NVS_ENCRYPTION=n",
+                "CONFIG_NVS_SEC_KEY_PROTECT_USING_FLASH_ENC=n",
+                "CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK=n",
+                "CONFIG_APP_ANTI_ROLLBACK=n",
+                "CONFIG_PROVISIONS_LOCAL_CAPTURE=y",
+                "CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO=n",
+                "CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH=y"
+            ]
+        }
+    ]
+}

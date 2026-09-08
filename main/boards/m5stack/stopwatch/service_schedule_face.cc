@@ -113,20 +113,22 @@ void FaceModel::Refresh() {
 }
 
 bool FaceModel::AcknowledgeNext() {
-    if (pending_.size() >= kMaximumItems)
-        return false;
     for (const auto& item : scheduler_.items()) {
         if (!item.due || item.acknowledged)
             continue;
         const auto key = item.key;
-        if (scheduler_.Acknowledge(key) != AckResult::Acknowledged)
-            return false;
-        pending_.push_back(key);
-        receipt_confirmed_ = false;
-        Refresh();
-        return true;
+        return Acknowledge(key);
     }
     return false;
+}
+
+bool FaceModel::Acknowledge(const AlarmKey& key) {
+    if (pending_.size() >= kMaximumItems || scheduler_.Acknowledge(key) != AckResult::Acknowledged)
+        return false;
+    pending_.push_back(key);
+    receipt_confirmed_ = false;
+    Refresh();
+    return true;
 }
 
 bool FaceModel::AcceptReceipt(const AlarmKey& key) {

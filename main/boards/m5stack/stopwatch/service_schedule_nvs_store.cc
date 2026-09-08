@@ -5,13 +5,25 @@
 
 namespace orbit::service_schedule::storage {
 namespace {
-constexpr const char* kNamespace = "orbit_sched_v1";
 constexpr const char* kKey = "state";
 }  // namespace
 
+const char* NvsStore::Namespace() const {
+    switch (domain_) {
+        case StoreDomain::Live:
+            return "orbit_sched_v1";
+        case StoreDomain::Bench:
+            return "orbit_bench_v1";
+    }
+    return nullptr;
+}
+
 LoadResult NvsStore::Load(FacePersistentState& output, Bytes& encoded) const {
+    const auto* storage_namespace = Namespace();
+    if (!storage_namespace)
+        return LoadResult::IoError;
     nvs_handle_t handle;
-    auto status = nvs_open(kNamespace, NVS_READONLY, &handle);
+    auto status = nvs_open(storage_namespace, NVS_READONLY, &handle);
     if (status == ESP_ERR_NVS_NOT_FOUND)
         return LoadResult::Absent;
     if (status != ESP_OK)
@@ -63,7 +75,7 @@ SaveResult NvsStore::Transition(const Bytes* expected, const FacePersistentState
         return SaveResult::Unchanged;
     }
     nvs_handle_t handle;
-    if (nvs_open(kNamespace, NVS_READWRITE, &handle) != ESP_OK)
+    if (nvs_open(Namespace(), NVS_READWRITE, &handle) != ESP_OK)
         return SaveResult::IoError;
     const bool committed =
         nvs_set_blob(handle, kKey, candidate.data(), candidate.size()) == ESP_OK &&

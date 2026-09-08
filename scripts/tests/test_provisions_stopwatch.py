@@ -28,10 +28,12 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertEqual(config["target"], "esp32s3")
         builds = {item["name"]: item for item in config["builds"]}
         demo_name = f"{PROFILE}-schedule-demo"
+        bench_name = f"{PROFILE}-schedule-bench"
         expected_symbols = {
             "m5stack-stopwatch": "CONFIG_BOARD_TYPE_M5STACK_STOPWATCH",
             PROFILE: PROFILE_SYMBOL,
             demo_name: PROFILE_SYMBOL,
+            bench_name: PROFILE_SYMBOL,
         }
         self.assertEqual(set(builds), set(expected_symbols))
         self.assertEqual(len(config["builds"]), len(builds), "duplicate variant name")
@@ -74,6 +76,15 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         }
         self.assertEqual(demo - provisions, demo_only)
         self.assertEqual(provisions - demo, set())
+        accepted = json.loads((BOARD_DIR / "bench_profile.json").read_text())["builds"][0]
+        hardware_bench = json.loads((BOARD_DIR / "hardware_bench_profile.json").read_text())["builds"][0]
+        self.assertEqual(hardware_bench, builds[bench_name])
+        self.assertEqual(
+            set(hardware_bench["sdkconfig_append"]) - set(accepted["sdkconfig_append"]),
+            {"CONFIG_PROVISIONS_LOCAL_CAPTURE=y", "CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO=n",
+             "CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH=y"},
+        )
+        self.assertEqual(set(accepted["sdkconfig_append"]) - set(hardware_bench["sdkconfig_append"]), set())
         for name in ("m5stack-stopwatch", PROFILE):
             with self.subTest(non_demo_variant=name):
                 options = build._sdkconfig_assignments(

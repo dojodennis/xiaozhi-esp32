@@ -1,0 +1,403 @@
+{
+  "recorded_at": "2026-09-08T23:15:50.691375+00:00",
+  "source_base": "a5939056ef7abd42aec10ccaf005c1a83b5883d3",
+  "source_state": "reviewed working tree, committed together with this report; runtime hashes verified against built bench evidence",
+  "builds": [
+    {
+      "variant": "provisions-kitchen-helper-stopwatch-schedule-bench",
+      "source_base": "a5939056ef7abd42aec10ccaf005c1a83b5883d3",
+      "source_state": "reviewed working tree; exact edited and added source hashes below",
+      "built_at": "2026-09-08T23:07:37.534352+00:00",
+      "idf": "6.0.2",
+      "image": "espressif/idf:v6.0.2",
+      "signed": false,
+      "installed": false,
+      "app": {
+        "path": "build/xiaozhi.bin",
+        "bytes": 3080192,
+        "sha256": "ecffe7aa30eddcf0e965a1beeeef82326357bbba28057ad418160d9f89ba706c"
+      },
+      "sdkconfig": {
+        "path": "sdkconfig",
+        "bytes": 128921,
+        "sha256": "2cd000f6e964b07e76dfc08fcef8b2ca615d24d959732c8bce3640b139a1dd50"
+      },
+      "dependencies_lock": {
+        "path": "dependencies.lock",
+        "bytes": 33916,
+        "sha256": "3d627e36af969bb3c0847bc92036d6875faa7f266f899a4a63fced3e586cee7c"
+      },
+      "profile": {
+        "path": "main/boards/m5stack/stopwatch/hardware_bench_profile.json",
+        "bytes": 1928,
+        "sha256": "bb1b23af70dd76d187508b26ae84a8be358bc2315085ab2193128ff7089fd139"
+      },
+      "partition": {
+        "path": "partitions/provisions/16m.csv",
+        "bytes": 438,
+        "sha256": "e7b8cedf1a8d0c2385b2b6a09a32be3fa1a6f11546e8032c1053102e4e7a1a2b"
+      },
+      "generated_assets": {
+        "path": "build/generated_assets.bin",
+        "bytes": 2694681,
+        "sha256": "11f3abd184183956f065a36fa352f93ce9a1b0b6090b5ece55c6709ee2c90561"
+      },
+      "slot_bytes": 4128768,
+      "source_files": {
+        "main/CMakeLists.txt": {
+          "path": "main/CMakeLists.txt",
+          "bytes": 67604,
+          "sha256": "f799889c09830c252064d778e5364aa2c094854dc1638330fbfecb7a173250de"
+        },
+        "main/Kconfig.projbuild": {
+          "path": "main/Kconfig.projbuild",
+          "bytes": 46305,
+          "sha256": "2745119a1e0e339c82a3745bfb83ac4a3807ac81e0b0a3c71e99c95cabb34dd2"
+        },
+        "main/application.cc": {
+          "path": "main/application.cc",
+          "bytes": 120368,
+          "sha256": "c974c37056e0821abde488596efa5099d90ef0956aad7c8bd4088e81d3c49c23"
+        },
+        "main/audio/audio_service.cc": {
+          "path": "main/audio/audio_service.cc",
+          "bytes": 82629,
+          "sha256": "258cf37a0002d5e1744ecc0a1e2fcf1dfb8dc2e70ff7416c85e1f6350b7b87b8"
+        },
+        "main/audio/audio_service.h": {
+          "path": "main/audio/audio_service.h",
+          "bytes": 18954,
+          "sha256": "269c21f168b11c1195f74ce5f547f1f4781bfcb46153b6926424ea1563dd8c85"
+        },
+        "main/boards/m5stack/stopwatch/config.json": {
+          "path": "main/boards/m5stack/stopwatch/config.json",
+          "bytes": 4685,
+          "sha256": "3ef093569bed39bd3ede8666604fcdd0bdcc19172badec5b000f028cfe361341"
+        },
+        "main/boards/m5stack/stopwatch/hardware_bench_profile.json": {
+          "path": "main/boards/m5stack/stopwatch/hardware_bench_profile.json",
+          "bytes": 1928,
+          "sha256": "bb1b23af70dd76d187508b26ae84a8be358bc2315085ab2193128ff7089fd139"
+        },
+        "main/boards/m5stack/stopwatch/m5stack_stopwatch.cc": {
+          "path": "main/boards/m5stack/stopwatch/m5stack_stopwatch.cc",
+          "bytes": 91351,
+          "sha256": "3ebac0ff5c9cb9476b774ca5d19a0290e995d108b9bd826620542ae2fe235f58"
+        },
+        "main/boards/m5stack/stopwatch/service_schedule_alarm_output.cc": {
+          "path": "main/boards/m5stack/stopwatch/service_schedule_alarm_output.cc",
+          "bytes": 3027,
+          "sha256": "fba9d2b288d261f48405945e46ffe6e235c6b5fdb06bf74a25cfa93b575335ce"
+        },
+        "main/boards/m5stack/stopwatch/service_schedule_alarm_output.h": {
+          "path": "main/boards/m5stack/stopwatch/service_schedule_alarm_output.h",
+          "bytes": 1691,
+          "sha256": "b0292b32fbb64702b020a497c91b6bfee5d00716b9345460e984fe9e3ccb45b7"
+        },
+        "main/boards/m5stack/stopwatch/service_schedule_face.cc": {
+          "path": "main/boards/m5stack/stopwatch/service_schedule_face.cc",
+          "bytes": 7146,
+          "sha256": "83b0215d79c854bfe3a020779771f556ac11f3129519f256174ebded51308e64"
+        },
+        "main/boards/m5stack/stopwatch/service_schedule_face.h": {
+          "path": "main/boards/m5stack/stopwatch/service_schedule_face.h",
+          "bytes": 2808,
+          "sha256": "16af107d25995e10eb2c566daf897df8f932026bec421eede12c5a63d67c239c"
+        },
+        "main/boards/m5stack/stopwatch/service_schedule_hardware_bench.cc": {
+          "path": "main/boards/m5stack/stopwatch/service_schedule_hardware_bench.cc",
+          "bytes": 6684,
+          "sha256": "cd9c1ecbbee140ddb63b4de61ffef3357d37a286844f391b0077da37e8d33a73"
+        },
+        "main/boards/m5stack/stopwatch/service_schedule_hardware_bench.h": {
+          "path": "main/boards/m5stack/stopwatch/service_schedule_hardware_bench.h",
+          "bytes": 1643,
+          "sha256": "02365b258a8ae11d32a0621c17737d52865265c2359a0e0201ba65520ace358b"
+        },
+        "main/boards/m5stack/stopwatch/service_schedule_nvs_store.cc": {
+          "path": "main/boards/m5stack/stopwatch/service_schedule_nvs_store.cc",
+          "bytes": 3225,
+          "sha256": "e05df9758c8b5c4c80f16432ead05cc899c55e05c737e2c6eb267f916da8a615"
+        },
+        "main/boards/m5stack/stopwatch/service_schedule_nvs_store.h": {
+          "path": "main/boards/m5stack/stopwatch/service_schedule_nvs_store.h",
+          "bytes": 2411,
+          "sha256": "38bc8fea2778efcee7ed87f12b7e83080d95934b9869c1e5cd36185e418237a5"
+        },
+        "main/boards/m5stack/stopwatch/service_schedule_worker.cc": {
+          "path": "main/boards/m5stack/stopwatch/service_schedule_worker.cc",
+          "bytes": 13763,
+          "sha256": "be55f0e7bf83f1078d44aede07787236925f8f085a6b07ccb2cdc6b474e50797"
+        },
+        "main/boards/m5stack/stopwatch/service_schedule_worker.h": {
+          "path": "main/boards/m5stack/stopwatch/service_schedule_worker.h",
+          "bytes": 5528,
+          "sha256": "408f67c354b5a015c19a6024af61e75a0fa2caf858be27f11ca3a4d587ec57f2"
+        },
+        "main/boards/m5stack/stopwatch/tests/service_schedule_alarm_output_test.cc": {
+          "path": "main/boards/m5stack/stopwatch/tests/service_schedule_alarm_output_test.cc",
+          "bytes": 8426,
+          "sha256": "33549f1db022efd9d097cf46a36353ea464ced69e2ea1955a2952ca6f1b5c650"
+        },
+        "main/boards/m5stack/stopwatch/tests/service_schedule_hardware_bench_test.cc": {
+          "path": "main/boards/m5stack/stopwatch/tests/service_schedule_hardware_bench_test.cc",
+          "bytes": 16237,
+          "sha256": "5e607c216b9ad444619722cadf9c406189925e92c53844f28ffe3db0c3327643"
+        },
+        "main/boards/m5stack/stopwatch/tests/service_schedule_storage_test.cc": {
+          "path": "main/boards/m5stack/stopwatch/tests/service_schedule_storage_test.cc",
+          "bytes": 26481,
+          "sha256": "e71bf8860e4cf72174dc4faba4ddc0430658e01c8c5b437904c4fa6a23a46f92"
+        },
+        "main/boards/m5stack/stopwatch/tests/service_schedule_worker_test.cc": {
+          "path": "main/boards/m5stack/stopwatch/tests/service_schedule_worker_test.cc",
+          "bytes": 29077,
+          "sha256": "255caf30819fb499ac578dae2d54f9119d1fef3176b1edf1424f2409cc26a404"
+        },
+        "main/boards/m5stack/stopwatch/tests/test_service_schedule_alarm_output.py": {
+          "path": "main/boards/m5stack/stopwatch/tests/test_service_schedule_alarm_output.py",
+          "bytes": 2319,
+          "sha256": "f6092c00fa7cd51efdfa0c6931571dd32ae70c1274495d7c29afc3b0b765d47b"
+        },
+        "main/boards/m5stack/stopwatch/tests/test_service_schedule_hardware_bench.py": {
+          "path": "main/boards/m5stack/stopwatch/tests/test_service_schedule_hardware_bench.py",
+          "bytes": 2386,
+          "sha256": "d7cf72146929a98697be96f663651adf65211832c290316679103df5687672c8"
+        },
+        "main/boards/m5stack/stopwatch/tests/test_service_schedule_storage.py": {
+          "path": "main/boards/m5stack/stopwatch/tests/test_service_schedule_storage.py",
+          "bytes": 2894,
+          "sha256": "f0afbc9ba5702d176c04211aa35cb79d14d1d70aadc86bbb8c17bc521c641df0"
+        },
+        "main/boards/m5stack/stopwatch/tests/test_service_schedule_worker.py": {
+          "path": "main/boards/m5stack/stopwatch/tests/test_service_schedule_worker.py",
+          "bytes": 2300,
+          "sha256": "337e3c005d4418e9ad988775b4994130a6ef16d22ca59da68e130d85357c789f"
+        },
+        "main/provisions_endpoint_policy.cc": {
+          "path": "main/provisions_endpoint_policy.cc",
+          "bytes": 16516,
+          "sha256": "82e3143ef015bdf1555fbb204e4a7d87b9b0811fb43e56ae43b38758a40201c3"
+        },
+        "scripts/tests/test_provisions_audio_boundaries.py": {
+          "path": "scripts/tests/test_provisions_audio_boundaries.py",
+          "bytes": 27980,
+          "sha256": "e328285b94371a14b8923429dbcd1d1efcd9ba7e0f4dcba40ee957a75bebc8a1"
+        },
+        "scripts/tests/test_provisions_hardware_bench_adapter.py": {
+          "path": "scripts/tests/test_provisions_hardware_bench_adapter.py",
+          "bytes": 6699,
+          "sha256": "952aed51d97a9206f0b3cc8e36e9b0f18973a7e977f83452b01a28642fc8e91e"
+        },
+        "scripts/tests/test_provisions_local_capture_integration_review.py": {
+          "path": "scripts/tests/test_provisions_local_capture_integration_review.py",
+          "bytes": 48124,
+          "sha256": "06543cdf316afda72330a834f84b94f1175bba535af88eb655b5917a04b3b38b"
+        },
+        "scripts/tests/test_provisions_local_feedback_review.py": {
+          "path": "scripts/tests/test_provisions_local_feedback_review.py",
+          "bytes": 19473,
+          "sha256": "844e2e56d26cce26896c2a5881091998e125c812a3d2efa551f7a59fbd5cf953"
+        },
+        "scripts/tests/test_provisions_stopwatch.py": {
+          "path": "scripts/tests/test_provisions_stopwatch.py",
+          "bytes": 35154,
+          "sha256": "256b244403d7088c8d422b198714d72b46bc4d71efa9ac908fa41d333a5bedcd"
+        },
+        "scripts/tests/test_provisions_timers.py": {
+          "path": "scripts/tests/test_provisions_timers.py",
+          "bytes": 58063,
+          "sha256": "d3a2a36f663664fd0218868e518199cbad77ff1bfb85dea22a89a4d8997056cc"
+        },
+        "scripts/tests/test_provisions_voice_recorder_review.py": {
+          "path": "scripts/tests/test_provisions_voice_recorder_review.py",
+          "bytes": 54190,
+          "sha256": "6d5173154ddbe0fe76e74b338ca323dd61187c0d9656b948737cf6305eb8c924"
+        }
+      },
+      "slot_free_bytes": 1048576
+    },
+    {
+      "variant": "provisions-kitchen-helper-stopwatch",
+      "profile": {
+        "path": "main/boards/m5stack/stopwatch/bench_profile.json",
+        "bytes": 1738,
+        "sha256": "fbc0eb74a3ef7d1a887f6c70ee6fbff5ed30d91982cc8ddb7187db7ebffab4cf"
+      },
+      "app": {
+        "path": "build/xiaozhi.bin",
+        "bytes": 3080192,
+        "sha256": "777494912ebbfef84555254ce69918e591c51106c21c70ee7f4bd0543681ec65"
+      },
+      "sdkconfig": {
+        "path": "sdkconfig",
+        "bytes": 128954,
+        "sha256": "5714f488a88c9ea3a5f6db0bd4397f6faefa9d51ad4d0dcaa8598d05bbf583c9"
+      },
+      "dependencies_lock": {
+        "path": "dependencies.lock",
+        "bytes": 33916,
+        "sha256": "3d627e36af969bb3c0847bc92036d6875faa7f266f899a4a63fced3e586cee7c"
+      },
+      "signed": false,
+      "installed": false
+    },
+    {
+      "variant": "m5stack-stopwatch",
+      "profile": {
+        "path": "main/boards/m5stack/stopwatch/config.json",
+        "bytes": 4685,
+        "sha256": "3ef093569bed39bd3ede8666604fcdd0bdcc19172badec5b000f028cfe361341"
+      },
+      "app": {
+        "path": "build/xiaozhi.bin",
+        "bytes": 2979248,
+        "sha256": "df9dc36f8e316f8c4efe3ff8c916f8f8dc47207e9c83d6cb434af5b27086e983"
+      },
+      "sdkconfig": {
+        "path": "sdkconfig",
+        "bytes": 128437,
+        "sha256": "0d7864ef9b02933a48f0725acb0bc91196715ae2917a097963e09eb0011028e8"
+      },
+      "dependencies_lock": {
+        "path": "dependencies.lock",
+        "bytes": 33916,
+        "sha256": "3d627e36af969bb3c0847bc92036d6875faa7f266f899a4a63fced3e586cee7c"
+      },
+      "signed": false,
+      "installed": false
+    },
+    {
+      "variant": "provisions-kitchen-helper-stopwatch-schedule-demo",
+      "profile": {
+        "path": "main/boards/m5stack/stopwatch/config.json",
+        "bytes": 4685,
+        "sha256": "3ef093569bed39bd3ede8666604fcdd0bdcc19172badec5b000f028cfe361341"
+      },
+      "app": {
+        "path": "build/xiaozhi.bin",
+        "bytes": 2934064,
+        "sha256": "de24b3d1eac20fab148723f5911c77c5c31c81a4de3a1a3368312ef281c2b7c2"
+      },
+      "sdkconfig": {
+        "path": "sdkconfig",
+        "bytes": 128545,
+        "sha256": "8edfb8ff8fa5cc4d18f1b02f9d2894f490e119e303ccafa90df335f901527f5a"
+      },
+      "dependencies_lock": {
+        "path": "dependencies.lock",
+        "bytes": 33916,
+        "sha256": "3d627e36af969bb3c0847bc92036d6875faa7f266f899a4a63fced3e586cee7c"
+      },
+      "signed": false,
+      "installed": false
+    }
+  ],
+  "validation": {
+    "repository_suite": {
+      "passed": 302,
+      "log_sha256": "5af097cbe7e51d501ae888138192845977afdf18972929cfd69fba5523b01204"
+    },
+    "new_board_adapter": {
+      "passed": 3,
+      "log_sha256": "9523c17445c91ebfc952e30dad66a71fb978b1c32d684e66974ee0b15484073a"
+    },
+    "threaded_worker": {
+      "passed": 16,
+      "idle_stop_cycles": 128,
+      "log_sha256": "6b14df7e664388497e830befb8822e51108fc3a76eb725626d476468dd5199f4"
+    },
+    "coordinator": {
+      "passed": 9,
+      "log_sha256": "d2f78ff129822cc68b6622f4c74590222b3330b946799638da734c62d6d21a13"
+    },
+    "alarm_output": {
+      "passed": 14,
+      "log_sha256": "e7576cee5ba1b5a3393af21db5c514da1091fabf49106fb9884683c84aaf746f"
+    },
+    "face_persistence": {
+      "passed": 9,
+      "log_sha256": "79bc1bea570a7e0bdfc78c6813084db249c791548342ed04b77aa1e6e78c12e3"
+    },
+    "storage_codec_nvs": {
+      "passed": 16,
+      "reviewer_rerun": true
+    },
+    "existing_lvgl_demo": {
+      "passed": 8,
+      "log_sha256": "2d9a7bae48025a5a4c62240f1dd3ece11660464fe8ba0a02a1428f33045dfe8c"
+    },
+    "feedback_failure_followup": {
+      "passed": 8,
+      "included_in_repository_count": true,
+      "new_truncated_asset_case": true,
+      "log_sha256": "1fe015224c0f3718896c3f449062358a8b14dd64a7a67ec5a52939c27fba5fde"
+    },
+    "actual_board_renderer": {
+      "frames": 11,
+      "visible_label_rectangles": 75,
+      "label_overlaps": 0,
+      "labels_outside_round_boundary": 0,
+      "full_screen_invalidation_per_capture": true,
+      "two_full_redraws_pixel_identical": true,
+      "scope": "Exact extracted timer/alarm renderer with host LVGL and production fonts; no hardware proof."
+    },
+    "independent_reviews": "GO for worker, coordinator, audio/output, namespace, board integration and profiles"
+  },
+  "final_source_sha256": {
+    "main/CMakeLists.txt": "f799889c09830c252064d778e5364aa2c094854dc1638330fbfecb7a173250de",
+    "main/Kconfig.projbuild": "2745119a1e0e339c82a3745bfb83ac4a3807ac81e0b0a3c71e99c95cabb34dd2",
+    "main/application.cc": "c974c37056e0821abde488596efa5099d90ef0956aad7c8bd4088e81d3c49c23",
+    "main/audio/audio_service.cc": "258cf37a0002d5e1744ecc0a1e2fcf1dfb8dc2e70ff7416c85e1f6350b7b87b8",
+    "main/audio/audio_service.h": "269c21f168b11c1195f74ce5f547f1f4781bfcb46153b6926424ea1563dd8c85",
+    "main/boards/m5stack/stopwatch/config.json": "3ef093569bed39bd3ede8666604fcdd0bdcc19172badec5b000f028cfe361341",
+    "main/boards/m5stack/stopwatch/hardware_bench_profile.json": "bb1b23af70dd76d187508b26ae84a8be358bc2315085ab2193128ff7089fd139",
+    "main/boards/m5stack/stopwatch/m5stack_stopwatch.cc": "3ebac0ff5c9cb9476b774ca5d19a0290e995d108b9bd826620542ae2fe235f58",
+    "main/boards/m5stack/stopwatch/service_schedule_alarm_output.cc": "fba9d2b288d261f48405945e46ffe6e235c6b5fdb06bf74a25cfa93b575335ce",
+    "main/boards/m5stack/stopwatch/service_schedule_alarm_output.h": "b0292b32fbb64702b020a497c91b6bfee5d00716b9345460e984fe9e3ccb45b7",
+    "main/boards/m5stack/stopwatch/service_schedule_face.cc": "83b0215d79c854bfe3a020779771f556ac11f3129519f256174ebded51308e64",
+    "main/boards/m5stack/stopwatch/service_schedule_face.h": "16af107d25995e10eb2c566daf897df8f932026bec421eede12c5a63d67c239c",
+    "main/boards/m5stack/stopwatch/service_schedule_hardware_bench.cc": "cd9c1ecbbee140ddb63b4de61ffef3357d37a286844f391b0077da37e8d33a73",
+    "main/boards/m5stack/stopwatch/service_schedule_hardware_bench.h": "02365b258a8ae11d32a0621c17737d52865265c2359a0e0201ba65520ace358b",
+    "main/boards/m5stack/stopwatch/service_schedule_nvs_store.cc": "e05df9758c8b5c4c80f16432ead05cc899c55e05c737e2c6eb267f916da8a615",
+    "main/boards/m5stack/stopwatch/service_schedule_nvs_store.h": "38bc8fea2778efcee7ed87f12b7e83080d95934b9869c1e5cd36185e418237a5",
+    "main/boards/m5stack/stopwatch/service_schedule_worker.cc": "be55f0e7bf83f1078d44aede07787236925f8f085a6b07ccb2cdc6b474e50797",
+    "main/boards/m5stack/stopwatch/service_schedule_worker.h": "408f67c354b5a015c19a6024af61e75a0fa2caf858be27f11ca3a4d587ec57f2",
+    "main/boards/m5stack/stopwatch/tests/README-service-schedule.md": "53e4185d8291e5e4d44fe4e19084eae5766ca9386488cd73db2de0e36225fa65",
+    "main/boards/m5stack/stopwatch/tests/hardware_bench_render/CMakeLists.txt": "8667b004131d67d5275f62597e9991fcbed57ae13393152285d43c6d9a4faf07",
+    "main/boards/m5stack/stopwatch/tests/hardware_bench_render/host.cc": "89e4ce94656766044f63f18a10331efd772070b1fa7fa95901738cc0391258a0",
+    "main/boards/m5stack/stopwatch/tests/run_service_schedule_hardware_bench_render.py": "60c2f55d260aecced8e873c76ad3f26b3f96466e915b5510ec4aae3fd0b1952c",
+    "main/boards/m5stack/stopwatch/tests/service_schedule_alarm_output_test.cc": "33549f1db022efd9d097cf46a36353ea464ced69e2ea1955a2952ca6f1b5c650",
+    "main/boards/m5stack/stopwatch/tests/service_schedule_hardware_bench_test.cc": "5e607c216b9ad444619722cadf9c406189925e92c53844f28ffe3db0c3327643",
+    "main/boards/m5stack/stopwatch/tests/service_schedule_storage_test.cc": "e71bf8860e4cf72174dc4faba4ddc0430658e01c8c5b437904c4fa6a23a46f92",
+    "main/boards/m5stack/stopwatch/tests/service_schedule_worker_test.cc": "255caf30819fb499ac578dae2d54f9119d1fef3176b1edf1424f2409cc26a404",
+    "main/boards/m5stack/stopwatch/tests/test_service_schedule_alarm_output.py": "f6092c00fa7cd51efdfa0c6931571dd32ae70c1274495d7c29afc3b0b765d47b",
+    "main/boards/m5stack/stopwatch/tests/test_service_schedule_hardware_bench.py": "d7cf72146929a98697be96f663651adf65211832c290316679103df5687672c8",
+    "main/boards/m5stack/stopwatch/tests/test_service_schedule_storage.py": "f0afbc9ba5702d176c04211aa35cb79d14d1d70aadc86bbb8c17bc521c641df0",
+    "main/boards/m5stack/stopwatch/tests/test_service_schedule_worker.py": "337e3c005d4418e9ad988775b4994130a6ef16d22ca59da68e130d85357c789f",
+    "main/provisions_endpoint_policy.cc": "82e3143ef015bdf1555fbb204e4a7d87b9b0811fb43e56ae43b38758a40201c3",
+    "scripts/tests/test_provisions_audio_boundaries.py": "e328285b94371a14b8923429dbcd1d1efcd9ba7e0f4dcba40ee957a75bebc8a1",
+    "scripts/tests/test_provisions_hardware_bench_adapter.py": "952aed51d97a9206f0b3cc8e36e9b0f18973a7e977f83452b01a28642fc8e91e",
+    "scripts/tests/test_provisions_local_capture_integration_review.py": "06543cdf316afda72330a834f84b94f1175bba535af88eb655b5917a04b3b38b",
+    "scripts/tests/test_provisions_local_feedback_review.py": "5a5575b039fae9fa26b3d6549d7121ac88c021bd3eda8869a651d90cb6cf7367",
+    "scripts/tests/test_provisions_stopwatch.py": "256b244403d7088c8d422b198714d72b46bc4d71efa9ac908fa41d333a5bedcd",
+    "scripts/tests/test_provisions_timers.py": "d3a2a36f663664fd0218868e518199cbad77ff1bfb85dea22a89a4d8997056cc",
+    "scripts/tests/test_provisions_voice_recorder_review.py": "6d5173154ddbe0fe76e74b338ca323dd61187c0d9656b948737cf6305eb8c924"
+  },
+  "frames_directory": "docs/orbit-schedule-hardware-bench-frames-2026-09-09",
+  "hardware_accepted": false,
+  "signed": false,
+  "installed": false,
+  "physical_gates": [
+    "NVS capacity/power loss",
+    "timer/alarm acoustic timing",
+    "apron haptics",
+    "restart/recovery",
+    "authenticated clock/receipts",
+    "hotspot",
+    "battery",
+    "uncoached usability",
+    "48-hour fixed-candidate soak"
+  ],
+  "unsigned_archive": "/Users/dojo/.codex/device-builds/orbit-schedule-bench/2026-09-09-ecffe7aa"
+}

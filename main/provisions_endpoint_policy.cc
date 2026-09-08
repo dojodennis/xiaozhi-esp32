@@ -51,6 +51,9 @@ constexpr std::string_view kSelectedHardwareIdentity = "provisions-kitchen-helpe
 // Distinct local-only identity; the board never starts its network in this build.
 constexpr std::string_view kSelectedHardwareIdentity =
     "provisions-kitchen-helper-stopwatch-schedule-demo";
+#elif CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+constexpr std::string_view kSelectedHardwareIdentity =
+    "provisions-kitchen-helper-stopwatch-schedule-bench";
 #else
 constexpr std::string_view kSelectedHardwareIdentity = "provisions-kitchen-helper-stopwatch";
 #endif

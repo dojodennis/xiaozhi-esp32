@@ -925,6 +925,18 @@ config PROVISIONS_SCHEDULE_BENCH_DEMO
         one due alert. No microphone, network, enrollment or authoritative writes.
         This is not an installed/live schedule capability or timing acceptance.
 
+config PROVISIONS_SCHEDULE_HARDWARE_BENCH
+    bool "Isolated Orbit schedule hardware bench (real speaker, network disabled)"
+    depends on BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH && PROVISIONS_LOCAL_CAPTURE && WAKE_WORD_DISABLED
+    default n
+    help
+        Uses the accepted capture-compatible codec/security/partition profile,
+        but suppresses capture, old timer leases and all network activity.
+        A physical yellow press after proven absent bench storage seeds six
+        synthetic timers. Blue persists one exact local ACK. Reboot shows
+        NEEDS SYNC; no fake fresh clock, remote receipt, reset or business write.
+        Bench data uses only orbit_bench_v1/state. Not product/soak acceptance.
+
 config PROVISIONS_PREVIEW_HOST
     string
     default "app.provisions-app.com"

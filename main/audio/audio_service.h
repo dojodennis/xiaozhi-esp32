@@ -299,6 +299,9 @@ public:
     // controls never demux, decode, wait for capacity or write to the codec.
     bool PlayLocalFeedback(const std::string_view& sound);
     void CancelLocalFeedback();
+    // Monotonic failure observation for the local-feedback owner. A drained
+    // queue can also follow a decode/output failure; it is not a success receipt.
+    uint32_t LocalFeedbackErrors() const { return local_feedback_errors_.load(); }
 #endif
     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
     void ResetDecoder();
@@ -374,6 +377,7 @@ private:
     std::string_view local_feedback_;
     size_t local_feedback_offset_ = 0;
     bool local_feedback_active_ = false;
+    std::atomic<uint32_t> local_feedback_errors_{0};
     OggDemuxer local_feedback_demuxer_;
     void FillLocalFeedbackLocked();
 #endif

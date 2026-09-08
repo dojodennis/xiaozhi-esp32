@@ -67,7 +67,7 @@ struct AudioService {
  std::deque<int> timestamp_queue_,audio_testing_queue_;
  std::atomic<bool> service_stopped_{false};
  std::atomic<uint32_t> timer_output_owner_{0},local_input_press_{0},local_recording_press_{0},local_physical_boundary_{0},local_output_boundary_{0};
- bool output_in_flight_=false,decode_in_flight_=false,playback_drained_notified_=false,local_feedback_active_=false;
+ bool output_in_flight_=false,decode_in_flight_=false,playback_drained_notified_=false,local_feedback_active_=false;std::atomic<uint32_t> local_feedback_errors_{0};
  uint32_t playback_generation_=0;std::string_view local_feedback_;void* opus_decoder_=nullptr;
  Es8311AudioCodec codec;Es8311AudioCodec* codec_=&codec;int audio_power_timer_=0;
  struct{std::function<void()> on_playback_drained;std::function<void(uint32_t)> on_playback_error;std::function<void(uint32_t,uint32_t)> on_playback_progress;}callbacks_;

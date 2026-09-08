@@ -1,0 +1,9 @@
+{
+  "frames": 11,
+  "visible_label_rectangles": 75,
+  "label_overlaps": 0,
+  "labels_outside_round_boundary": 0,
+  "full_screen_invalidation_per_capture": true,
+  "two_full_redraws_pixel_identical": true,
+  "scope": "Exact extracted timer/alarm renderer with host LVGL and production fonts; no hardware proof."
+}

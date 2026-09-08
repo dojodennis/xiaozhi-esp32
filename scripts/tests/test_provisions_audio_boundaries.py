@@ -123,7 +123,7 @@ struct AudioService {
  std::atomic<uint32_t> local_recording_press_{0},timer_output_owner_{0},local_input_press_{0},local_prepared_press_{0},local_physical_boundary_{0},local_output_boundary_{0};
  std::mutex local_recording_mutex_,audio_queue_mutex_,input_resampler_mutex_;std::condition_variable audio_queue_cv_;
  std::deque<int> audio_decode_queue_{1},audio_playback_queue_{2,3},audio_testing_queue_;
- std::string_view local_feedback_;bool local_feedback_active_=false,output_in_flight_=false;uint32_t playback_generation_=0;
+ std::string_view local_feedback_;bool local_feedback_active_=false,output_in_flight_=false;std::atomic<uint32_t> local_feedback_errors_{0};uint32_t playback_generation_=0;
  Event event;Event* event_group_=&event;Codec codec;Codec* codec_=&codec;Engine engine;Engine* audio_engine_=&engine;void* input_resampler_=this;
  struct {std::function<void(uint32_t,const int16_t*,size_t,size_t)> on_recording_audio;std::function<void(uint32_t)> on_recording_error,on_recording_ready;}callbacks_;
  std::atomic<bool> hold_read{false},read_entered{false},release_read{false};
@@ -336,7 +336,7 @@ struct AudioService{
  std::mutex audio_queue_mutex_,local_recording_mutex_;std::condition_variable audio_queue_cv_;
  std::deque<std::unique_ptr<AudioTask>> audio_playback_queue_;std::deque<int> audio_decode_queue_;
  std::atomic<bool> service_stopped_{false};std::atomic<uint32_t> local_recording_press_{0},timer_output_owner_{0},local_prepared_press_{0},local_physical_boundary_{0},local_output_boundary_{0};
- bool output_in_flight_=false,decode_in_flight_=false,playback_drained_notified_=false,local_feedback_active_=false;
+ bool output_in_flight_=false,decode_in_flight_=false,playback_drained_notified_=false,local_feedback_active_=false;std::atomic<uint32_t> local_feedback_errors_{0};
  uint32_t playback_generation_=5;std::string_view local_feedback_;
  Codec codec;Codec* codec_=&codec;int audio_power_timer_=0,event_group_=0;
  struct{std::function<void()> on_playback_drained;std::function<void(uint32_t)> on_playback_error;std::function<void(uint32_t,uint32_t)> on_playback_progress;}callbacks_;

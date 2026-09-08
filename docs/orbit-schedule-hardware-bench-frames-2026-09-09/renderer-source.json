@@ -1,0 +1,20 @@
+{
+  "board_source": "/Users/dojo/.codex/worktrees/orbit-service-schedule/main/boards/m5stack/stopwatch/m5stack_stopwatch.cc",
+  "board_sha256": "3ebac0ff5c9cb9476b774ca5d19a0290e995d108b9bd826620542ae2fe235f58",
+  "generated_sha256": "14c32f063139d192785f762ab5d4cd276e2593eaeba7b34aa28a31ee8ea68e19",
+  "methods": {
+    "SetVisible": "2e4206c0f11703d9a3b147b0e2b564dbf4ad11b0262ce412c1091e91f59ac1c5",
+    "EffectiveServerNowMs": "1870bd1a888b632e52cb6afdfa414fdada9d378aaf0737418375460e4796e754",
+    "ShouldShowOrbitLocked": "e0cb33f07034fd875aa1a9b0160cad76e76e073992d5d59bda37c00bd83cb596",
+    "SetReplyLayoutLocked": "6b09967957b1913233bba64925567f8a97a5ec62d5c65b9241cf3c0c4d13ce3d",
+    "RefreshOrbitLocked": "1141eaead5305cece2df3eeb0c3666da1c90dfcbfc4365314f3e16ca1cd8132d",
+    "CreateOrbitUiLocked": "875eac8ad8c0c60bb4cc413f8acf699dcdc349494102a327eb319792d5e52f05",
+    "RenderHardwareBench": "1c57c3b1b845e3339b53c05a427f1068dc134a162aa8650e2d67a2bdc7a36747"
+  },
+  "host_stubs": [
+    "single-thread no-op display lock",
+    "hidden inherited normal-screen pointers",
+    "unused esp_timer_get_time after hardware bench early return"
+  ],
+  "evidence": "Host LVGL renderer only; no physical visibility/audio/haptic proof."
+}

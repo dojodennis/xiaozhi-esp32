@@ -541,7 +541,7 @@ int64_t DictationNow(bool trusted){return trusted?1788712345678LL:0;}
 struct AudioService {
  std::atomic<uint32_t> local_physical_boundary_{0},local_recording_press_{0},local_output_boundary_{0},local_prepared_press_{0},local_input_press_{0};
  std::atomic<bool> service_stopped_{false};std::mutex local_recording_mutex_,audio_queue_mutex_;std::condition_variable audio_queue_cv_;
- uint32_t playback_generation_=0;int event_group_=0;std::vector<int> audio_decode_queue_,audio_playback_queue_;std::string_view local_feedback_;bool local_feedback_active_=false;
+ uint32_t playback_generation_=0;int event_group_=0;std::vector<int> audio_decode_queue_,audio_playback_queue_;std::string_view local_feedback_;bool local_feedback_active_=false;std::atomic<uint32_t> local_feedback_errors_{0};
  void FenceLocalRecording(uint32_t);void ReleaseLocalRecordingFence(uint32_t);void ReconcileLocalRecording(uint32_t);
  void StartLocalRecording(uint32_t);void StopLocalRecording(uint32_t expected=0);bool IsLocalInputIdle()const;
  void CancelLocalFeedback(){}void CloseVoiceUploadGate(){}void ResetDecoder(){}bool IsLocalRecordingReady(uint32_t press){return local_recording_press_==press;}

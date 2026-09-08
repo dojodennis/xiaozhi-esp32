@@ -8,8 +8,11 @@ namespace orbit::service_schedule::storage {
 
 enum class LoadResult { Absent, Present, Corrupt, IoError };
 enum class SaveResult { Saved, Unchanged, InvalidState, Conflict, Corrupt, IoError, Uncertain };
+enum class StoreDomain { Live, Bench };
 
-// Synchronous flash adapter for orbit_sched_v1/state ONLY. Run on a serialized
+// Synchronous flash adapter for orbit_sched_v1/state (Live) or explicitly
+// selected orbit_bench_v1/state (Bench). No arbitrary namespace is accepted.
+// Synthetic bench state must never be written into the live schedule. Run on a serialized
 // storage worker, never the main event loop or audio task. Publish verified state
 // back through Application::Schedule with the caller's generation/ownership
 // fence. No worker or runtime hook is implemented here. Does not
@@ -30,13 +33,16 @@ enum class SaveResult { Saved, Unchanged, InvalidState, Conflict, Corrupt, IoErr
 // Saved/Unchanged publish verified bytes. Every other result preserves outputs.
 class NvsStore {
 public:
-    explicit NvsStore(Scope enrolled_scope) : scope_(std::move(enrolled_scope)) {}
+    explicit NvsStore(Scope enrolled_scope, StoreDomain domain = StoreDomain::Live)
+        : scope_(std::move(enrolled_scope)), domain_(domain) {}
     LoadResult Load(FacePersistentState& output, Bytes& encoded) const;
     SaveResult Transition(const Bytes* expected, const FacePersistentState& desired,
                           Bytes& verified) const;
 
 private:
     Scope scope_;
+    StoreDomain domain_;
+    const char* Namespace() const;
 };
 
 }  // namespace orbit::service_schedule::storage
