@@ -92,7 +92,7 @@ bool Label(std::string_view s) {
     return true;
 }
 bool Zone(std::string_view s) {
-    if (s.empty() || s.size() > 128)
+    if (s.empty() || s.size() > 64)
         return false;
     for (unsigned char c : s)
         if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
@@ -181,6 +181,12 @@ ApplyResult Scheduler::Apply(const Snapshot& next, int64_t monotonic_ms) {
             const auto cue_check = CheckItems(snapshot_.cues, next.cues);
             if (cue_check != ApplyResult::Applied)
                 return cue_check;
+        } else {
+            // A cue identity cannot move between occurrences and shed its ACK.
+            for (const auto& cue : next.cues)
+                for (const auto& previous : snapshot_.cues)
+                    if (cue.id == previous.id)
+                        return ApplyResult::ConflictingRevision;
         }
         const auto timer_check = CheckItems(snapshot_.timers, next.timers);
         if (timer_check != ApplyResult::Applied)

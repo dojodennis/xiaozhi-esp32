@@ -59,7 +59,7 @@ class ServiceScheduleTests(unittest.TestCase):
 
 
 CASES = (
-    "golden_scenario service_edit exact_acknowledgement occurrence_switch replay_no_rearm "
+    "golden_scenario service_edit exact_acknowledgement occurrence_switch occurrence_cue_cannot_replay replay_no_rearm "
     "conflicting_snapshot conflicting_items lower_item_revision service_revision atomic_malformed "
     "scope_mismatch capacity retired_cannot_return retired_capacity restore_waits_for_fresh_clock "
     "restore_retired_history corrupt_restore monotonic_rollback server_clock_rollback "

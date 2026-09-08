@@ -93,6 +93,8 @@ void OccurrenceSwitch() {
     s.Acknowledge(cue_key);
     auto n = Later(s);
     n.service_occurrence_id = Id(99);
+    n.cues[0].id = Id(1001);
+    n.cues[1].id = Id(1002);
     assert(s.Apply(n, 120000) == ApplyResult::Applied);
     assert(s.Acknowledge(timer_key) == AckResult::AlreadyAcknowledged);
     assert(s.Acknowledge(cue_key) == AckResult::NotFound);
@@ -100,6 +102,28 @@ void OccurrenceSwitch() {
     auto stale = First();
     stale.service_occurrence_id = Id(100);
     assert(s.Apply(stale, 120001) == ApplyResult::StaleRevision);
+}
+void OccurrenceCueCannotReplay() {
+    auto s = Started();
+    s.Tick(120000);
+    const auto cue_key = s.items()[1].key;
+    const auto timer_key = s.items()[2].key;
+    assert(s.Acknowledge(cue_key) == AckResult::Acknowledged);
+    assert(s.Acknowledge(timer_key) == AckResult::Acknowledged);
+    auto next = Later(s);
+    next.service_occurrence_id = Id(99);
+    assert(s.Apply(next, 120000) == ApplyResult::ConflictingRevision);
+    assert(s.items()[1].acknowledged && s.items()[2].acknowledged);
+    next.cues[0].id = Id(1001);
+    next.cues[1].id = Id(1002);
+    assert(s.Apply(next, 120000) == ApplyResult::Applied);
+    assert(s.Acknowledge(timer_key) == AckResult::AlreadyAcknowledged);
+    next = Later(s);
+    next.service_occurrence_id = First().service_occurrence_id;
+    next.cues = First().cues;
+    assert(s.Apply(next, 120000) == ApplyResult::RetiredIdentity);
+    assert(s.snapshot()->service_occurrence_id == Id(99));
+    assert(s.Acknowledge(timer_key) == AckResult::AlreadyAcknowledged);
 }
 void ReplayNoRearm() {
     auto s = Started();
@@ -134,6 +158,8 @@ void ConflictingItems() {
         }
         if (mode == 5) {
             n.service_occurrence_id = Id(99);
+            n.cues[0].id = Id(1001);
+            n.cues[1].id = Id(1002);
             n.timers[0].label = "Mutation across occurrence";
         }
         assert(s.Apply(n, 0) == ApplyResult::ConflictingRevision);
@@ -202,6 +228,8 @@ void RetiredCannotReturn() {
     assert(s.Apply(n, 0) == ApplyResult::RetiredIdentity);
     ++n.timers.back().revision;
     n.service_occurrence_id = Id(99);
+    n.cues[0].id = Id(1001);
+    n.cues[1].id = Id(1002);
     assert(s.Apply(n, 0) == ApplyResult::RetiredIdentity);
     assert(s.items().size() == 4);
 }
@@ -343,7 +371,7 @@ void ValidUtf8AndLimits() {
     assert(s.Apply(n, 0) == ApplyResult::Malformed);
 }
 void MalformedFields() {
-    for (int mode = 0; mode != 18; ++mode) {
+    for (int mode = 0; mode != 19; ++mode) {
         auto n = First();
         if (mode == 0)
             n.version = 2;
@@ -381,6 +409,8 @@ void MalformedFields() {
             n.timers[0].label = "\xc2\x80";
         if (mode == 17)
             n.timers[0].label = "   ";
+        if (mode == 18)
+            n.timezone = std::string(65, 'A');
         Scheduler s(First().scope);
         assert(s.Apply(n, 0) == ApplyResult::Malformed && !s.snapshot());
     }
@@ -392,6 +422,7 @@ int main(int argc, char** argv) {
         {"service_edit", ServiceEdit},
         {"exact_acknowledgement", ExactAcknowledgement},
         {"occurrence_switch", OccurrenceSwitch},
+        {"occurrence_cue_cannot_replay", OccurrenceCueCannotReplay},
         {"replay_no_rearm", ReplayNoRearm},
         {"conflicting_snapshot", ConflictingSnapshot},
         {"conflicting_items", ConflictingItems},

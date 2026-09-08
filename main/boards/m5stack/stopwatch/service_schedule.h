@@ -100,6 +100,8 @@ enum class AckResult { Acknowledged, AlreadyAcknowledged, NotDue, NotFound };
 //
 // Full snapshots cancel omitted items. Retired IDs cannot be resurrected, even
 // with a higher revision. At most 64 active identities and 64 retired IDs are kept.
+// A cue ID belongs to exactly one service occurrence: changing occurrence requires
+// fresh cue IDs and retires the old ones. Independent timer IDs remain stable.
 // Exhausting that history rejects the candidate atomically. Recovery needs an
 // explicitly authorized, reconciled reset/epoch adapter, which is NOT implemented;
 // never reset on reconnect or a new occurrence. Snapshot revisions are durable across

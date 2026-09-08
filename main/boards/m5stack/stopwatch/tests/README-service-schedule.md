@@ -12,7 +12,7 @@ python3 main/boards/m5stack/stopwatch/tests/test_service_schedule.py -v
 ```
 
 The runner compiles the actual C++17 source with warnings as errors, AddressSanitizer
-and UndefinedBehaviorSanitizer, then runs 24 behavioral cases. It needs a host
+and UndefinedBehaviorSanitizer, then runs 25 behavioral cases. It needs a host
 `clang++` or `g++` (or `CXX`). The fixture is an unchanged copy of the shared gateway
 `orbit_service_schedule_v1.json`: fictitious scope, dinner at 19:00 moved to 19:30,
 the linked setup cue moving from 18:00 to 18:30, a fixed 18:00 reminder, and three
@@ -49,6 +49,9 @@ acknowledgement, edit, disconnection and clock behavior.
    service occurrence; timer keys deliberately omit it, so an unchanged timer stays
    acknowledged through a service switch. Higher item revisions represent new alarm
    identities. Changed label, deadline or cue kind at the same item revision is rejected.
+   Each cue ID belongs to exactly one occurrence. An occurrence switch must supply
+   fresh cue IDs; the old IDs are retired so switching back cannot replay an
+   acknowledged reminder. Independent timers retain their IDs and acknowledgements.
 5. `ExportState` is a typed persistence seam. No NVS write, readback or backend ACK
    reconciliation is implemented. Atomically save the full snapshot, active states,
    last known time and retired IDs, then verify readback before claiming durable
