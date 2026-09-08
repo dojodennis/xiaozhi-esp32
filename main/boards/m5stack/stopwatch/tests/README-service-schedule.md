@@ -1,9 +1,45 @@
 # Portable service schedule component
 
-This is a locally tested component, with no live protocol, Application, renderer,
-audio, button or storage adapter installed. It does not alter the existing timer
-player or claim physical alarm delivery. The owning files are `service_schedule.h`
-and `service_schedule.cc` directly above this directory.
+**The engineering demo face was rejected as product design.** Preserve these
+integration tests; use the evolved iPhone `FreestyleTimerBoardView` for visual and
+behavioral parity. No installation of this fixture face is proposed.
+
+The portable scheduler now has a strict wire decoder, a bridge to the existing
+dial/alarm transition engine, and a shared LVGL renderer. A separate **synthetic
+bench variant** connects them to the real board display and two buttons. The same
+renderer and board fonts run in the interactive host demo. No live protocol or
+storage adapter is installed, and physical alarm delivery is not claimed.
+
+Run the interactive desktop demo from the repository root:
+
+```sh
+python3 main/boards/m5stack/stopwatch/tests/run_service_schedule_demo.py
+```
+
+Open the printed localhost link. **Next checkpoint** moves the dinner fixture,
+simulates disconnect/reconnect and advances to due times. Countdown seconds also
+advance between presses. **Acknowledge alarm** acknowledges exactly one due item;
+other simultaneous alarms remain active. **Restart** creates a fresh synthetic
+fixture, not a network reset command. An ACK remains pending through reconnect;
+only the matching mock receipt clears it. No generic SAVED receipt is shown.
+
+Requires a C/C++ compiler, CMake and the existing managed LVGL/cJSON/board fonts.
+Set `ORBIT_CMAKE` or `ORBIT_MANAGED_COMPONENTS` if necessary. On the current host,
+`ORBIT_CMAKE=/tmp/orbit-schedule-cmake/cmake/data/bin/cmake` is available. Generate
+repeatable real-renderer screenshots and state with `--capture /tmp/orbit-frames`.
+
+Additional validation:
+
+```sh
+python3 main/boards/m5stack/stopwatch/tests/test_service_schedule_wire.py -v
+python3 main/boards/m5stack/stopwatch/tests/test_service_schedule_demo.py -v
+```
+
+The 26 decoder tests use strict C++17 and ASan/UBSan. The eight integration tests
+compile the actual LVGL renderer, board fonts, decoder, scheduler and alarm engine;
+they verify running countdown pixels, dinner edits, exact ACKs, replay and clock
+failure. The normal live timer transport remains separate and is not advertised
+as supporting service schedules.
 
 Run from the firmware repository root:
 
@@ -22,11 +58,11 @@ acknowledgement, edit, disconnection and clock behavior.
 
 ## Integration contract
 
-1. An authenticated adapter validates the negotiated, opt-in `provisions` frame,
+1. `service_schedule_wire.cc` validates the opt-in `provisions` frame,
    current websocket `session_id`, `state: service_schedule_snapshot`, and strict v1
    payload. It rejects unknown/duplicate keys and over-budget parsing before building
    a typed snapshot. Validate IANA zone membership and Unicode control categories
-   upstream; the portable module checks only bounded zone syntax and UTF-8/C0/C1
+   through mandatory caller-supplied validators; the portable module checks only bounded zone syntax and UTF-8/C0/C1
    controls. It independently validates UUIDs, numeric bounds, uniqueness, total
    item count and the derived linked deadline.
 2. Construct `Scheduler` with the enrolled assignment/device, never the incoming
@@ -77,9 +113,17 @@ An authorized, reconciled reset or durable server history/epoch design is requir
 for long-term turnover; it is not implemented here. Reconnect, a new occurrence or
 an untrusted reset frame must never clear the history or snapshot revision gate.
 
-Still required: strict wire adapter and scope/current-occurrence admission, negotiated
-delivery and persistent revision allocation, NVS transaction/readback adapter, clock
-source/power-state policy, existing timer/alarm-owner integration, renderer/physical
-button mapping, reconciliation, affected firmware build and board acceptance. Host
-tests provide no installed-build, acoustic, vibration, disconnect-delivery or battery
-endurance evidence. No device was flashed or operated for this component.
+Still required for **live** use: authenticated scope/current-occurrence admission,
+negotiated delivery and durable revision allocation, NVS transaction/readback,
+trusted clock/power-state policy, output-owner composition with the durable audio
+timer player, and authoritative receipt reconciliation. The synthetic board mapping
+uses the existing visual alarm engine and motor callback; its DummyAudioCodec
+does not initialize microphone/speaker hardware. It is not an acoustic test.
+
+The board variant is `provisions-kitchen-helper-stopwatch-schedule-demo`, selected
+with `CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO=y`, local capture off and a distinct
+firmware identity. `StartNetwork` is a local no-op. Yellow advances the fixture;
+blue acknowledges one alert. Both callbacks enqueue onto the Application owner.
+Every face, including alarm takeover, is labelled DEMO. The normal variant defaults
+to demo disabled. See `docs/orbit-service-schedule-demo-2026-09-08.md` for the
+exact build evidence and physical gate. No board was reset, flashed or operated.

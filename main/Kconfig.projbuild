@@ -916,6 +916,15 @@ config PROVISIONS_LOCAL_CAPTURE
     select WS_TRANSPORT
     default y
 
+config PROVISIONS_SCHEDULE_BENCH_DEMO
+    bool "Synthetic Orbit service schedule bench demo (network disabled)"
+    depends on BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH && PROVISIONS_GATEWAY_REQUIRED && !PROVISIONS_LOCAL_CAPTURE
+    default n
+    help
+        Local fixture only. Yellow advances a synthetic clock; blue acknowledges
+        one due alert. No microphone, network, enrollment or authoritative writes.
+        This is not an installed/live schedule capability or timing acceptance.
+
 config PROVISIONS_PREVIEW_HOST
     string
     default "app.provisions-app.com"

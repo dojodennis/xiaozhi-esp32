@@ -37,7 +37,6 @@ set(SOURCES "audio/audio_codec.cc"
             "provisions_output_fence.cc"
             "provisions_output_fence_store.cc"
             "provisions_output_fence_wire.cc"
-            "provisions_output_fence_runtime.cc"
             "mcp_server.cc"
             "system_info.cc"
             "application.cc"
@@ -52,6 +51,12 @@ set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg"
 
 if(CONFIG_PROVISIONS_GATEWAY_REQUIRED)
     list(APPEND SOURCES "provisions_timer_snapshot.cc")
+endif()
+
+# Its WebSocket API is guarded by this same opt-in integration switch. Keep the
+# unfinished runtime out of ordinary/bench builds while the switch is disabled.
+if(CONFIG_PROVISIONS_OUTPUT_FENCE_V1)
+    list(APPEND SOURCES "provisions_output_fence_runtime.cc")
 endif()
 
 # Add board common files
@@ -215,6 +220,9 @@ elseif(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH)
     set(BOARD_DIR "m5stack/stopwatch")
     set(PROVISIONS_STOPWATCH_PROFILE ON)
     set(PROVISIONS_STOPWATCH_BOARD_NAME "provisions-kitchen-helper-stopwatch")
+    if(CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO)
+        set(PROVISIONS_STOPWATCH_BOARD_NAME "provisions-kitchen-helper-stopwatch-schedule-demo")
+    endif()
     set(BUILTIN_TEXT_FONT font_noto_sans_basic_30_4)
     set(BUILTIN_ICON_FONT font_material_symbols_30_4)
     set(DEFAULT_EMOJI_COLLECTION noto-color-emoji_64)
@@ -941,6 +949,17 @@ file(GLOB BOARD_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/boards/${BOARD_DIR}/*.c
 )
 list(APPEND SOURCES ${BOARD_SOURCES})
+
+if(CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO)
+    set(SCHEDULE_DEMO_TESTS "${CMAKE_CURRENT_SOURCE_DIR}/boards/m5stack/stopwatch/tests")
+    set(SCHEDULE_DEMO_HEADER "${CMAKE_CURRENT_BINARY_DIR}/service_schedule_demo_fixture.h")
+    execute_process(COMMAND ${PYTHON} "${SCHEDULE_DEMO_TESTS}/generate_demo_fixture.py"
+                    "${SCHEDULE_DEMO_HEADER}" COMMAND_ERROR_IS_FATAL ANY)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                 "${SCHEDULE_DEMO_TESTS}/orbit_service_schedule_v1.json"
+                 "${SCHEDULE_DEMO_TESTS}/generate_demo_fixture.py")
+    include_directories("${CMAKE_CURRENT_BINARY_DIR}")
+endif()
 
 # Select one audio engine for each chip family
 if(CONFIG_IDF_TARGET_ESP32S3 OR CONFIG_IDF_TARGET_ESP32P4 OR CONFIG_IDF_TARGET_ESP32S31)

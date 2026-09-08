@@ -12,6 +12,11 @@
 #include "orbit_dial.h"
 #include "provisions_timer_snapshot.h"
 #include "utf8_ellipsis.h"
+#if CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO
+#include "codecs/dummy_audio_codec.h"
+#include "service_schedule_demo.h"
+#include "service_schedule_view.h"
+#endif
 #endif
 #include "assets/lang_config.h"
 #include <algorithm>
@@ -204,6 +209,11 @@ private:
     ProvisionsStopwatchOrbit::SlotBoard orbit_slot_board_;
     ProvisionsStopwatchOrbit::AlarmState timer_alarm_state_;
     std::function<void(bool)> timer_alarm_output_callback_;
+#if CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO
+    orbit::service_schedule::ScheduleDemo schedule_demo_;
+    orbit::service_schedule::ScheduleView schedule_view_;
+    int64_t schedule_last_refresh_ms_ = 0;
+#endif
 
     static bool IsClockStatus(const char* status) {
         return status != nullptr && std::strlen(status) == 5 && status[2] == ':' &&
@@ -283,6 +293,12 @@ private:
     }
 
     void SetReplyLayoutLocked(bool visible) {
+#if CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO
+        (void)visible;
+        schedule_view_.Render(schedule_demo_.model(),
+                              orbit::service_schedule::ScheduleDemo::FixtureTime, true);
+        return;
+#endif
         const bool display_awake = !power_save_active_.load();
         const bool show_alarm = display_awake && timer_alarm_active_.load();
         const bool show_reply = display_awake && !show_alarm && visible;
@@ -306,6 +322,16 @@ private:
     }
 
     AlarmOutputChange RefreshOrbitLocked() {
+#if CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO
+        const auto real_now = esp_timer_get_time() / 1000;
+        if (schedule_last_refresh_ms_ > 0 && real_now >= schedule_last_refresh_ms_)
+            schedule_demo_.Elapse(real_now - schedule_last_refresh_ms_);
+        schedule_last_refresh_ms_ = real_now;
+        schedule_view_.Render(schedule_demo_.model(),
+                              orbit::service_schedule::ScheduleDemo::FixtureTime, true);
+        timer_alarm_active_.store(schedule_demo_.model().alarm_active());
+        return schedule_demo_.model().TakeOutputChange();
+#endif
         if (!orbit_snapshot_received_) {
             return AlarmOutputChange::kNone;
         }
@@ -1130,6 +1156,11 @@ public:
         lv_obj_align(reply_label_, LV_ALIGN_TOP_MID, 0, 0);
 
         CreateOrbitUiLocked(screen);
+#if CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO
+        schedule_view_.Create(screen, &font_noto_sans_basic_30_4, &font_noto_sans_basic_16_4);
+        schedule_view_.Render(schedule_demo_.model(),
+                              orbit::service_schedule::ScheduleDemo::FixtureTime, true);
+#endif
 
         hide_subtitle_ = true;
         if (bottom_bar_ != nullptr) {
@@ -1156,6 +1187,18 @@ public:
     }
 
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+#if CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO
+    void AdvanceScheduleDemo() {
+        AlarmOutputChange change;
+        {
+            DisplayLockGuard lock(this);
+            schedule_demo_.Advance();
+            ESP_LOGI(TAG, "SYNTHETIC DEMO: %s", schedule_demo_.stage());
+            change = RefreshOrbitLocked();
+        }
+        ApplyAlarmOutputChange(change);
+    }
+#endif
     void SetTimerAlarmOutputCallback(std::function<void(bool)> callback) {
         timer_alarm_output_callback_ = std::move(callback);
     }
@@ -1204,6 +1247,11 @@ public:
         AlarmOutputChange output_change = AlarmOutputChange::kNone;
         {
             DisplayLockGuard lock(this);
+#if CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO
+            if (!schedule_demo_.Acknowledge())
+                return false;
+            output_change = RefreshOrbitLocked();
+#else
             if (!timer_alarm_active_.load()) {
                 return false;
             }
@@ -1213,6 +1261,7 @@ public:
                     lv_label_set_text(alarm_hint_label_, "SILENCED");
                 }
             }
+#endif
         }
         ApplyAlarmOutputChange(output_change);
         return true;
@@ -1522,6 +1571,16 @@ private:
 
     void InitializeButtons() {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+#if CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO
+        // Physical callbacks only enqueue onto the same Application owner as ticks.
+        // No Talk/microphone, volume mutation or business confirmation in this demo.
+        button1_.OnClick([this]() {
+            Application::GetInstance().Schedule([this]() { display_->AdvanceScheduleDemo(); });
+        });
+        button2_.OnClick([this]() {
+            Application::GetInstance().Schedule([this]() { display_->SilenceTimerAlarm(); });
+        });
+#else
         button1_.OnPressDown([this]() {
             ResetDisplayIdleTimer();
             Application::GetInstance().StartListening();
@@ -1541,6 +1600,7 @@ private:
                 codec->SetOutputVolume(maximum ? kDefaultOutputVolume : kMaximumOutputVolume);
             });
         });
+#endif
 #else
         // Button1: wake / toggle conversation
         button1_.OnClick([this]() {
@@ -1649,13 +1709,16 @@ public:
         InitializeSpi();
         InitializeDisplay();
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+#if !CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO
         InitializeDisplayIdleTimer();
+#endif
         display_->SetTimerAlarmOutputCallback([this](bool active) {
             ioe_.digitalWrite(IOE_PIN_MOTOR, active ? HIGH : LOW);
             if (active) {
                 ResetDisplayIdleTimer();
             }
         });
+#if !CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO
         Application::GetInstance().RegisterProvisionsTimerSnapshotCallback(
             [this](const ProvisionsTimerSnapshot::Update& update) {
                 if (update.kind == ProvisionsTimerSnapshot::Update::Kind::kReset) {
@@ -1665,10 +1728,15 @@ public:
                 }
             });
 #endif
+#endif
         InitializeButtons();
     }
 
     AudioCodec* GetAudioCodec() override {
+#if CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO
+        static DummyAudioCodec audio_codec(AUDIO_INPUT_SAMPLE_RATE, AUDIO_OUTPUT_SAMPLE_RATE);
+        return &audio_codec;
+#else
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
         static ProvisionsStopwatchAudioCodec audio_codec(
 #else
@@ -1687,11 +1755,20 @@ public:
             AUDIO_CODEC_ES8311_ADDR,
             false);
         return &audio_codec;
+#endif
     }
 
     Display* GetDisplay() override {
         return display_;
     }
+
+#if CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO
+    void StartNetwork() override {
+        // No Wi-Fi, bootstrap, OTA, credential use or gateway connection. The
+        // Application event loop still services the two local fixture buttons.
+        ESP_LOGI(TAG, "Synthetic schedule demo: network and microphone disabled");
+    }
+#endif
 
     Backlight* GetBacklight() override {
         return backlight_;

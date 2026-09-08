@@ -47,7 +47,13 @@ constexpr std::string_view kSelectedHardwareIdentity = "provisions-kitchen-helpe
 #elif defined(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3_LITE)
 constexpr std::string_view kSelectedHardwareIdentity = "provisions-kitchen-helper-core-s3-lite";
 #elif defined(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH)
+#if CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO
+// Distinct local-only identity; the board never starts its network in this build.
+constexpr std::string_view kSelectedHardwareIdentity =
+    "provisions-kitchen-helper-stopwatch-schedule-demo";
+#else
 constexpr std::string_view kSelectedHardwareIdentity = "provisions-kitchen-helper-stopwatch";
+#endif
 #endif
 
 #if (defined(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_CORE_S3) || \
