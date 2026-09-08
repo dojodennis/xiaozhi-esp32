@@ -1,0 +1,292 @@
+{
+  "fixture_version": 1,
+  "evidence": "Synthetic local contract fixture; no live registration, delivery, device or acoustic evidence. All identities are fictitious.",
+  "scope": {
+    "assignment_id": "00000000-0000-4000-8000-000000000001",
+    "device_id": "00000000-0000-4000-8000-000000000002",
+    "service_occurrence_id": "00000000-0000-4000-8000-000000000003"
+  },
+  "websocket_session_id": "00000000-0000-4000-8000-000000000004",
+  "snapshots": [
+    {
+      "name": "dinner_1900",
+      "source": {
+        "version": 1,
+        "assignment_id": "00000000-0000-4000-8000-000000000001",
+        "device_id": "00000000-0000-4000-8000-000000000002",
+        "service_occurrence_id": "00000000-0000-4000-8000-000000000003",
+        "service_revision": 1,
+        "snapshot_revision": 10,
+        "service_at_ms": 1788886800000,
+        "timezone": "Europe/Brussels",
+        "server_now_ms": 1788883140000,
+        "cues": [
+          {
+            "id": "00000000-0000-4000-8000-000000000010",
+            "revision": 1,
+            "label": "Setup",
+            "kind": "service_offset",
+            "offset_ms": -3600000
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000011",
+            "revision": 1,
+            "label": "Fixed reminder",
+            "kind": "fixed",
+            "deadline_ms": 1788883200000
+          }
+        ],
+        "timers": [
+          {
+            "id": "00000000-0000-4000-8000-000000000020",
+            "revision": 1,
+            "label": "Rice",
+            "deadline_ms": 1788883260000
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000021",
+            "revision": 1,
+            "label": "Sauce",
+            "deadline_ms": 1788883320000
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000022",
+            "revision": 1,
+            "label": "Bread",
+            "deadline_ms": 1788883380000
+          }
+        ]
+      },
+      "wire": {
+        "type": "provisions",
+        "session_id": "00000000-0000-4000-8000-000000000004",
+        "state": "service_schedule_snapshot",
+        "service_schedule": {
+          "version": 1,
+          "assignment_id": "00000000-0000-4000-8000-000000000001",
+          "device_id": "00000000-0000-4000-8000-000000000002",
+          "service_occurrence_id": "00000000-0000-4000-8000-000000000003",
+          "service_revision": 1,
+          "snapshot_revision": 10,
+          "service_at_ms": 1788886800000,
+          "timezone": "Europe/Brussels",
+          "server_now_ms": 1788883140000,
+          "cues": [
+            {
+              "id": "00000000-0000-4000-8000-000000000010",
+              "revision": 1,
+              "label": "Setup",
+              "kind": "service_offset",
+              "offset_ms": -3600000,
+              "deadline_ms": 1788883200000
+            },
+            {
+              "id": "00000000-0000-4000-8000-000000000011",
+              "revision": 1,
+              "label": "Fixed reminder",
+              "kind": "fixed",
+              "deadline_ms": 1788883200000
+            }
+          ],
+          "timers": [
+            {
+              "id": "00000000-0000-4000-8000-000000000020",
+              "revision": 1,
+              "label": "Rice",
+              "deadline_ms": 1788883260000
+            },
+            {
+              "id": "00000000-0000-4000-8000-000000000021",
+              "revision": 1,
+              "label": "Sauce",
+              "deadline_ms": 1788883320000
+            },
+            {
+              "id": "00000000-0000-4000-8000-000000000022",
+              "revision": 1,
+              "label": "Bread",
+              "deadline_ms": 1788883380000
+            }
+          ]
+        }
+      },
+      "expected_deadlines": {
+        "00000000-0000-4000-8000-000000000010": 1788883200000,
+        "00000000-0000-4000-8000-000000000011": 1788883200000,
+        "00000000-0000-4000-8000-000000000020": 1788883260000,
+        "00000000-0000-4000-8000-000000000021": 1788883320000,
+        "00000000-0000-4000-8000-000000000022": 1788883380000
+      }
+    },
+    {
+      "name": "dinner_moved_1930",
+      "source": {
+        "version": 1,
+        "assignment_id": "00000000-0000-4000-8000-000000000001",
+        "device_id": "00000000-0000-4000-8000-000000000002",
+        "service_occurrence_id": "00000000-0000-4000-8000-000000000003",
+        "service_revision": 2,
+        "snapshot_revision": 11,
+        "service_at_ms": 1788888600000,
+        "timezone": "Europe/Brussels",
+        "server_now_ms": 1788883170000,
+        "cues": [
+          {
+            "id": "00000000-0000-4000-8000-000000000010",
+            "revision": 2,
+            "label": "Setup",
+            "kind": "service_offset",
+            "offset_ms": -3600000
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000011",
+            "revision": 1,
+            "label": "Fixed reminder",
+            "kind": "fixed",
+            "deadline_ms": 1788883200000
+          }
+        ],
+        "timers": [
+          {
+            "id": "00000000-0000-4000-8000-000000000020",
+            "revision": 1,
+            "label": "Rice",
+            "deadline_ms": 1788883260000
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000021",
+            "revision": 1,
+            "label": "Sauce",
+            "deadline_ms": 1788883320000
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000022",
+            "revision": 1,
+            "label": "Bread",
+            "deadline_ms": 1788883380000
+          }
+        ]
+      },
+      "wire": {
+        "type": "provisions",
+        "session_id": "00000000-0000-4000-8000-000000000004",
+        "state": "service_schedule_snapshot",
+        "service_schedule": {
+          "version": 1,
+          "assignment_id": "00000000-0000-4000-8000-000000000001",
+          "device_id": "00000000-0000-4000-8000-000000000002",
+          "service_occurrence_id": "00000000-0000-4000-8000-000000000003",
+          "service_revision": 2,
+          "snapshot_revision": 11,
+          "service_at_ms": 1788888600000,
+          "timezone": "Europe/Brussels",
+          "server_now_ms": 1788883170000,
+          "cues": [
+            {
+              "id": "00000000-0000-4000-8000-000000000010",
+              "revision": 2,
+              "label": "Setup",
+              "kind": "service_offset",
+              "offset_ms": -3600000,
+              "deadline_ms": 1788885000000
+            },
+            {
+              "id": "00000000-0000-4000-8000-000000000011",
+              "revision": 1,
+              "label": "Fixed reminder",
+              "kind": "fixed",
+              "deadline_ms": 1788883200000
+            }
+          ],
+          "timers": [
+            {
+              "id": "00000000-0000-4000-8000-000000000020",
+              "revision": 1,
+              "label": "Rice",
+              "deadline_ms": 1788883260000
+            },
+            {
+              "id": "00000000-0000-4000-8000-000000000021",
+              "revision": 1,
+              "label": "Sauce",
+              "deadline_ms": 1788883320000
+            },
+            {
+              "id": "00000000-0000-4000-8000-000000000022",
+              "revision": 1,
+              "label": "Bread",
+              "deadline_ms": 1788883380000
+            }
+          ]
+        }
+      },
+      "expected_deadlines": {
+        "00000000-0000-4000-8000-000000000010": 1788885000000,
+        "00000000-0000-4000-8000-000000000011": 1788883200000,
+        "00000000-0000-4000-8000-000000000020": 1788883260000,
+        "00000000-0000-4000-8000-000000000021": 1788883320000,
+        "00000000-0000-4000-8000-000000000022": 1788883380000
+      }
+    }
+  ],
+  "consumer_scenario": [
+    {
+      "event": "apply",
+      "snapshot": "dinner_1900",
+      "monotonic_ms": 0,
+      "expected": "accepted"
+    },
+    {
+      "event": "apply",
+      "snapshot": "dinner_moved_1930",
+      "monotonic_ms": 30000,
+      "expected": "accepted"
+    },
+    {
+      "event": "disconnect",
+      "monotonic_ms": 31000,
+      "expected": "cached_schedule_keeps_running"
+    },
+    {
+      "event": "tick",
+      "monotonic_ms": 60000,
+      "expected_due_ids": [
+        "00000000-0000-4000-8000-000000000011"
+      ]
+    },
+    {
+      "event": "ack",
+      "id": "00000000-0000-4000-8000-000000000011",
+      "revision": 1,
+      "expected": "local_ack_pending_reconcile"
+    },
+    {
+      "event": "tick",
+      "monotonic_ms": 120000,
+      "expected_due_ids": [
+        "00000000-0000-4000-8000-000000000020"
+      ]
+    },
+    {
+      "event": "apply",
+      "snapshot": "dinner_1900",
+      "monotonic_ms": 121000,
+      "expected": "stale_rejected_atomically"
+    },
+    {
+      "event": "tick",
+      "monotonic_ms": 1860000,
+      "expected_due_ids": [
+        "00000000-0000-4000-8000-000000000010",
+        "00000000-0000-4000-8000-000000000020",
+        "00000000-0000-4000-8000-000000000021",
+        "00000000-0000-4000-8000-000000000022"
+      ]
+    },
+    {
+      "event": "clock_rollback",
+      "monotonic_ms": 100,
+      "expected": "clock_untrusted_no_new_alarms"
+    }
+  ]
+}
