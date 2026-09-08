@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-09-08T23:48:20.723657+00:00",
+  "kind": "offline_supervised_installation_proposal",
+  "source_commit": "45772685c082a55ef26673da078979a96facdbf6",
+  "candidate_archive": "/Users/dojo/.codex/device-builds/orbit-schedule-bench/2026-09-09-ecffe7aa",
+  "recovery_archive": "/Users/dojo/.codex/device-builds/provisions-kitchen-helper/2026-09-06/stopwatch-2.4.8-talk-release-a84ab070",
+  "artifacts": {
+    "candidate": {
+      "xiaozhi-unsigned.bin": {
+        "bytes": 3080192,
+        "sha256": "ecffe7aa30eddcf0e965a1beeeef82326357bbba28057ad418160d9f89ba706c"
+      },
+      "sdkconfig": {
+        "bytes": 128921,
+        "sha256": "2cd000f6e964b07e76dfc08fcef8b2ca615d24d959732c8bce3640b139a1dd50"
+      },
+      "dependencies.lock": {
+        "bytes": 33916,
+        "sha256": "3d627e36af969bb3c0847bc92036d6875faa7f266f899a4a63fced3e586cee7c"
+      },
+      "hardware_bench_profile.json": {
+        "bytes": 1928,
+        "sha256": "bb1b23af70dd76d187508b26ae84a8be358bc2315085ab2193128ff7089fd139"
+      },
+      "partitions.csv": {
+        "bytes": 438,
+        "sha256": "e7b8cedf1a8d0c2385b2b6a09a32be3fa1a6f11546e8032c1053102e4e7a1a2b"
+      }
+    },
+    "recovery": {
+      "application.bin": {
+        "bytes": 3084288,
+        "sha256": "32473218a5c311c164815cc1ad0535eff0e182f178f0b7af59d657da13418f7a"
+      },
+      "application-unsigned.bin": {
+        "bytes": 3080192,
+        "sha256": "54ca29f2ca800b7e67cbb6e8504ba514e7e9141dddc9b6b24c71fdce5e819b17"
+      },
+      "signing-public-key.pem": {
+        "bytes": 625,
+        "sha256": "09d1e0fd2dfb13640b8a99fcd7e284b6b24e6a06003bce4e3c72a49004364250"
+      },
+      "app-only-manifest.json": {
+        "bytes": 4319,
+        "sha256": "61463df8c656c183a3193cf1118c28af86891514989678bee6ca3a35852eab35"
+      }
+    }
+  },
+  "checks": [
+    {
+      "name": "archived_recovery_public_signature",
+      "command_argv": [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "-v",
+        "/Users/dojo/.codex/device-builds/provisions-kitchen-helper/2026-09-06/stopwatch-2.4.8-talk-release-a84ab070:/accepted:ro",
+        "espressif/idf:v6.0.2",
+        "python",
+        "-m",
+        "espsecure",
+        "verify-signature",
+        "--version",
+        "2",
+        "--keyfile",
+        "/accepted/signing-public-key.pem",
+        "/accepted/application.bin"
+      ],
+      "exit_code": 0,
+      "output": "Checking \"python3\" ...\nPython 3.12.3\n\"python3\" has been detected\nActivating ESP-IDF 6.0\nSetting IDF_PATH to '/opt/esp/idf'.\n* Checking python version ... 3.12.3\n* Checking python dependencies ... OK\n* Deactivating the current ESP-IDF environment (if any) ... OK\n* Establishing a new ESP-IDF environment ... OK\n* Identifying shell ... bash\n* Detecting outdated tools in system ... OK - no outdated tools found\n* Shell completion ... Autocompletion code generated\n\nDone! You can now compile ESP-IDF projects.\nGo to the project directory and run:\n\n  idf.py build\nespsecure v5.3.0\nSignature block 0 is valid (RSA).\nSignature block 0 verification successful using the supplied key (RSA).\nSignature block 1 invalid. Skipping.\nSignature block 2 invalid. Skipping.\n",
+      "output_sha256": "b2df7e3c1a56eac1935e7fcb7aaba7600c231d2489c9da1899b5f34aac2338e4",
+      "hardware_access": false,
+      "signing_performed": false
+    },
+    {
+      "name": "unsigned_bench_image_integrity",
+      "command_argv": [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "-v",
+        "/Users/dojo/.codex/device-builds/orbit-schedule-bench/2026-09-09-ecffe7aa:/bench:ro",
+        "espressif/idf:v6.0.2",
+        "python",
+        "-m",
+        "esptool",
+        "image-info",
+        "/bench/xiaozhi-unsigned.bin"
+      ],
+      "exit_code": 0,
+      "output": "Checking \"python3\" ...\nPython 3.12.3\n\"python3\" has been detected\nActivating ESP-IDF 6.0\nSetting IDF_PATH to '/opt/esp/idf'.\n* Checking python version ... 3.12.3\n* Checking python dependencies ... OK\n* Deactivating the current ESP-IDF environment (if any) ... OK\n* Establishing a new ESP-IDF environment ... OK\n* Identifying shell ... bash\n* Detecting outdated tools in system ... OK - no outdated tools found\n* Shell completion ... Autocompletion code generated\n\nDone! You can now compile ESP-IDF projects.\nGo to the project directory and run:\n\n  idf.py build\nesptool v5.3.0\nImage size: 3080192 bytes\nDetected image type: ESP32-S3\n\nESP32-S3 Image Header\n=====================\nImage version: 1\nEntry point: 0x40379ca8\nSegments: 7\nFlash size: 16MB\nFlash freq: 80m\nFlash mode: DIO\n\nESP32-S3 Extended Image Header\n==============================\nWP pin: 0xee (disabled)\nFlash pins drive settings: clk_drv: 0x0, q_drv: 0x0, d_drv: 0x0, cs0_drv: 0x0, hd_drv: 0x0, wp_drv: 0x0\nChip ID: 9 (ESP32-S3)\nMinimal chip revision: v0.0, (legacy min_rev = 0)\nMaximal chip revision: v0.99\n\nSegments Information\n====================\nSegment   Length   Load addr   File offs  Memory types\n-------  -------  ----------  ----------  ------------\n      0  0xdf110  0x3c200020  0x00000018  DROM\n      1  0x00ee0  0x3fc9b200  0x000df130  BYTE_ACCESSIBLE, MEM_INTERNAL, DRAM\n      2  0x1f3014  0x42000020  0x000e0018  IROM\n      3  0x079dc  0x3fc9c0e0  0x002d3034  BYTE_ACCESSIBLE, MEM_INTERNAL, DRAM\n      4  0x1310c  0x40378000  0x002daa18  MEM_INTERNAL, IRAM\n      5  0x00024  0x50000000  0x002edb2c  RTC_DATA\n      6  0x02470  0x00000000  0x002edb58  PADDING\n\nESP32-S3 Image Footer\n=====================\nChecksum: 0xa2 (valid)\nValidation hash: 5ed39fc2129d4404707d528ae8e8a06779bca0469549a4e1264919bdce3eda23 (valid)\n\nApplication Information\n=======================\nProject name: xiaozhi\nApp version: 2.4.8\nCompile time: Sep  8 2026 23:01:38\nELF file SHA256: b5a013453db2c2fb6c58c2c5432468ed335afd615eafb5ed5b7d929db559778a\nESP-IDF: v6.0.2\nMinimal eFuse block revision: 0.0\nMaximal eFuse block revision: 1.99\nMMU page size: 64 KB\nSecure version: 0\n",
+      "output_sha256": "7ca3d61ee5affb84f4955c5d32457cb0ab4cc8b6f9e7bfeb7685c91e67ce9f7a",
+      "hardware_access": false,
+      "signing_performed": false
+    }
+  ],
+  "write_proposal": {
+    "mode": "application_only_overwrite_current_VALID_ota_0_after_fresh_attestation",
+    "offset": 131072,
+    "slot_length": 4128768,
+    "expected_signed_length_unverified": 3084288,
+    "expected_end_exclusive_unverified": 3215360,
+    "actual_signed_candidate_sha256": null,
+    "actual_signed_candidate_length": null,
+    "automatic_new_image_health_rollback": false,
+    "manual_restore_required": true
+  },
+  "historical_evidence_independently_reviewed": {
+    "as_of": "2026-09-06",
+    "source": "a84 archive app-only-manifest and protected pre/post full images; raw images excluded",
+    "installed_app_sha256": "32473218a5c311c164815cc1ad0535eff0e182f178f0b7af59d657da13418f7a",
+    "preinstall_full_image_sha256": "518443392adbc4edd0932e1f888e791164a6099a7a5bfe1ba40039cbecbc8791",
+    "postinstall_full_image_sha256": "16aa4c613e15ba300241206ff81297f898ab59ae1a14e2d9454dd583ab68cd2f",
+    "outside_app_span_preserved": true,
+    "selected_slot": "ota_0",
+    "selector_sequence": 1,
+    "selector_state": "VALID",
+    "selector_crc": "0x4743989a",
+    "bootloader_region_sha256": "2bfa9187b6cb16ffcb0b55872829f9f906ccf3e30f72eee0ad57c6ddfd7c7f2d",
+    "partition_region_sha256": "210c66d84c8033068b14234274a9f242eedaa3d8c0f42f4de0603e4df6d346da",
+    "attests_current_board": false
+  },
+  "fresh_device_evidence_available": false,
+  "hardware_access": false,
+  "serial_opened": false,
+  "reset": false,
+  "signed_candidate": false,
+  "installed": false,
+  "private_keys_read": false,
+  "physical_acceptance": false,
+  "blocking_gates": [
+    "supervised device window and exact package authorization",
+    "signed candidate and independently verified signed manifest",
+    "fresh device identity/security/partition/VALID active-slot evidence",
+    "fresh verified protected full-image baseline",
+    "NVS integrity/capacity and bench namespace status",
+    "exact app-only overlay and unchanged-region proof",
+    "supervised physical bench and verified application-only restore"
+  ]
+}
