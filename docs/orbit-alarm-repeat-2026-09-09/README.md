@@ -59,9 +59,9 @@ justified by the present evidence.
 
 ## Next physical gate
 
-The unsigned artifact remains an off-board review candidate. Signing verification,
-an exact application-only installation/restoration proposal, independent package
-review and a new supervised window precede any installation. Preserve the restored
+The [signed retest package](signed/README.md) now includes public verification,
+an exact application-only installation/restoration proposal and independent GO.
+A new supervised window remains required before installation. Preserve the restored
 working a84 application and current NVS/capture journal. Existing bench state has
 Rice pending acknowledgement and five due alerts; do not erase or reseed it.
 
