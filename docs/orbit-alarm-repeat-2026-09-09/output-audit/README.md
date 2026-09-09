@@ -40,13 +40,35 @@ These are source-derived predictions. They are not register, rail-voltage,
 clipping or acoustic measurements. The configured voltage values are assumptions
 in the driver; they must be checked against the board contract and actual hardware.
 
-## Review status
+## Vendor comparison and review
 
-The source and prior-snapshot audit is complete. The independent C152 vendor
-contract comparison and review of this proposed readback remain pending. The
-board pin and voltage statements above describe repository configuration; they
-are not a newly verified schematic or physical measurement. No install-ready
-candidate or new device approval is claimed.
+The [official C152 specification](https://docs.m5stack.com/en/core/StopWatch)
+identifies an AW8737A amplifier and 8-ohm / 1 W speaker. Its audio pin map agrees
+with the repository. G3 and G10 are active-high controls; use the existing named
+macros when reading them. Their library indices are 2 and 9, not literal 3 and 10.
+
+Two official implementations use different clock and gain paths. The pinned
+[M5Unified StopWatch callback](https://github.com/m5stack/M5Unified/blob/db7268821ed1fc29512575f12d735dfde2b1eff0/src/M5Unified.cpp)
+uses BCLK-derived clock registers `0xb5` / `0x18`, writes DAC volume `0xef`, and
+combines that with its own software scaling and 44.1 kHz speaker configuration.
+It enables G3, waits 10 ms, programs the codec, then enables G10. The pinned
+[UIFlow board initialization](https://github.com/m5stack/uiflow-micropython/blob/619e8d1897abb9cd7636e76325ae0fb5cf975ded/m5stack/boards/M5STACK_StopWatch/board_init.c)
+selects MCLK, opens the codec at 48 kHz and requests volume 60; its initial IDF5 I2S
+configuration uses 16 kHz stereo slots. These are not interchangeable volume or
+sample-rate baselines. [Pinned source hashes and comparison](vendor-reference.json).
+
+Our `use_mclk=false` differs from UIFlow but agrees with M5Unified's use of BCLK.
+The pinned driver explicitly supports this mode with an eightfold pre-multiplier:
+nominal 24 kHz × 32-bit stereo frame × 8 gives 6.144 MHz, or 256 times the sample
+rate. This is a configuration calculation, not a clock measurement. There is no
+basis to declare the current clock mode defective or flip it automatically.
+
+Independent review confirmed the requested-100 finding, the ignored volume/mute
+callback results and the vendor pin/enable contract. Root also checked immutable
+vendor snapshots and qualified the initial clock-mismatch hypothesis against the
+second official implementation and the pinned driver's BCLK support. Physical
+rails, register values, amplifier output and speaker health remain unmeasured.
+No install-ready candidate or new device approval is claimed.
 
 ## Next comparison, before another installation request
 
@@ -55,10 +77,11 @@ known clip. Keep existing gain, mute policy, pins, audio ownership and persisten
 state unchanged. No new instrumented image is built or signed by this audit.
 
 1. After codec activation, capture requested volume, the real ES8311 volume register
-   `0x32`, mute bits in `0x31`, and each read's success/failure. Read cached targets
+   `0x32`, mute bits in `0x31`, clock registers `0x01` / `0x02`, and each read's
+   success/failure. Read cached targets
    and actual registers separately; a failed read must never become a zero value.
 2. Capture M5IOE1 mode, drive, output-latch and input-level evidence for pins 3 and
-   10 with checked return values. Label this as expander evidence, not measured
+   10 through the existing named macros (API indices 2 and 9), with checked return values. Label this as expander evidence, not measured
    amplifier supply voltage.
 3. Associate snapshots with the current playback generation and existing
    start/write/drain counters. Serialize reads with codec lifecycle, retain data
@@ -66,7 +89,10 @@ state unchanged. No new instrumented image is built or signed by this audit.
    writes inside the audio loop. This is an output diagnosis, not a latency test.
 4. Compare readback with the pinned configuration and vendor board reference.
    A volume/mute or expander mismatch directs a specific software investigation.
-   Matching registers with weak sound leave the analog path unproved; the next
+   Retain BCLK-derived mode for the first readback. An MCLK-based comparison would
+   change only that variable in a separately reviewed candidate and verify actual
+   clocks; it is not a presumed fix. Matching registers with weak sound leave the
+   analog path unproved; the next
    step would be a separate measured codec/amplifier/speaker comparison.
 5. Review the candidate and exact preservation/restoration package before asking
    Dennis for another supervised window. Use a fresh full backup and app-only

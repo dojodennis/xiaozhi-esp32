@@ -1,0 +1,84 @@
+{
+  "retrieved_at": "2026-09-09T19:08:08.387627+00:00",
+  "sources": [
+    {
+      "repo": "m5stack/uiflow-micropython",
+      "path": "m5stack/boards/M5STACK_StopWatch/board_init.c",
+      "commit": "619e8d1897abb9cd7636e76325ae0fb5cf975ded",
+      "url": "https://github.com/m5stack/uiflow-micropython/blob/619e8d1897abb9cd7636e76325ae0fb5cf975ded/m5stack/boards/M5STACK_StopWatch/board_init.c",
+      "raw_url": "https://raw.githubusercontent.com/m5stack/uiflow-micropython/619e8d1897abb9cd7636e76325ae0fb5cf975ded/m5stack/boards/M5STACK_StopWatch/board_init.c",
+      "sha256": "ba52afd11939154e25e862aa87d9eb1859da49afd99676d6d847fa23bdff7e3a",
+      "bytes": 12769,
+      "retrieved_at": "2026-09-09T19:05:25.634406+00:00",
+      "private_cache_filename": "uiflow-board-init.c"
+    },
+    {
+      "repo": "m5stack/M5Unified",
+      "path": "src/M5Unified.cpp",
+      "commit": "db7268821ed1fc29512575f12d735dfde2b1eff0",
+      "url": "https://github.com/m5stack/M5Unified/blob/db7268821ed1fc29512575f12d735dfde2b1eff0/src/M5Unified.cpp",
+      "raw_url": "https://raw.githubusercontent.com/m5stack/M5Unified/db7268821ed1fc29512575f12d735dfde2b1eff0/src/M5Unified.cpp",
+      "sha256": "5d70485637ba6e03f97ce444df52b61a3c20afce67ed70956da6a3805882d43f",
+      "bytes": 138962,
+      "retrieved_at": "2026-09-09T19:05:25.816123+00:00",
+      "private_cache_filename": "M5Unified.cpp"
+    }
+  ],
+  "product_reference": {
+    "url": "https://docs.m5stack.com/en/core/StopWatch",
+    "sku": "C152",
+    "amplifier": "AW8737A",
+    "speaker": "8 ohm / 1 W",
+    "audio_pin_map_matches_repository": true
+  },
+  "shared_enable_contract": {
+    "codec_power_label": "G3",
+    "codec_power_api_index": 2,
+    "pa_enable_label": "G10",
+    "pa_enable_api_index": 9,
+    "polarity": "active high",
+    "generic_mcu_pa_pin": "not connected; expander is authority"
+  },
+  "m5unified": {
+    "clock_reg01": "0xb5",
+    "clock_reg02": "0x18",
+    "clock_mode": "BCLK-derived",
+    "dac_reg32": "0xef",
+    "speaker_magnification": 4,
+    "speaker_sample_rate": 44100,
+    "enable_order": [
+      "G3 high",
+      "10 ms delay",
+      "codec programming",
+      "G10 high"
+    ]
+  },
+  "uiflow": {
+    "use_mclk": true,
+    "codec_open_rate": 48000,
+    "initial_idf5_i2s_rate": 16000,
+    "bits_per_sample": 16,
+    "codec_channels": 1,
+    "initial_i2s_slots": "stereo",
+    "requested_volume": 60,
+    "configured_pa_voltage": 5.0,
+    "configured_dac_voltage": 3.3
+  },
+  "diagnostic_clock_analysis": {
+    "use_mclk": false,
+    "sample_rate": 24000,
+    "nominal_bclk_hz": 768000,
+    "driver_pre_multiplier": 8,
+    "nominal_internal_clock_hz": 6144000,
+    "expected_internal_multiple": 256,
+    "supported_in_pinned_driver": true,
+    "limit": "Nominal source arithmetic, not measured MCLK/BCLK or register readback"
+  },
+  "decision": "Vendor references use different clock and gain paths. BCLK-derived mode is not a demonstrated defect. Preserve current mode in initial readback candidate; any MCLK=true A/B is a later single-variable comparison, not an automatic fix.",
+  "unmeasured": [
+    "Actual clock waveforms",
+    "ES8311 volume/mute/clock registers during playback",
+    "Physical supply rails and amplifier gain/output",
+    "Speaker condition and acoustic strength"
+  ]
+}

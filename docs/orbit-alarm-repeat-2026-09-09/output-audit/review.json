@@ -1,0 +1,32 @@
+{
+  "reviewer_task": "01a0709d-0b27-7a73-b135-8502288e632f",
+  "received_at": "2026-09-09T19:09:04.931569+00:00",
+  "decision": "Source/vendor audit and qualified readback direction accepted; no device authorization or built candidate",
+  "confirmed": [
+    "Saved software volume target is100",
+    "esp_codec_dev1.5.11 ignores volume/mute callback return values",
+    "C152 pin map and active-high G3/G10 power/PA control agree with repository",
+    "Official UIFlow and M5Unified differ in clock/rate/gain configuration",
+    "M5Unified uses BCLK-derived mode; pinned driver supports baselinefalse at24kHz with8x multiplier",
+    "Initial comparison should retain baselinefalse and read clock01/02, mute31, volume32 and checked IOE evidence"
+  ],
+  "corrected_hypothesis": "use_mclk=false is not a proven defect; any true A/B is a later controlled comparison",
+  "unmeasured": [
+    "Actual clock waveforms",
+    "ES8311 register values during playback",
+    "Physical rails/amplifier output and gain mode",
+    "Speaker condition and acoustic suitability"
+  ],
+  "reviewer_device_actions": false,
+  "reviewer_builds": false,
+  "snapshot_cross_check": [
+    {
+      "source": "M5Unified.cpp",
+      "root_path_history_vs_reviewer_head_same_bytes": true
+    },
+    {
+      "source": "uiflow-board-init.c",
+      "root_path_history_vs_reviewer_head_same_bytes": true
+    }
+  ]
+}
