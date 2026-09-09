@@ -75,5 +75,9 @@ gateway daemon image is
 `sha256:3546a52a0e3b9fc9ef6e8bcba4051668764caa7246e0a407536a1fc3bd8f7a64`.
 See the companion gateway repository
 `docs/orbit-capture-hello-2026-09-09` and `device-test-status.json`.
-First physical capture observation is pending; no capture acceptance is inferred
-from installation or authentication.
+The first observation did not pass: the exact shopping note reached the server
+through ordinary conversation and produced a needs-attention request. The
+dictation journal was stopped with zero segments. Dennis reported Recorded text,
+no felt haptic and a later follow-up message. That does not prove the new
+DictationRecorded path executed. A controlled mode/Resume retry is pending;
+`device-test-status.json` separates physical observation from route evidence.

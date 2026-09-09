@@ -7,6 +7,22 @@
   "authenticated_boot": true,
   "device_ready_at_boot_ms": 16080,
   "gateway_authenticated_at": "2026-09-09T20:33:33.696Z",
-  "physical_capture_test": "First shopping note instructions issued; observation pending",
-  "recorded_at": "2026-09-09T20:34:33.987835+00:00"
+  "physical_capture_test": "Not accepted: exact six-lemons note used ordinary conversation, not dictation; controlled retry awaiting one double-blue completion.",
+  "recorded_at": "2026-09-09T20:34:33.987835+00:00",
+  "first_observation": {
+    "visual": "Dennis reported Recorded / On Orbit",
+    "haptic": "Not felt",
+    "later_message": "Approximately cannot answer / saved for follow-up; spoken versus screen-only not yet confirmed"
+  },
+  "server_evidence": {
+    "exact_requested_transcript_received": true,
+    "audio_state": "transcribed",
+    "purpose": null,
+    "dictation_segment_receipt": false,
+    "generic_request_state": "needs_attention",
+    "dictation_journal_state": "stopped",
+    "dictation_control_revision": 2,
+    "dictation_segments": 0
+  },
+  "acceptance_limits": "The displayed word alone does not prove the new DictationRecorded path. Its haptic and durable dictation acceptance remain unverified. No canonical list or Reminders save."
 }
