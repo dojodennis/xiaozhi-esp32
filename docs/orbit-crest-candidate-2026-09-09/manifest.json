@@ -1,0 +1,65 @@
+{
+  "source_commit": "8767acf71ed31eea4485dac260ef28fff66f409a",
+  "author_commit": "b660d2e40a86e8b57f4546a99d9bab4f93fec724",
+  "installed_base": "b608ee43089acd8a19a5393c36a3a5c2a44e4854",
+  "build_passed": true,
+  "idf": "6.0.2",
+  "signing_tool": "espsecure5.3.1",
+  "network": "none",
+  "usb_mounted": false,
+  "profile_identical_to_installed": true,
+  "sdkconfig_identical_to_installed": true,
+  "dependency_lock_identical_to_installed": true,
+  "partition_table_identical_to_installed": true,
+  "signed": true,
+  "rsa_verified": true,
+  "unsigned_prefix_exact": true,
+  "installed": false,
+  "signed_sha256": "014e1cce2c5d87670fe6a77f8bf6f20408593e173b12510b5dd64eb4b2211823",
+  "signed_bytes": 3215360,
+  "elf_sha256": "843caee8b8e1bc89a8b8a9d5d6a1426faf689a338b77f158c3d709b4e818dd3e",
+  "app_offset": 131072,
+  "end_exclusive": 3346432,
+  "signing_public_key_sha256": "09d1e0fd2dfb13640b8a99fcd7e284b6b24e6a06003bce4e3c72a49004364250",
+  "author_host_tests_passed": 308,
+  "final_focused_tests_passed": 19,
+  "files": {
+    "unsigned.bin": {
+      "sha256": "d35adbe5c0b27f19e2251f73a8b6bd3bef7116126fbbef0ccc44eec5016daa6c",
+      "bytes": 3211264
+    },
+    "sdkconfig": {
+      "sha256": "5d64b9556dc6d8f3ad70cd945a9d64656dddb21b352b9a033e25235afe253c68",
+      "bytes": 128932
+    },
+    "dependencies.lock": {
+      "sha256": "3d627e36af969bb3c0847bc92036d6875faa7f266f899a4a63fced3e586cee7c",
+      "bytes": 33916
+    },
+    "capture_profile.json": {
+      "sha256": "43ae474e73b0475d760ada52fa0cdae40857ff0d59d07f0875d5d807d200ae3b",
+      "bytes": 1913
+    },
+    "partition-table.bin": {
+      "sha256": "5d8d16317648dc292e807db7834e3ec86b4cf9784ab2992348be47f0aa17f7d1",
+      "bytes": 3072
+    },
+    "build-8767acf.log": {
+      "sha256": "9e6d5d793442253993cbf35557867308e67d738f538173a1d9e325a97bac5796",
+      "bytes": 64789
+    },
+    "sign.log": {
+      "sha256": "eb4d39e577cc258277fcaf123e191cbd137af22e206fbbaaef71ec3c3c4a3c9e",
+      "bytes": 209
+    },
+    "verify.log": {
+      "sha256": "7c66ae3801462b6b0108392f13dc57b4ff604782e736b66d4ab473c2d758f2fb",
+      "bytes": 197
+    },
+    "image.log": {
+      "sha256": "1899fa66c1fa8133b07eee511037c0cd6502dfa998f071e8499e89ec8a00eaa9",
+      "bytes": 1535
+    }
+  },
+  "recorded_at": "2026-09-09T21:31:48.326525+00:00"
+}

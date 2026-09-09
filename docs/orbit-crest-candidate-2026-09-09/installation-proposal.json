@@ -1,0 +1,22 @@
+{
+  "source_commit": "8767acf71ed31eea4485dac260ef28fff66f409a",
+  "candidate_path": "/Users/dojo/.codex/device-builds/orbit-capture-feedback/2026-09-09/crest/application.bin",
+  "signed_sha256": "014e1cce2c5d87670fe6a77f8bf6f20408593e173b12510b5dd64eb4b2211823",
+  "signed_bytes": 3215360,
+  "app_offset": 131072,
+  "end_exclusive": 3346432,
+  "device_id": "2b933f63-cd37-40dd-aea0-59548c40de1f",
+  "expected_mac": "28:84:85:44:6b:10",
+  "expected_flash_bytes": 16777216,
+  "device_write_authorized": false,
+  "fresh_current_backup_and_independent_overlay_review_required": true,
+  "preserve_all_bytes_outside_app_span": true,
+  "verify_complete_expected_flash_before_boot": true,
+  "merged_binary_forbidden": true,
+  "fallback_path": "/Users/dojo/.codex/device-builds/orbit-capture-feedback/2026-09-09/firmware/application.bin",
+  "fallback_sha256": "75a36af07e55a2e7a81e5f6fcb16538881055d2d580dab1e0dc7bbc0bbf7c4c7",
+  "fallback_requires_fresh_current_backup": true,
+  "gateway_image_unchanged": "sha256:094c16463ae1dc1be803fb32d834568bdc9a784a2e51df9089a4ecc51a8efc13",
+  "operator": "Codex lead only",
+  "notes": "Prepare exact fresh overlay and current selector proof during the next supervised window; no new physical press or USB operation requested tonight. Retain F3-compatible intake for pending v3 recordings."
+}

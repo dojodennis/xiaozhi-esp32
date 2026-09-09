@@ -1,0 +1,28 @@
+{
+  "reviewer_task": "01a0709d-0b27-7a73-b135-8502288e632f",
+  "source_commit": "8767acf71ed31eea4485dac260ef28fff66f409a",
+  "signed_sha256": "014e1cce2c5d87670fe6a77f8bf6f20408593e173b12510b5dd64eb4b2211823",
+  "source_review": "PASS",
+  "final_codec_and_profile_diff_review": "PASS",
+  "artifact_review": "PASS",
+  "independent_rsa_verification": true,
+  "all_manifest_hashes_and_sizes_verified": true,
+  "packaged_unsigned_and_elf_match_target_build": true,
+  "signed_prefix_matches_unsigned": true,
+  "embedded_elf_matches_packaged_elf": true,
+  "profile_sdkconfig_lock_partition_public_key_match_installed": true,
+  "app_span": [
+    131072,
+    3346432
+  ],
+  "ota0_end": 4259840,
+  "device_or_rebuild_actions_by_reviewer": false,
+  "ready_for_exact_artifact_approval": true,
+  "installed": false,
+  "remaining_limits": [
+    "Round-screen layout, crest/timer/alarm transitions and dictation replacement require physical verification.",
+    "Staged conversational reply ownership outlasts the short crest caption; not part of current one-way capture acceptance.",
+    "Fresh current full-device backup and independent overlay review precede any future write."
+  ],
+  "recorded_at": "2026-09-09T21:36:40.843319+00:00"
+}
