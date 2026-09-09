@@ -1,0 +1,21 @@
+{
+  "reviewer_task": "01a0709d-0b27-7a73-b135-8502288e632f",
+  "date": "2026-09-09",
+  "decision": "GO for frozen off-board package readiness and a supervised conditional install decision; not a device-install GO",
+  "independent_checks": [
+    "Signed file: 3084288 bytes, SHA-256 e8e8811c3d6c80bc0119e14aea1c89fbd2b6265a1f561bca91a310612540c7b2",
+    "First 3080192 bytes exactly equal frozen unsigned file ecffe7aa30eddcf0e965a1beeeef82326357bbba28057ad418160d9f89ba706c",
+    "Accepted public key SHA-256 09d1e0fd2dfb13640b8a99fcd7e284b6b24e6a06003bce4e3c72a49004364250",
+    "Application-only span 0x020000 through exclusive 0x311000 equals exact signed length",
+    "Public verification log confirms valid RSA block 0; image log confirms ESP32-S3, valid checksum/hash and 16MB flash metadata",
+    "Pinned tool image, network disabled, no USB/serial mounts or device operations recorded",
+    "Signing container destroy event and exact-name absence verified"
+  ],
+  "remaining": [
+    "Explicit supervised temporary installation and restoration authorization",
+    "Fresh board identity, security, partition, VALID ota_0, current-app and NVS/bench-state checks",
+    "Fresh independently verified full 16MiB backup and reviewed exact expected overlay",
+    "Physical speaker, apron haptics, exact ACK, restart and accepted-app restoration"
+  ],
+  "review_limits": "Artifact and public-log review only. No private-key access, signing, USB/serial, reset, flash, network, provider or source edits by reviewer. Signed-on-update RSA is not hardware Secure Boot."
+}

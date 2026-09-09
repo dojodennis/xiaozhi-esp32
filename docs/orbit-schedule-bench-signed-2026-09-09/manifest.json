@@ -1,0 +1,78 @@
+{
+  "created_at": "2026-09-09T12:50:04.112079+00:00",
+  "source_commit": "45772685c082a55ef26673da078979a96facdbf6",
+  "profile": "provisions-kitchen-helper-stopwatch-schedule-bench",
+  "signed_bytes": 3084288,
+  "signed_sha256": "e8e8811c3d6c80bc0119e14aea1c89fbd2b6265a1f561bca91a310612540c7b2",
+  "unsigned_bytes": 3080192,
+  "unsigned_sha256": "ecffe7aa30eddcf0e965a1beeeef82326357bbba28057ad418160d9f89ba706c",
+  "unsigned_payload_exact": true,
+  "public_key_sha256": "09d1e0fd2dfb13640b8a99fcd7e284b6b24e6a06003bce4e3c72a49004364250",
+  "signer_identity": "Existing local mode0600 signer; derived public PEM byte-identical to accepted a84 public key. No private material emitted.",
+  "tool_image": "sha256:0d8c9773d48a327233f9c1d7c654ff0bcf133ae24503ea2e97a57cfe02b8cb67",
+  "tool_version": "ESP-IDF6.0.2; espsecure/esptool5.3.0",
+  "network": "none",
+  "serial_or_usb_mounts": [],
+  "device_operations": 0,
+  "offset": 131072,
+  "end_exclusive": 3215360,
+  "span_hex": "0x020000-0x311000",
+  "signature_verified": true,
+  "image_info_passed": true,
+  "checks": [
+    {
+      "check": "verify",
+      "exit_code": 0,
+      "argv": [
+        "python",
+        "-m",
+        "espsecure",
+        "verify-signature",
+        "--version",
+        "2",
+        "--keyfile",
+        "/accepted/public.pem",
+        "/candidate/application.bin"
+      ],
+      "log_sha256": "f436514d65cf942609a67bd2cfd545daaa5e97741c63baebd4f442b6ca286e3a",
+      "container": "orbit-bench-verify-03024ddf29",
+      "cleanup": "verified"
+    },
+    {
+      "check": "image",
+      "exit_code": 0,
+      "argv": [
+        "python",
+        "-m",
+        "esptool",
+        "image-info",
+        "/candidate/application.bin"
+      ],
+      "log_sha256": "610badb423698db8f6b16b8fae5408a629af5c044c051f05379e383f90335197",
+      "container": "orbit-bench-image-aa7b60566a",
+      "cleanup": "verified"
+    }
+  ],
+  "signing_container_cleanup": {
+    "event": {
+      "name": "orbit-bench-sign-cb5a8b3d63",
+      "id": "6e564a0993b9c9a3fc12c7d774bbac1b866f98e9f4efad40999c295c727fef6a",
+      "event": "destroy"
+    },
+    "absence": "verified"
+  },
+  "artifacts": {
+    "verify.log": "f436514d65cf942609a67bd2cfd545daaa5e97741c63baebd4f442b6ca286e3a",
+    "image.log": "610badb423698db8f6b16b8fae5408a629af5c044c051f05379e383f90335197",
+    "application.bin": "e8e8811c3d6c80bc0119e14aea1c89fbd2b6265a1f561bca91a310612540c7b2",
+    "cleanup.json": "18ece37345abe5ccdbcd314c4bb27e4481d71f283c3dbd8095197a08491b6633",
+    "sign.log": "f24e6edbe9f9f11c433c4ab2607d4ae6de1dc3214110194cb53ef9f20f09a584"
+  },
+  "not_yet_proven": [
+    "fresh physical identity/security/partition/VALIDota0/current app and NVS/bench-state attestation",
+    "fresh full16MiB backup and exact expected overlay",
+    "specific supervised installation authorization",
+    "physical speaker/haptics/ACK/restart and successful accepted-app restoration"
+  ],
+  "limits": "Signed off-board review artifact only. No serial open, reset, flash, provider or live deployment. Profile uses signed-on-update RSA, not hardware secure-boot enforcement."
+}
