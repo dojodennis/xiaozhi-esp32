@@ -116,10 +116,11 @@ public:
         return captured;
     }
 
-    void OutputData(std::vector<int16_t>& data) override {
-        OrbitCrest::output_meter.Observe(data.data(), data.size(),
+    bool OutputData(std::vector<int16_t>& data) override {
+        const bool played = Es8311AudioCodec::OutputData(data);
+        OrbitCrest::output_meter.Observe(data.data(), played ? data.size() : 0,
                                          static_cast<uint32_t>(esp_timer_get_time() / 1000));
-        Es8311AudioCodec::OutputData(data);
+        return played;
     }
 #if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
     void EnableInput(bool enable) override {
