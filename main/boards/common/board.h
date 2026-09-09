@@ -5,6 +5,7 @@
 #include <web_socket.h>
 #include <mqtt.h>
 #include <udp.h>
+#include <cstdint>
 #include <string>
 #include <functional>
 #include <network_interface.h>
@@ -80,6 +81,7 @@ public:
     virtual bool GetBatteryLevel(int &level, bool& charging, bool& discharging);
     virtual std::string GetSystemInfoJson();
     virtual void SetPowerSaveLevel(PowerSaveLevel level) = 0;
+    virtual void PulseLocalCaptureHaptic(uint32_t duration_ms) { (void)duration_ms; }
     virtual std::string GetBoardJson() = 0;
     virtual std::string GetDeviceStatusJson() = 0;
 };

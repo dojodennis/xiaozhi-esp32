@@ -143,6 +143,7 @@ private:
         kSuccess,
         kDraft,
         kRecorded,
+        kLocalRecorded,
         kQuestion,
         kWarning,
         kNotice,
@@ -272,6 +273,9 @@ private:
                 return {"DRAFT", "NOT SENT", MATERIAL_SYMBOLS_INFO, kColorAmber};
             case VisualState::kRecorded:
                 return {"RECORDED", "FROM RECORDS", MATERIAL_SYMBOLS_INFO, kColorAmber};
+            case VisualState::kLocalRecorded:
+                return {"RECORDED", "ON ORBIT", MATERIAL_SYMBOLS_CHECK_CIRCLE,
+                        kColorGreen};
             case VisualState::kQuestion:
                 return {"QUESTION", "ANSWER NOW", MATERIAL_SYMBOLS_HELP, kColorGold};
             case VisualState::kWarning:
@@ -1314,6 +1318,15 @@ public:
     void ShowNotification(const char* notification, int duration_ms = 3000) override {
         const char* title = nullptr;
         const VisualState state = StateForNotification(notification, &title);
+        ShowReceipt(title, state, duration_ms);
+    }
+
+    void ShowLocalCaptureReceipt(int duration_ms = 1800) override {
+        ShowReceipt("RECORDED", VisualState::kLocalRecorded, duration_ms);
+    }
+
+private:
+    void ShowReceipt(const char* title, VisualState state, int duration_ms) {
         receipt_visible_.store(true);
         {
             DisplayLockGuard lock(this);
@@ -1344,6 +1357,8 @@ public:
             ApplyRestingVisualState();
         }
     }
+
+public:
 
     void ShowNotification(const std::string& notification, int duration_ms = 3000) override {
         ShowNotification(notification.c_str(), duration_ms);
@@ -1397,7 +1412,9 @@ private:
     StopwatchBacklight* backlight_;
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     esp_timer_handle_t display_idle_timer_ = nullptr;
+    esp_timer_handle_t capture_haptic_timer_ = nullptr;
     std::atomic<int64_t> display_idle_deadline_us_{0};
+    std::atomic<int64_t> capture_haptic_deadline_us_{0};
     bool display_dimmed_ = false;
 #endif
 
@@ -1600,6 +1617,28 @@ private:
             esp_timer_start_once(display_idle_timer_, kDisplayIdleTimeoutUs));
     }
 
+    void InitializeCaptureHapticTimer() {
+        esp_timer_create_args_t timer_args = {
+            .callback = [](void* arg) {
+                auto* self = static_cast<M5StackStopwatchBoard*>(arg);
+                const int64_t deadline = self->capture_haptic_deadline_us_.load();
+                Application::GetInstance().Schedule([self, deadline]() {
+                    if (deadline <= 0 || self->capture_haptic_deadline_us_.load() != deadline ||
+                        esp_timer_get_time() < deadline || self->display_->HasTimerAlarm()) {
+                        return;
+                    }
+                    self->capture_haptic_deadline_us_.store(0);
+                    self->ioe_.digitalWrite(IOE_PIN_MOTOR, LOW);
+                });
+            },
+            .arg = this,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "stopwatch_capture_haptic",
+            .skip_unhandled_events = true,
+        };
+        ESP_ERROR_CHECK(esp_timer_create(&timer_args, &capture_haptic_timer_));
+    }
+
     void ResetDisplayIdleTimer() {
         if (display_idle_timer_ == nullptr) {
             return;
@@ -1650,6 +1689,7 @@ public:
         InitializeDisplay();
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
         InitializeDisplayIdleTimer();
+        InitializeCaptureHapticTimer();
         display_->SetTimerAlarmOutputCallback([this](bool active) {
             ioe_.digitalWrite(IOE_PIN_MOTOR, active ? HIGH : LOW);
             if (active) {
@@ -1692,6 +1732,32 @@ public:
     Display* GetDisplay() override {
         return display_;
     }
+
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    void PulseLocalCaptureHaptic(uint32_t duration_ms) override {
+        if (capture_haptic_timer_ == nullptr || duration_ms == 0 || display_->HasTimerAlarm()) {
+            return;
+        }
+        const esp_err_t stop_result = esp_timer_stop(capture_haptic_timer_);
+        if (stop_result != ESP_OK && stop_result != ESP_ERR_INVALID_STATE) {
+            ESP_LOGE(TAG, "Capture haptic timer stop failed: %s", esp_err_to_name(stop_result));
+            return;
+        }
+        const int64_t duration_us = static_cast<int64_t>(duration_ms) * 1000;
+        const int64_t deadline = esp_timer_get_time() + duration_us;
+        capture_haptic_deadline_us_.store(deadline);
+        ioe_.digitalWrite(IOE_PIN_MOTOR, HIGH);
+        const esp_err_t start_result = esp_timer_start_once(capture_haptic_timer_, duration_us);
+        if (start_result != ESP_OK) {
+            capture_haptic_deadline_us_.store(0);
+            ioe_.digitalWrite(IOE_PIN_MOTOR, LOW);
+            ESP_LOGE(TAG, "Capture haptic timer start failed: %s",
+                     esp_err_to_name(start_result));
+            return;
+        }
+        ResetDisplayIdleTimer();
+    }
+#endif
 
     Backlight* GetBacklight() override {
         return backlight_;

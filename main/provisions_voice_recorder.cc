@@ -348,8 +348,12 @@ void VoiceRecorder::Save(const VoiceRecording::Work& work) {
             dictation_ready_press_ = 0;
         }
         PublishDictation();
-        if (!empty_dictation)
+        if (!empty_dictation) {
+            // This is the only local dictation success boundary: the sealed
+            // manifest and encoded audio have both survived verified storage.
+            notify_(Result::DictationRecorded, work.press);
             RequestReplay();
+        }
     } else
         notify_(ok ? Result::Saved : Result::Failed, work.press);
 }

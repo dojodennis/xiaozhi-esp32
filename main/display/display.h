@@ -43,6 +43,9 @@ public:
     virtual void SetTimerText(const std::string& text) {}
     virtual void SetDictationScreen(bool visible, const std::string& status,
                                     const std::string& action) {}
+    virtual void ShowLocalCaptureReceipt(int duration_ms = 1800) {
+        ShowNotification("Recorded on Orbit", duration_ms);
+    }
     virtual void SetTheme(Theme* theme);
     virtual Theme* GetTheme() { return current_theme_; }
     virtual void UpdateStatusBar(bool update_all = false);

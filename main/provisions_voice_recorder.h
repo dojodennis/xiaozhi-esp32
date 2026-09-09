@@ -49,7 +49,8 @@ public:
         RetryUnavailable,
         DictationChanged,
         DictationReady,
-        DictationAuthorized
+        DictationAuthorized,
+        DictationRecorded
     };
     using Notify = std::function<void(Result, uint32_t)>;
     using ReplayReady = std::function<void(std::shared_ptr<const VoiceReplay>)>;

@@ -109,6 +109,9 @@ bool hold_replay=false;
 bool fail_encoder=false;
 bool pause_worker=false;
 std::function<void(VoiceRecorder::Result)> notify_hook;
+size_t notice_count(VoiceRecorder::Result result) {
+    return std::count_if(notices.begin(),notices.end(),[&](const auto& notice){return notice.first==result;});
+}
 int xTaskCreate(void(*function)(void*),const char*,unsigned,void* argument,unsigned,TaskHandle_t* handle) {
     assert(!task);task=new TestTask;*handle=task;
     task->thread=std::thread([=]{current_task=task;function(argument);});return pdPASS;
@@ -452,6 +455,7 @@ void dictation_cases() {
         assert(!recorder.CanDictate(2,context().conversation_id,1788712345678LL));
         {std::lock_guard<std::mutex> lock(task->mutex);pause_worker=false;task->changed.notify_all();}
         drain();
+        assert(notice_count(VoiceRecorder::Result::DictationRecorded)==1);
         const auto stopped=recorder.DictationRecord();
         assert(stopped.count==1&&stopped.frozen_count==1&&stopped.pending_revision==1&&stopped.pending==dictation::Action::Stop);
         assert(stopped.segments[0].samples==160&&stopped.segments[0].request_id==request);
@@ -466,6 +470,7 @@ void dictation_cases() {
         assert(recorder.DictationRecord().pending==dictation::Action::Stop&&recorder.DictationRecord().count==1);
         dictation_ack(recorder,dictation::State::Stopped);assert(recorder.DictationRecord().control_revision==2);
         replay(recorder);auto receipt=offered.back().receipt;receipt.durable=true;
+        assert(notice_count(VoiceRecorder::Result::DictationRecorded)==1); // Upload replay cannot repeat the local cue.
         state.fail="set_blob";state.fail_n=0;acknowledge(recorder,receipt);
         assert(recorder.PendingCount()==1&&recorder.DictationFaulted()&&!recorder.DictationRecord().segments[0].terminal);
         state.fail.clear();acknowledge(recorder,receipt);assert(!recorder.DictationFaulted());
@@ -490,9 +495,11 @@ void dictation_cases() {
         begin_dictation(recorder,1);request=recorder.DictationRecord().segments[0].request_id;
         int16_t pcm[160]{};assert(recorder.Append(1,pcm,160,1));state.fail="write";state.fail_n=0;
         recorder.Release(1);assert(recorder.RequestDictationControl(dictation::Action::Stop));drain();
+        assert(notice_count(VoiceRecorder::Result::DictationRecorded)==0);
         assert(recorder.DictationFaulted()&&recorder.DictationBusy()&&recorder.DictationRecord().frozen_count==1);
         assert(recorder.DictationRecord().segments[0].request_id==request);
         state.fail.clear();clock_us+=31000000;replay(recorder);
+        assert(notice_count(VoiceRecorder::Result::DictationRecorded)==1);
         assert(!recorder.DictationFaulted()&&!recorder.DictationBusy()&&recorder.PendingCount()==1);
         assert(offered.back().receipt.capture.request_id==request&&offered.back().receipt.capture.sample_count==160);
     }
@@ -507,6 +514,7 @@ void dictation_cases() {
         assert(recorder.RequestDictationControl(dictation::Action::Stop));
         {std::lock_guard<std::mutex> lock(task->mutex);pause_worker=false;task->changed.notify_all();}
         drain();assert(recorder.DictationRecord().count==0&&recorder.DictationRecord().frozen_count==0&&!recorder.DictationBusy());
+        assert(notice_count(VoiceRecorder::Result::DictationRecorded)==0);
     }
     join();
     std::cout<<"Dictation worker reservation, cap, Stop sealing, exact retry and restart cases passed\n";
