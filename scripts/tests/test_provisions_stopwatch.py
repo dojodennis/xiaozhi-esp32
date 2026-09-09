@@ -207,6 +207,14 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
             source,
         )
         self.assertIn(
+            'return {"RECORDED", "ON ORBIT", MATERIAL_SYMBOLS_CHECK_CIRCLE,',
+            source,
+        )
+        local_receipt = source.split(
+            "void ShowLocalCaptureReceipt", 1
+        )[1].split("private:", 1)[0]
+        self.assertIn('ShowReceipt("RECORDED", VisualState::kLocalRecorded', local_receipt)
+        self.assertIn(
             'return {"DRAFT", "NOT SENT", MATERIAL_SYMBOLS_INFO, kColorAmber}',
             source,
         )
@@ -336,6 +344,20 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("display_->SilenceTimerAlarm()", demo_buttons)
         self.assertNotIn("StartListening", demo_buttons)
         self.assertNotIn("SetOutputVolume", demo_buttons)
+
+    def test_local_capture_haptic_is_bounded_and_yields_to_timer_alarm(self):
+        source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
+        board = source.split("class M5StackStopwatchBoard", 1)[1]
+        pulse = board.split("void PulseLocalCaptureHaptic", 1)[1].split("#endif", 1)[0]
+
+        self.assertIn("duration_ms == 0", pulse)
+        self.assertIn("display_->HasTimerAlarm()", pulse)
+        self.assertIn("ioe_.digitalWriteWithRes(IOE_PIN_MOTOR, HIGH", pulse)
+        self.assertIn("static_cast<int64_t>(duration_ms) * 1000", pulse)
+        self.assertIn('name = "stopwatch_capture_haptic"', board)
+        self.assertIn("ioe_.digitalWriteWithRes(IOE_PIN_MOTOR, LOW", board)
+        self.assertIn("Application::GetInstance().Schedule", board)
+        self.assertIn("capture_haptic_pulse_.IsExpired", board)
 
     def test_receipt_reset_rejects_stale_timer_callbacks(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")

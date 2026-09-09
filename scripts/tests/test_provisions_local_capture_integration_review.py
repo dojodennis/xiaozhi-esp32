@@ -61,7 +61,7 @@ struct VoiceRecorder {
     bool BeginDictation(uint32_t,uint64_t){return false;}
     bool DictationPreparing(uint32_t)const{return false;}
 
-    enum class Result {Saved,Failed,NeedsAttention,Synced,ContextReady,RetryQueued,RetryUnavailable,DictationReady,DictationChanged,DictationAuthorized};
+    enum class Result {Saved,Failed,NeedsAttention,Synced,ContextReady,RetryQueued,RetryUnavailable,DictationReady,DictationChanged,DictationAuthorized,DictationRecorded};
     bool allow_begin=true;unsigned begun=0,released=0,replays=0;
     bool CanRetry() const {return false;}
     std::function<void()> before_begin;
@@ -71,14 +71,16 @@ struct VoiceRecorder {
 };
 }
 struct Display {
-    std::string role,text,status;
+    std::string role,text,status;unsigned local_receipts=0;
     void SetChatMessage(const char* r,const char* t){role=r;text=t;}
     void SetStatus(const char* value){status=value;}
+    void ShowLocalCaptureReceipt(int=1800){++local_receipts;}
 };
 struct Board {
-    Display display;
+    Display display;unsigned haptics=0;uint32_t haptic_ms=0;
     static Board& GetInstance(){static Board board;return board;}
     Display* GetDisplay(){return &display;}
+    void PulseLocalCaptureHaptic(uint32_t duration_ms){++haptics;haptic_ms=duration_ms;}
 };
 struct WebsocketProtocol {
     bool open=false;std::function<void()> before_open;
@@ -118,7 +120,7 @@ struct Application {
     AudioService audio_service_;int event_group_=0,state=0;
     std::vector<std::function<void()>> scheduled;
     std::string alert_status,alert_text,alert_sound;
-    Application(){Board::GetInstance().display={};}
+    Application(){Board::GetInstance().display={};Board::GetInstance().haptics=0;Board::GetInstance().haptic_ms=0;}
     std::shared_ptr<WebsocketProtocol> GetProtocol(){return protocol;}
     int GetDeviceState(){return state;}void SetDeviceState(int value){state=value;}
     const char* GetProvisionsIdleStatus(){return "status";}
@@ -142,6 +144,32 @@ struct Signal {
     void Wait(){std::unique_lock<std::mutex> lock(mutex);assert(changed.wait_for(lock,std::chrono::seconds(2),[&]{return set;}));}
 };
 int main(){
+    {
+        Application app;app.StartAndRun();app.StopAndRun();
+        app.HandleVoiceRecordingResult(Result::DictationRecorded,1);
+        assert(Board::GetInstance().display.local_receipts==1);
+        assert(Board::GetInstance().haptics==1&&Board::GetInstance().haptic_ms==90);
+        assert(app.audio_service_.feedback==std::vector<std::string>{"success tone"});
+        assert(app.provisions_recorder_->replays==0); // The result never enters the conversational path.
+        app.StartAndRun();
+        app.HandleVoiceRecordingResult(Result::DictationRecorded,1);
+        assert(Board::GetInstance().display.local_receipts==1&&Board::GetInstance().haptics==1);
+        assert(app.audio_service_.feedback.size()==1); // Superseded capture stays silent.
+    }
+    {
+        Application app;app.StartAndRun();app.StopAndRun();
+        std::unique_lock<std::mutex> gate(app.provisions_recording_control_mutex_);
+        std::atomic<bool> callback_started{false};
+        std::thread result([&]{
+            callback_started=true;
+            app.HandleVoiceRecordingResult(Result::DictationRecorded,1);
+        });
+        while(!callback_started)std::this_thread::yield();
+        app.StartListening(); // A new physical edge wins before publication acquires the gate.
+        gate.unlock();result.join();
+        assert(Board::GetInstance().display.local_receipts==0);
+        assert(Board::GetInstance().haptics==0&&app.audio_service_.feedback.empty());
+    }
     for(bool online:{false,true}) {
         Application app;app.protocol->open=online;
         app.audio_service_.pending="old cue";
