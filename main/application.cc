@@ -1637,6 +1637,17 @@ void Application::HandleVoiceRecordingResult(provisions::VoiceRecorder::Result r
         ServiceDictation();
         return;
     }
+    if (result == Result::DictationRecorded) {
+        std::lock_guard<std::mutex> lock(provisions_recording_control_mutex_);
+        if (press != 0 && provisions_physical_press_.IsCurrent(press) &&
+            !manual_listening_requested_.load()) {
+            auto& board = Board::GetInstance();
+            board.GetDisplay()->ShowLocalCaptureReceipt();
+            board.PulseLocalCaptureHaptic(90);
+            audio_service_.PlayLocalFeedback(Lang::Sounds::OGG_SUCCESS);
+        }
+        return;
+    }
     // Main-task result publication is serialized with recording startup.
     // The timer-owned physical-held flag is never changed by a delayed result.
     bool current = false;
