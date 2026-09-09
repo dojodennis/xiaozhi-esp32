@@ -9,6 +9,9 @@
 #include "M5PM1.h"
 #include "config.h"
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+#include "crest_asset.h"
+#include "crest_audio.h"
+#include "crest_motion.h"
 #include "orbit_dial.h"
 #include "provisions_local_capture_feedback.h"
 #include "provisions_timer_snapshot.h"
@@ -105,6 +108,19 @@ constexpr std::array<uint32_t, ProvisionsStopwatchOrbit::kMaximumSlots> kOrbitCo
 class ProvisionsStopwatchAudioCodec final : public Es8311AudioCodec {
 public:
     using Es8311AudioCodec::Es8311AudioCodec;
+
+    bool InputData(std::vector<int16_t>& data) override {
+        const bool captured = Es8311AudioCodec::InputData(data);
+        OrbitCrest::input_meter.Observe(data.data(), captured ? data.size() : 0,
+                                        static_cast<uint32_t>(esp_timer_get_time() / 1000));
+        return captured;
+    }
+
+    void OutputData(std::vector<int16_t>& data) override {
+        OrbitCrest::output_meter.Observe(data.data(), data.size(),
+                                         static_cast<uint32_t>(esp_timer_get_time() / 1000));
+        Es8311AudioCodec::OutputData(data);
+    }
 #if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
     void EnableInput(bool enable) override {
         (void)enable;
@@ -219,6 +235,33 @@ private:
     lv_obj_t* alarm_title_label_ = nullptr;
     lv_obj_t* alarm_names_label_ = nullptr;
     lv_obj_t* alarm_hint_label_ = nullptr;
+    lv_obj_t* crest_layer_ = nullptr;
+    lv_obj_t* crest_band_ = nullptr;
+    lv_obj_t* crest_star_ = nullptr;
+    lv_obj_t* crest_caption_ = nullptr;
+    lv_obj_t* crest_timer_text_ = nullptr;
+    lv_obj_t* dictation_panel_ = nullptr;
+    lv_obj_t* dictation_status_ = nullptr;
+    lv_obj_t* dictation_action_ = nullptr;
+    std::array<lv_obj_t*, 3> crest_rings_{};
+    lv_timer_t* crest_animation_timer_ = nullptr;
+    OrbitCrest::State crest_state_ = OrbitCrest::State::Boot;
+    OrbitCrest::Frame crest_frame_;
+    OrbitCrest::Frame crest_transition_from_;
+    uint32_t crest_transition_ms_ = 0;
+    uint32_t crest_reply_started_ms_ = 0;
+    uint32_t crest_result_started_ms_ = 0;
+    uint32_t crest_result_hold_ms_ = 0;
+    const char* crest_result_caption_ = "";
+    const char* crest_displayed_caption_ = nullptr;
+    bool crest_reply_received_ = false;
+    bool crest_speech_seen_ = false;
+    bool crest_error_ring_geometry_ = false;
+    bool dictation_visible_ = false;
+    std::string dictation_status_text_;
+    std::string dictation_action_text_;
+    std::string crest_timer_text_value_;
+    float crest_level_ = 0;
     esp_timer_handle_t visual_reset_timer_ = nullptr;
     esp_timer_handle_t reply_scroll_timer_ = nullptr;
     esp_timer_handle_t orbit_tick_timer_ = nullptr;
@@ -250,6 +293,232 @@ private:
     orbit::service_schedule::ScheduleView schedule_view_;
     int64_t schedule_last_refresh_ms_ = 0;
 #endif
+
+    static uint32_t CrestNowMs() { return static_cast<uint32_t>(esp_timer_get_time() / 1000); }
+
+    static OrbitCrest::State CrestStateFor(VisualState state) {
+        using CrestState = OrbitCrest::State;
+        switch (state) {
+            case VisualState::kBoot:
+                return CrestState::Boot;
+            case VisualState::kConnecting:
+                return CrestState::Connecting;
+            case VisualState::kReady:
+                return CrestState::Idle;
+            case VisualState::kListening:
+                return CrestState::Listening;
+            case VisualState::kWorking:
+                return CrestState::Thinking;
+            case VisualState::kSpeaking:
+                return CrestState::Speaking;
+            case VisualState::kUnavailable:
+                return CrestState::Error;
+            default:
+                return CrestState::Result;
+        }
+    }
+
+    void ClearCrestResultLocked() {
+        crest_result_caption_ = "";
+        crest_result_hold_ms_ = 0;
+        crest_reply_received_ = false;
+        crest_speech_seen_ = false;
+    }
+
+    void ChangeCrestStateLocked(OrbitCrest::State state) {
+        crest_transition_from_ = crest_frame_;
+        crest_transition_ms_ = CrestNowMs();
+        crest_state_ = state;
+        if (state == OrbitCrest::State::Speaking)
+            crest_reply_started_ms_ = crest_transition_ms_;
+        crest_level_ = 0;
+        if (crest_animation_timer_)
+            lv_timer_resume(crest_animation_timer_);
+        RenderCrestLocked();
+    }
+
+    void RenderCrestLocked() {
+        if (!crest_layer_ || power_save_active_.load())
+            return;
+        const uint32_t now = CrestNowMs();
+        if (crest_state_ == OrbitCrest::State::Result && crest_result_hold_ms_ &&
+            now - crest_result_started_ms_ >= crest_result_hold_ms_) {
+            ClearCrestResultLocked();
+            crest_transition_from_ = crest_frame_;
+            crest_transition_ms_ = now;
+            crest_state_ = OrbitCrest::State::Idle;
+        }
+        if ((crest_state_ == OrbitCrest::State::Speaking ||
+             (crest_reply_received_ && crest_state_ == OrbitCrest::State::Thinking)) &&
+            now - crest_reply_started_ms_ >= 35000) {
+            ClearCrestResultLocked();
+            crest_state_ = OrbitCrest::State::Error;
+            crest_transition_from_ = crest_frame_;
+            crest_transition_ms_ = now;
+        }
+
+        auto& meter = crest_state_ == OrbitCrest::State::Listening ? OrbitCrest::input_meter
+                                                                   : OrbitCrest::output_meter;
+        const uint32_t age = now - meter.sampled_ms.load(std::memory_order_acquire);
+        const float target_level = age > now - crest_transition_ms_
+                                       ? 0.0F
+                                       : OrbitCrest::AudioLevel(meter.mean_absolute.load(), age);
+        const float smoothing = target_level > crest_level_ ? 0.24F : 0.08F;
+        crest_level_ += (target_level - crest_level_) * smoothing;
+        if (crest_state_ == OrbitCrest::State::Speaking && target_level > 0)
+            crest_speech_seen_ = true;
+
+        OrbitCrest::Frame target;
+        if (OrbitCrest::UsesRings(crest_state_)) {
+            target =
+                OrbitCrest::Rings(crest_state_, now - crest_transition_ms_, crest_level_, false);
+        } else if (crest_state_ == OrbitCrest::State::Result ||
+                   crest_state_ == OrbitCrest::State::Error ||
+                   crest_state_ == OrbitCrest::State::Boot ||
+                   crest_state_ == OrbitCrest::State::Connecting) {
+            target.band_opacity = 0;
+            if (crest_state_ == OrbitCrest::State::Error) {
+                target.color = OrbitCrest::kAmber;
+                target.opacity[1] = 180;
+            }
+        }
+        crest_frame_ = OrbitCrest::Transition(crest_transition_from_, target,
+                                              now - crest_transition_ms_, false);
+        lv_obj_set_style_image_opa(crest_band_, crest_frame_.band_opacity, 0);
+        lv_obj_set_style_image_opa(crest_star_, crest_frame_.star_opacity, 0);
+        for (int index = 0; index < 3; ++index) {
+            auto* ring = crest_rings_[index];
+            const int diameter = crest_frame_.radii[index] * 2;
+            if (lv_obj_get_width(ring) != diameter || lv_obj_get_height(ring) != diameter) {
+                lv_obj_set_size(ring, diameter, diameter);
+                lv_obj_center(ring);
+            }
+            lv_obj_set_style_arc_color(ring, lv_color_hex(crest_frame_.color), LV_PART_MAIN);
+            lv_obj_set_style_arc_opa(ring, crest_frame_.opacity[index], LV_PART_MAIN);
+        }
+        const bool error_geometry = crest_state_ == OrbitCrest::State::Error;
+        if (error_geometry != crest_error_ring_geometry_) {
+            for (auto* ring : crest_rings_) {
+                lv_arc_set_rotation(ring, error_geometry ? 270 : 0);
+                lv_arc_set_bg_angles(ring, error_geometry ? 12 : 0, error_geometry ? 348 : 360);
+            }
+            crest_error_ring_geometry_ = error_geometry;
+        }
+        const char* text = crest_state_ == OrbitCrest::State::Result
+                               ? crest_result_caption_
+                               : OrbitCrest::Caption(crest_state_);
+        if (crest_displayed_caption_ != text) {
+            lv_label_set_text_static(crest_caption_, text);
+            crest_displayed_caption_ = text;
+        }
+        lv_obj_set_style_text_color(
+            crest_caption_,
+            lv_color_hex(crest_state_ == OrbitCrest::State::Error ? OrbitCrest::kAmber
+                                                                  : OrbitCrest::kIvory),
+            0);
+        if (crest_animation_timer_ && now - crest_transition_ms_ >= OrbitCrest::kTransitionMs &&
+            !OrbitCrest::UsesRings(crest_state_) && crest_state_ != OrbitCrest::State::Result) {
+            lv_timer_pause(crest_animation_timer_);
+        }
+    }
+
+    void SetCrestResultLocked(const char* caption, uint32_t hold_ms) {
+        if (!caption || !caption[0])
+            return;
+        crest_result_caption_ = caption;
+        crest_result_started_ms_ = CrestNowMs();
+        crest_result_hold_ms_ = std::clamp<uint32_t>(hold_ms, 1000, 6000);
+        ChangeCrestStateLocked(OrbitCrest::State::Result);
+    }
+
+    void CreateCrestUiLocked(lv_obj_t* screen) {
+        crest_layer_ = lv_obj_create(screen);
+        lv_obj_remove_style_all(crest_layer_);
+        lv_obj_set_size(crest_layer_, 466, 466);
+        lv_obj_center(crest_layer_);
+        lv_obj_set_style_bg_color(crest_layer_, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(crest_layer_, LV_OPA_COVER, 0);
+        lv_obj_remove_flag(crest_layer_, LV_OBJ_FLAG_SCROLLABLE);
+
+        crest_band_ = lv_image_create(crest_layer_);
+        lv_image_set_src(crest_band_, &OrbitCrest::kBandImage);
+        lv_obj_set_pos(crest_band_, OrbitCrest::kBandX, OrbitCrest::kBandY);
+        for (int index = 0; index < 3; ++index) {
+            auto*& ring = crest_rings_[index];
+            ring = lv_arc_create(crest_layer_);
+            lv_obj_remove_style_all(ring);
+            const int diameter = crest_frame_.radii[index] * 2;
+            lv_obj_set_size(ring, diameter, diameter);
+            lv_obj_center(ring);
+            lv_obj_set_style_arc_width(ring, 3, LV_PART_MAIN);
+            lv_obj_set_style_arc_opa(ring, LV_OPA_TRANSP, LV_PART_INDICATOR);
+            lv_arc_set_rotation(ring, 0);
+            lv_arc_set_bg_angles(ring, 0, 360);
+            lv_obj_remove_flag(ring, LV_OBJ_FLAG_CLICKABLE);
+        }
+        crest_star_ = lv_image_create(crest_layer_);
+        lv_image_set_src(crest_star_, &OrbitCrest::kStarImage);
+        lv_obj_set_pos(crest_star_, OrbitCrest::kStarX, OrbitCrest::kStarY);
+        for (auto* mark : {crest_band_, crest_star_}) {
+            lv_obj_set_style_image_recolor(mark, lv_color_hex(OrbitCrest::kIvory), 0);
+            lv_obj_set_style_image_recolor_opa(mark, LV_OPA_COVER, 0);
+        }
+        crest_caption_ = lv_label_create(crest_layer_);
+        lv_obj_set_size(crest_caption_, 280, 74);
+        lv_obj_align(crest_caption_, LV_ALIGN_CENTER, 0, 97);
+        lv_obj_set_style_text_font(crest_caption_, &font_noto_sans_basic_30_4, 0);
+        lv_obj_set_style_text_align(crest_caption_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_line_space(crest_caption_, 3, 0);
+        lv_label_set_long_mode(crest_caption_, LV_LABEL_LONG_CLIP);
+
+        crest_timer_text_ = lv_label_create(crest_layer_);
+        lv_obj_set_size(crest_timer_text_, 250, 54);
+        lv_obj_align(crest_timer_text_, LV_ALIGN_CENTER, 0, 166);
+        lv_obj_set_style_text_font(crest_timer_text_, &font_noto_sans_basic_16_4, 0);
+        lv_obj_set_style_text_align(crest_timer_text_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_color(crest_timer_text_, lv_color_hex(0xcbd5e1), 0);
+        lv_label_set_long_mode(crest_timer_text_, LV_LABEL_LONG_CLIP);
+        lv_label_set_text(crest_timer_text_, "");
+
+        dictation_panel_ = lv_obj_create(crest_layer_);
+        lv_obj_remove_style_all(dictation_panel_);
+        lv_obj_set_size(dictation_panel_, 466, 466);
+        lv_obj_center(dictation_panel_);
+        lv_obj_set_style_bg_color(dictation_panel_, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(dictation_panel_, LV_OPA_COVER, 0);
+        lv_obj_remove_flag(dictation_panel_, LV_OBJ_FLAG_SCROLLABLE);
+        auto* title = lv_label_create(dictation_panel_);
+        lv_obj_set_style_text_font(title, &font_noto_sans_basic_30_4, 0);
+        lv_obj_set_style_text_color(title, lv_color_hex(OrbitCrest::kIvory), 0);
+        lv_label_set_text(title, "Dictation");
+        lv_obj_align(title, LV_ALIGN_CENTER, 0, -125);
+        dictation_status_ = lv_label_create(dictation_panel_);
+        lv_obj_set_size(dictation_status_, 310, 115);
+        lv_obj_align(dictation_status_, LV_ALIGN_CENTER, 0, -35);
+        lv_obj_set_style_text_font(dictation_status_, &font_noto_sans_basic_16_4, 0);
+        lv_obj_set_style_text_align(dictation_status_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_color(dictation_status_, lv_color_hex(0xcbd5e1), 0);
+        lv_obj_set_style_text_line_space(dictation_status_, 8, 0);
+        dictation_action_ = lv_label_create(dictation_panel_);
+        lv_obj_set_style_text_font(dictation_action_, &font_noto_sans_basic_30_4, 0);
+        lv_obj_set_style_text_color(dictation_action_, lv_color_hex(0x7bb7ff), 0);
+        lv_obj_align(dictation_action_, LV_ALIGN_CENTER, 0, 65);
+        auto* help = lv_label_create(dictation_panel_);
+        lv_obj_set_style_text_font(help, &font_noto_sans_basic_16_4, 0);
+        lv_obj_set_style_text_color(help, lv_color_hex(0xcbd5e1), 0);
+        lv_obj_set_style_text_align(help, LV_TEXT_ALIGN_CENTER, 0);
+        lv_label_set_text(help, "Hold yellow: segment\nDouble blue: back");
+        lv_obj_align(help, LV_ALIGN_CENTER, 0, 125);
+        lv_obj_add_flag(dictation_panel_, LV_OBJ_FLAG_HIDDEN);
+
+        crest_animation_timer_ = lv_timer_create(
+            [](lv_timer_t* timer) {
+                static_cast<RoundLcdDisplay*>(lv_timer_get_user_data(timer))->RenderCrestLocked();
+            },
+            33, this);
+        crest_transition_ms_ = CrestNowMs();
+        RenderCrestLocked();
+    }
 
     static bool IsClockStatus(const char* status) {
         return status != nullptr && std::strlen(status) == 5 && status[2] == ':' &&
@@ -285,7 +554,7 @@ private:
     }
 
     bool ShouldShowOrbitLocked() const {
-        return orbit_snapshot_received_ && !receipt_visible_.load() &&
+        return orbit_snapshot_received_ && !dictation_visible_ && !receipt_visible_.load() &&
                resting_state_.load() == VisualState::kReady;
     }
 
@@ -348,17 +617,21 @@ private:
             display_awake && !show_alarm && !show_reply && ShouldShowOrbitLocked();
         const bool show_normal = display_awake && !show_alarm && !show_reply && !show_orbit;
 
-        SetVisible(top_bar_, show_normal || show_reply);
-        SetVisible(brand_label_, show_normal || show_reply);
+        // Keep the legacy objects alive for shared status/timer ownership, but
+        // let the opaque Crest surface own the normal and reply presentation.
+        SetVisible(top_bar_, false);
+        SetVisible(brand_label_, false);
         lv_obj_t* normal[] = {title_label_, brand_rule_, hero_halo_, status_bar_, hint_panel_};
         for (auto* object : normal) {
-            SetVisible(object, show_normal);
+            SetVisible(object, false);
         }
 
         lv_obj_t* reply[] = {reply_header_label_, reply_panel_};
         for (auto* object : reply) {
-            SetVisible(object, show_reply);
+            SetVisible(object, false);
         }
+        SetVisible(crest_layer_, show_normal || show_reply);
+        SetVisible(dictation_panel_, dictation_visible_ && !receipt_visible_.load());
         SetVisible(orbit_layer_, show_orbit);
         SetVisible(alarm_layer_, show_alarm);
     }
@@ -743,10 +1016,12 @@ private:
             std::strcmp(status, Lang::Strings::SERVER_NOT_FOUND) == 0) {
             return VisualState::kConnecting;
         }
-        if (std::strcmp(status, "Ready") == 0) {
+        if (std::strcmp(status, "Ready") == 0 || std::strcmp(status, "Saved on Orbit") == 0) {
             return VisualState::kReady;
         }
-        if (std::strcmp(status, "Working") == 0) {
+        if (std::strcmp(status, "Working") == 0 || std::strcmp(status, "Saving") == 0 ||
+            std::strcmp(status, "Retry queued") == 0 ||
+            std::strcmp(status, "Preparing microphone") == 0) {
             return VisualState::kWorking;
         }
         if (std::strcmp(status, "Listening") == 0 ||
@@ -757,7 +1032,10 @@ private:
             std::strcmp(status, Lang::Strings::SPEAKING) == 0) {
             return VisualState::kSpeaking;
         }
-        if (std::strcmp(status, "Unavailable") == 0 ||
+        if (std::strcmp(status, "Unavailable") == 0 || std::strcmp(status, "Couldn't save") == 0 ||
+            std::strcmp(status, "Capture unavailable") == 0 ||
+            std::strcmp(status, "Hold blue to retry") == 0 ||
+            std::strcmp(status, "Recording kept") == 0 ||
             std::strcmp(status, Lang::Strings::ERROR) == 0 ||
             std::strcmp(status, Lang::Strings::SERVER_ERROR) == 0 ||
             std::strcmp(status, Lang::Strings::SERVER_NOT_CONNECTED) == 0 ||
@@ -872,6 +1150,17 @@ private:
         lv_label_set_text(hint_label_, presentation.hint);
         lv_obj_set_style_text_color(hint_label_, color, 0);
         ApplyChromeLocked(state, presentation);
+        const auto crest_state = CrestStateFor(state);
+        if (crest_state != OrbitCrest::State::Result) {
+            if (crest_state != OrbitCrest::State::Speaking &&
+                crest_state != OrbitCrest::State::Thinking &&
+                crest_state != OrbitCrest::State::Idle) {
+                ClearCrestResultLocked();
+            }
+            if (crest_state_ != crest_state)
+                ChangeCrestStateLocked(crest_state);
+        }
+        SetReplyLayoutLocked(false);
         last_status_update_time_ = std::chrono::system_clock::now();
     }
 
@@ -1019,11 +1308,10 @@ public:
         ESP_ERROR_CHECK(esp_timer_create(&scroll_timer_args, &reply_scroll_timer_));
 
         esp_timer_create_args_t orbit_timer_args = {
-            .callback =
-                [](void* arg) {
-                    auto* self = static_cast<RoundLcdDisplay*>(arg);
-                    Application::GetInstance().Schedule([self]() { self->RefreshOrbit(); });
-                },
+            .callback = [](void* arg) {
+                auto* self = static_cast<RoundLcdDisplay*>(arg);
+                Application::GetInstance().Schedule([self]() { self->RefreshOrbit(); });
+            },
             .arg = this,
             .dispatch_method = ESP_TIMER_TASK,
             .name = "stopwatch_orbit_tick",
@@ -1035,6 +1323,13 @@ public:
 
     ~RoundLcdDisplay() override {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        {
+            DisplayLockGuard lock(this);
+            if (crest_animation_timer_ != nullptr) {
+                lv_timer_delete(crest_animation_timer_);
+                crest_animation_timer_ = nullptr;
+            }
+        }
         if (visual_reset_timer_ != nullptr) {
             esp_timer_stop(visual_reset_timer_);
             esp_timer_delete(visual_reset_timer_);
@@ -1217,6 +1512,7 @@ public:
         lv_label_set_text(reply_label_, "");
         lv_obj_align(reply_label_, LV_ALIGN_TOP_MID, 0, 0);
 
+        CreateCrestUiLocked(screen);
         CreateOrbitUiLocked(screen);
 #if CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO
         schedule_view_.Create(screen, &font_noto_sans_basic_30_4, &font_noto_sans_basic_16_4);
@@ -1410,26 +1706,18 @@ public:
         reply_visible_.store(true);
         {
             DisplayLockGuard lock(this);
-            if (reply_header_label_ == nullptr || reply_panel_ == nullptr ||
-                reply_label_ == nullptr) {
+            if (crest_layer_ == nullptr) {
                 receipt_visible_.store(false);
                 reply_visible_.store(false);
                 return;
             }
-            reply_generation_.fetch_add(1);
-            lv_label_set_text(reply_header_label_, reply_banner_title_.c_str());
-            lv_obj_set_style_text_color(reply_header_label_,
-                                        lv_color_hex(reply_banner_color_), 0);
-            // LVGL copies the string. No transcript text is retained in board
-            // state, logs, preferences, or flash.
-            lv_label_set_text(reply_label_, content);
-            lv_obj_scroll_to_y(reply_panel_, 0, LV_ANIM_OFF);
+            // No transcript text is retained or rendered; the watch face
+            // acknowledges only that a reply arrived.
+            crest_reply_received_ = true;
+            crest_reply_started_ms_ = CrestNowMs();
+            SetCrestResultLocked("Reply received", kReplyPlaybackMaximumMs);
             SetReplyLayoutLocked(true);
         }
-        StartReplyScroll();
-        // The gateway caps audio at 30 seconds. This safety timeout covers the
-        // whole playback if a terminal frame is lost; normal completion resets
-        // the timer to the shorter post-speech reading window in SetStatus().
         if (!ScheduleVisualReset(kReplyPlaybackMaximumMs)) {
             receipt_visible_.store(false);
             ApplyRestingVisualState();
@@ -1439,11 +1727,15 @@ public:
     void SetPowerSaveMode(bool on) override {
         power_save_active_.store(on);
         DisplayLockGuard lock(this);
-        lv_obj_t* chrome[] = {
-            top_bar_, brand_label_, title_label_, brand_rule_, hero_halo_,
-            status_bar_, hint_panel_, reply_header_label_, reply_panel_,
-            orbit_layer_, alarm_layer_
-        };
+        if (crest_animation_timer_ != nullptr) {
+            if (on)
+                lv_timer_pause(crest_animation_timer_);
+            else
+                lv_timer_resume(crest_animation_timer_);
+        }
+        lv_obj_t* chrome[] = {top_bar_,     brand_label_, title_label_, brand_rule_,
+                              hero_halo_,   status_bar_,  hint_panel_,  reply_header_label_,
+                              reply_panel_, crest_layer_, orbit_layer_, alarm_layer_};
         for (auto* object : chrome) {
             if (object != nullptr) {
                 lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
@@ -1457,6 +1749,7 @@ public:
                 lv_obj_remove_flag(brand_label_, LV_OBJ_FLAG_HIDDEN);
             }
             SetReplyLayoutLocked(reply_visible_.load());
+            RenderCrestLocked();
         }
     }
 
@@ -1488,15 +1781,19 @@ public:
     void ShowNotification(const char* notification, int duration_ms = 3000) override {
         const char* title = nullptr;
         const VisualState state = StateForNotification(notification, &title);
-        ShowReceipt(title, state, duration_ms);
+        const char* caption = OrbitCrest::ResultCaption(notification);
+        if (!caption[0])
+            return;
+        ShowReceipt(title, state, caption, duration_ms);
     }
 
     void ShowLocalCaptureReceipt(int duration_ms = 1800) override {
-        ShowReceipt("RECORDED", VisualState::kLocalRecorded, duration_ms);
+        ShowReceipt("RECORDED", VisualState::kLocalRecorded, "Recorded\non Orbit", duration_ms);
     }
 
 private:
-    void ShowReceipt(const char* title, VisualState state, int duration_ms) {
+    void ShowReceipt(const char* title, VisualState state, const char* crest_caption,
+                     int duration_ms) {
         receipt_visible_.store(true);
         {
             DisplayLockGuard lock(this);
@@ -1521,6 +1818,8 @@ private:
             reply_banner_title_ = title;
             reply_banner_color_ = presentation.color;
             ApplyChromeLocked(state, presentation);
+            SetCrestResultLocked(crest_caption, static_cast<uint32_t>(duration_ms));
+            SetReplyLayoutLocked(true);
         }
         if (!ScheduleVisualReset(duration_ms)) {
             receipt_visible_.store(false);
@@ -1531,6 +1830,33 @@ private:
 public:
     void ShowNotification(const std::string& notification, int duration_ms = 3000) override {
         ShowNotification(notification.c_str(), duration_ms);
+    }
+
+    void SetTimerText(const std::string& text) override {
+        DisplayLockGuard lock(this);
+        if (crest_timer_text_ == nullptr || crest_timer_text_value_ == text)
+            return;
+        crest_timer_text_value_ = text;
+        lv_label_set_text(crest_timer_text_, crest_timer_text_value_.c_str());
+    }
+
+    void SetDictationScreen(bool visible, const std::string& status,
+                            const std::string& action) override {
+        DisplayLockGuard lock(this);
+        if (dictation_panel_ == nullptr)
+            return;
+        dictation_visible_ = visible;
+        SetVisible(dictation_panel_, visible);
+        if (dictation_status_text_ != status) {
+            dictation_status_text_ = status;
+            lv_label_set_text(dictation_status_, status.c_str());
+        }
+        if (dictation_action_text_ != action) {
+            dictation_action_text_ = action;
+            const std::string label = "Blue: " + action;
+            lv_label_set_text(dictation_action_, label.c_str());
+        }
+        SetReplyLayoutLocked(false);
     }
 
     void ClearChatMessages() override {}

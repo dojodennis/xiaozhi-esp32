@@ -104,7 +104,8 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("button1_.OnPressUp", source)
         self.assertIn("StopListening", source)
         self.assertIn("hide_subtitle_ = true", source)
-        self.assertIn("lv_label_set_text(reply_label_, content)", source)
+        self.assertNotIn("lv_label_set_text(reply_label_, content)", source)
+        self.assertIn('SetCrestResultLocked("Reply received"', source)
         self.assertIn("No transcript text is retained", source)
         self.assertNotIn("last_reply_text_", source)
         reply_setter = source.split("void SetChatMessage", 1)[1].split(
@@ -122,6 +123,8 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("GetBacklight()->SetBrightness(5)", source)
         self.assertIn("kDefaultOutputVolume = 90", source)
         self.assertIn("class ProvisionsStopwatchAudioCodec", source)
+        self.assertIn("OrbitCrest::input_meter.Observe", source)
+        self.assertIn("OrbitCrest::output_meter.Observe", source)
         self.assertIn("Es8311AudioCodec::Start();", source)
         self.assertIn(
             "output_volume() < kDefaultOutputVolume || output_volume() > 100",
@@ -152,6 +155,25 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("M5PM1_PWR_SRC_BAT", source)
         self.assertIn('#define PROVISIONS_HARDWARE_PROFILE "stopwatch-client"', config)
         self.assertIn("#define PROVISIONS_NOMINAL_BATTERY_MAH 450", config)
+
+    def test_crest_surface_preserves_dictation_receipts_and_timer_ownership(self):
+        source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
+        self.assertIn('#include "crest_asset.h"', source)
+        self.assertIn('#include "crest_motion.h"', source)
+        self.assertIn("CreateCrestUiLocked(screen)", source)
+        self.assertIn("SetVisible(crest_layer_, show_normal || show_reply)", source)
+        self.assertIn("void SetDictationScreen(bool visible", source)
+        self.assertIn("SetVisible(dictation_panel_, visible)", source)
+        self.assertIn(
+            "SetVisible(dictation_panel_, dictation_visible_ && !receipt_visible_.load())",
+            source,
+        )
+        self.assertIn('"Hold yellow: segment\\nDouble blue: back"', source)
+        self.assertIn('"Recorded\\non Orbit"', source)
+        self.assertIn("void ApplyTimerSnapshot", source)
+        self.assertIn("void ResetTimerSnapshot", source)
+        self.assertIn("bool SilenceTimerAlarm", source)
+        self.assertIn("RegisterProvisionsTimerSnapshotCallback", source)
 
     def test_provisions_screen_is_branded_and_reply_capable(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
