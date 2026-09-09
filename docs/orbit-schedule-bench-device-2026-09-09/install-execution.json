@@ -1,0 +1,16 @@
+[
+  {
+    "phase": "write",
+    "started_at": "2026-09-09T13:18:55.558765+00:00",
+    "ended_at": "2026-09-09T13:19:16.767171+00:00",
+    "exit_code": 0,
+    "log_sha256": "208a9f53a0a6e354e7c313ab13d7879533c4d81c8b9925e59c54cbf323d700e0"
+  },
+  {
+    "phase": "verify",
+    "started_at": "2026-09-09T13:19:16.767472+00:00",
+    "ended_at": "2026-09-09T13:19:44.122599+00:00",
+    "exit_code": 0,
+    "log_sha256": "f7e2f78e54c0a1c3708813dc03f2fc0bf1c041cbdfbb34fc6926183aacf31d02"
+  }
+]

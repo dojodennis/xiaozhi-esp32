@@ -1,0 +1,13 @@
+{
+  "at": "2026-09-09T13:42:45.575958+00:00",
+  "reviewer_task": "01a0709d-0b27-7a73-b135-8502288e632f",
+  "decision": "GO for exact prepared signed a84 app-only restoration; no prewrite blocker",
+  "independent_checks": [
+    "Exact16MiB current/expected hashes and recovery application hash",
+    "Only0x20000\u20130x311000 changes; fresh NVS and journal preserved",
+    "Outsideapp/NVS unchanged against initialbackup",
+    "App-onlyno-reset command scope, notoldfullbackuprestore",
+    "OfficialNVSparser0errors;10namespaces/17records;120liveslots/1sparepage; all16nonbenchrecordsunchanged;356bytebenchblobunchanged across restart evidence"
+  ],
+  "limits": "Offline review only; actual restore/verify/normalboot/voicecheck pending. Audioacceptanceunpassed."
+}

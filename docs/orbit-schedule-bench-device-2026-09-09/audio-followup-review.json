@@ -1,0 +1,26 @@
+{
+  "at": "2026-09-09T13:33:08.632687+00:00",
+  "reviewer_task": "01a0709d-0b27-7a73-b135-8502288e632f",
+  "source_commit": "45772685c082a55ef26673da078979a96facdbf6",
+  "verified_contract": [
+    "While alarms remain, motor pulses independently; drained audio waits1second before restart",
+    "Blue ACK of one item does not disable wanted when other dueitemsremain",
+    "Normal start/decode/output errors should incrementerrorcount/enterfaultandstopmotor"
+  ],
+  "source_defect_candidate": {
+    "path": "main/audio/audio_service.cc",
+    "symbol": "FillLocalFeedbackLocked",
+    "behavior": "On denied Decode admission or ordinary_owner_ nonzero, clears local_feedback_ without incrementing local_feedback_errors_ or clearing local_feedback_active_; drained queues can then look like cleancompletion",
+    "proved_on_physical_device": false,
+    "compiled_in_tested_image": false,
+    "physical_cause_excluded": true
+  },
+  "observation_limits": [
+    "Pre-restart silence duration not measured; could include expected1secondgap",
+    "Postrestart user reports faint background sound, notprovensustainedsilence",
+    "Physical errorcounter/ownerbranch notinstrumented"
+  ],
+  "acceptance": "Audibility and sustainedalarm behavior notpassed; do notlabelcandidateasconfirmedcause",
+  "next_proof": "Investigate unguarded repeat/decode/resample/output/drain path using actualclip and per-clip diagnostics; do notpatchinactivefencebranch or assumegain/assetfailure.",
+  "build_configuration_check": "Archived sdkconfig enablesLOCAL_CAPTURE/GATEWAY_REQUIRED/HARDWARE_BENCH; OUTPUT_FENCE_V1 is not configured. Frozen source has no production define/build override. Guarded admission branch is absent from testedimage."
+}

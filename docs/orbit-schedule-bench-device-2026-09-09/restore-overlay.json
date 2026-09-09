@@ -1,0 +1,73 @@
+{
+  "postbench_full_sha256": "cf0b30aa4a5d1e0bf5654104b49a26112bee9c7092d09555a35cda5460b4c4a4",
+  "expected_restore_full_sha256": "e2043ed10be52dc00c2ba9322b58147ada620ad20094aef46ec5f71119591cea",
+  "current_bench_app_sha256": "e8e8811c3d6c80bc0119e14aea1c89fbd2b6265a1f561bca91a310612540c7b2",
+  "accepted_recovery_app_sha256": "32473218a5c311c164815cc1ad0535eff0e182f178f0b7af59d657da13418f7a",
+  "app_offset": 131072,
+  "app_end_exclusive": 3215360,
+  "app_bytes": 3084288,
+  "outside_app_span_unchanged_by_restore": true,
+  "outside_app_and_nvs_unchanged_since_initial_backup": true,
+  "unrelated_nvs_logical_records_preserved": 16,
+  "bench_blob_identical_after_restart": true,
+  "bench_blob_sha256": "7f64b646ba2f2748d0a89d7240f38ae7f6d452a1c39e5c73f6938761574daae9",
+  "postrestart_decode": {
+    "actual_frozen_decoder_accepted": true,
+    "bytes": 356,
+    "restored_clock_awaiting_fresh_time": true,
+    "due_unacknowledged": 5,
+    "pending_count": 1,
+    "timers": [
+      {
+        "name": "Rice",
+        "id": "00000000-0000-4000-8000-00000000038e",
+        "revision": 1,
+        "due": true,
+        "acknowledged": true
+      },
+      {
+        "name": "Sauce",
+        "id": "00000000-0000-4000-8000-00000000038f",
+        "revision": 1,
+        "due": true,
+        "acknowledged": false
+      },
+      {
+        "name": "Bread",
+        "id": "00000000-0000-4000-8000-000000000390",
+        "revision": 1,
+        "due": true,
+        "acknowledged": false
+      },
+      {
+        "name": "Stock",
+        "id": "00000000-0000-4000-8000-000000000391",
+        "revision": 1,
+        "due": true,
+        "acknowledged": false
+      },
+      {
+        "name": "Pasta",
+        "id": "00000000-0000-4000-8000-000000000392",
+        "revision": 1,
+        "due": true,
+        "acknowledged": false
+      },
+      {
+        "name": "Fish",
+        "id": "00000000-0000-4000-8000-000000000393",
+        "revision": 1,
+        "due": true,
+        "acknowledged": false
+      }
+    ],
+    "pending_ids": [
+      "00000000-0000-4000-8000-00000000038e"
+    ]
+  },
+  "capture_journal_sha256": "06072853e8b897f12399dc86b4239c81c25b619d8f9bd33386440d6bbc6c80bd",
+  "selector": "VALIDota0 seq1,CRC4743989a,secondselectorunchanged",
+  "fresh_full_backup_independently_device_verified": true,
+  "private_images_mode": "0600",
+  "requires_no_old_full_backup_restore": true
+}

@@ -1,0 +1,7 @@
+{
+  "bytes": 16777216,
+  "sha256": "cf0b30aa4a5d1e0bf5654104b49a26112bee9c7092d09555a35cda5460b4c4a4",
+  "independent_device_verify": true,
+  "read_method": "seven2MiB plus two1MiB contiguous stopped-device reads aftertwo interrupted streams; complete16MiB device digest verification",
+  "at": "2026-09-09T13:38:27.926338+00:00"
+}

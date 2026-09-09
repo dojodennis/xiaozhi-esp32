@@ -1,0 +1,14 @@
+{
+  "reviewer_task": "01a0709d-0b27-7a73-b135-8502288e632f",
+  "at": "2026-09-09T13:18:55.540869+00:00",
+  "decision": "GO for bounded supervised app-only write and full-image verification",
+  "verified": [
+    "Official NVS integrity and raw page bitmap counts",
+    "Bench namespace and state absent",
+    "105existing plus two115-slot copies plus namespace plus126spare=462/504;42headroom",
+    "IDF6.0.2 compaction picks zero-live FULL page; no fragmentation blocker",
+    "VALIDota0 sequence1 CRC4743989a and erased secondselector; tableMD5valid",
+    "Exact signed application overlay and hashes; all outside span unchanged"
+  ],
+  "limits": "No device operation by reviewer; actual write/commit/physical behavior remains unproved"
+}

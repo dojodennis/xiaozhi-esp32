@@ -1,0 +1,57 @@
+{
+  "partition_sha256": "f1459b0c49c9e09f1c9e1687aad1ea98d170c6be23112e0e0920b199bc51afa4",
+  "official_integrity_errors": 0,
+  "official_notices": [
+    "Found unused namespace."
+  ],
+  "pages": [
+    {
+      "index": 0,
+      "state": "Full",
+      "sequence": 0,
+      "written_slots": 99,
+      "erased_slots": 27,
+      "empty_slots": 0
+    },
+    {
+      "index": 1,
+      "state": "Full",
+      "sequence": 4,
+      "written_slots": 7,
+      "erased_slots": 107,
+      "empty_slots": 12
+    },
+    {
+      "index": 2,
+      "state": "Active",
+      "sequence": 5,
+      "written_slots": 14,
+      "erased_slots": 0,
+      "empty_slots": 112
+    },
+    {
+      "index": 3,
+      "state": "Empty",
+      "sequence": 4294967295,
+      "written_slots": 0,
+      "erased_slots": 0,
+      "empty_slots": 126
+    }
+  ],
+  "namespace_count": 10,
+  "bench_namespace_present": true,
+  "bench_state_present": true,
+  "logical_record_count": 17,
+  "capacity": {
+    "current_written_slots": 120,
+    "total_slots": 504,
+    "reserve_one_page": 126,
+    "max_blob_bytes": 3567,
+    "worst_copy_slots_with_two_chunk_headers_and_index": 115,
+    "two_copies_plus_new_namespace_and_spare": 477,
+    "headroom_after_two_copies_namespace_spare": 27,
+    "fully_empty_pages": 1,
+    "full_pages_with_zero_live_slots": 0,
+    "limit": "Storage allocation bound with normal NVS compaction; not a physical commit success claim."
+  }
+}

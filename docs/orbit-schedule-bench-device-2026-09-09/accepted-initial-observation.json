@@ -1,0 +1,29 @@
+{
+  "at": "2026-09-09T13:45:34.326774+00:00",
+  "phase": "accepted_app_restored_verified_booted_authenticated",
+  "restore_phases": [
+    {
+      "phase": "write",
+      "started_at": "2026-09-09T13:42:45.598206+00:00",
+      "ended_at": "2026-09-09T13:43:06.662757+00:00",
+      "exit_code": 0,
+      "log_sha256": "24a1e89d680aabb4d560ba6938b1f8cfb32115470785c6063f12d948e6d4752c"
+    },
+    {
+      "phase": "verify",
+      "started_at": "2026-09-09T13:43:06.663637+00:00",
+      "ended_at": "2026-09-09T13:43:34.035953+00:00",
+      "exit_code": 0,
+      "log_sha256": "da2ee07bb631310d50b0b750adb4a82ab110f6413affc768576927efbbcd6071"
+    }
+  ],
+  "expected_elf_prefix": true,
+  "bench_marker_absent": true,
+  "gateway_authenticated": true,
+  "activation_done": true,
+  "fatal_marker": false,
+  "nonfatal_observation": "MODEL_LOADER: Can not find model in partition table",
+  "final_physical_voice": null,
+  "next": "Dennis holdsTalk,saysHello,releasesandreportsoneclearreply; thencloseownedpassivereaderwithoutreset",
+  "passive_console_session": 82248
+}

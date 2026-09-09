@@ -1,0 +1,15 @@
+{
+  "at": "2026-09-09T13:24:35.796309+00:00",
+  "source_task": "01a0761d-ea55-7871-ae33-4c07929b9bb7",
+  "stage": "after_single_yellow_seed_and_expiry",
+  "user_words": [
+    "I can hear the alarm. And it's bench alert, rice sauce plus four more.",
+    "Yeah, I can feel vibrations."
+  ],
+  "audible_alarm": true,
+  "visible_six_item_summary": true,
+  "felt_vibration": true,
+  "apron_strength": null,
+  "blue_press_reported": false,
+  "limits": "Human-confirmed sound/face/touch; not timed measurement or apron-strength proof."
+}

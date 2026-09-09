@@ -1,0 +1,20 @@
+esptool v5.3.1
+Serial port /dev/cu.usbmodem2101:
+Note: Pre-connection option "no-reset" was selected. Connection may fail if the chip is not in bootloader or flasher stub mode.
+Connecting...
+Connected to ESP32-S3 on /dev/cu.usbmodem2101:
+Chip type:          ESP32-S3 (QFN56) (revision v0.2)
+Features:           Wi-Fi, BT 5 (LE), Dual Core + LP Core, 240MHz, Embedded PSRAM 8MB (AP_3v3)
+Crystal frequency:  40MHz
+USB mode:           USB-Serial/JTAG
+MAC:                28:84:85:44:6b:10
+
+Stub flasher is already running. No upload is necessary.
+Changing baud rate to 460800...
+Changed.
+
+Configuring flash size...
+Verifying 0x1000000 (16777216) bytes at 0x00000000 in flash against '/Users/dojo/.codex/device-builds/orbit-schedule-bench/2026-09-09-supervised-1308/postbench-full.bin'...
+Verification successful (digest matched).
+
+Staying in bootloader.

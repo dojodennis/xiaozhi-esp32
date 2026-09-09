@@ -1,0 +1,24 @@
+{
+  "interruptions": [
+    {
+      "at": "2026-09-09T13:34:47.484593+00:00",
+      "phase": "postbench_full_read",
+      "result": "failed",
+      "reason": "No more data to read from serial port",
+      "last_reported_flash_address": "0x00939000",
+      "bytes_reported": 9670656,
+      "complete_backup_created": false,
+      "restore_write_performed": false,
+      "prior_verified_initial_backup_retained": true
+    },
+    {
+      "phase": "final2MiBchunk_read",
+      "reason": "No more data to read from serial port",
+      "last_address": "0xed0000",
+      "complete_chunk_created": false,
+      "restore_write_performed": false,
+      "read_only_identity_recheck_passed": true
+    }
+  ],
+  "recovery": "Retained successful contiguous stopped-device reads; final2MiB recaptured as two1MiB reads; whole16MiB device digest verified. No reset or flash write during retries."
+}

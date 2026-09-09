@@ -1,0 +1,13 @@
+{
+  "before_sha256": "81be6aa58198a1d59c913ecfb6ba1b750246122a3c7aa6158c7f45c0416dfcd2",
+  "expected_sha256": "dce5ceb17d35d12099980a9d5b5231c3afb792e398cc195d6c884ed40faa3f66",
+  "signed_app_sha256": "e8e8811c3d6c80bc0119e14aea1c89fbd2b6265a1f561bca91a310612540c7b2",
+  "app_offset": 131072,
+  "app_end_exclusive": 3215360,
+  "app_bytes": 3084288,
+  "only_proposed_app_span_changed": true,
+  "outside_app_sha256": "33c3be83078cc44e9bc484e7aa0fc24348dd8f881e7c4639356214a037b68a0d",
+  "journal_0xe00000_to_flash_end_sha256": "06072853e8b897f12399dc86b4239c81c25b619d8f9bd33386440d6bbc6c80bd",
+  "backup_independent_device_verification": true,
+  "private_full_images_mode": "0600"
+}

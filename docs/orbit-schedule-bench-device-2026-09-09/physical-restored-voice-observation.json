@@ -1,0 +1,12 @@
+{
+  "at": "2026-09-09T13:49:08.007391+00:00",
+  "source_task": "01a0761d-ea55-7871-ae33-4c07929b9bb7",
+  "test": "normal Talk Hello/release after acceptedapprestoration",
+  "user_reported_reply": "I'm here, what do you need.",
+  "response_heard_and_intelligible": true,
+  "explicit_loudness_rating": null,
+  "single_reply_count_confirmed": null,
+  "session_recovery_complete": true,
+  "bench_audio_acceptance": "not passed",
+  "continuation": "Dennis says Okay, go ahead to diagnosing/fixingbenchalarm andpreparingreviewedcandidate; noautomaticnewflash/windowapproval"
+}

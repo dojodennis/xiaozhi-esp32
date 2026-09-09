@@ -1,0 +1,11 @@
+{
+  "recorded_at": "2026-09-09T13:26:35.625218+00:00",
+  "source_task": "01a0761d-ea55-7871-ae33-4c07929b9bb7",
+  "stage_reported": "after_one_blue_press_before_controlled_restart",
+  "user_words": "Just to let you know, there is no sound, there's only vibration",
+  "initial_alarm_was_audible": true,
+  "remaining_alarm_sound": false,
+  "remaining_alarm_vibration": true,
+  "timing_note": "Report reached root while the already-started controlled restart script was running; this is the user-reported pre-restart observation, not a post-restart sound result.",
+  "status": "possible remaining-alarm audio failure; do not mark all-six/repeat sound acceptance"
+}

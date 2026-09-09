@@ -1,0 +1,10 @@
+{
+  "at": "2026-09-09T13:25:58.524363+00:00",
+  "source_task": "01a0761d-ea55-7871-ae33-4c07929b9bb7",
+  "stage": "after_exactly_one_blue_press",
+  "user_words": "Okay, Rice is gone. Now you have Sauce, Bread plus three more.",
+  "rice_left_active_alerts": true,
+  "five_active_alerts_remain": true,
+  "further_blue_press_instructed": false,
+  "next": "controlled restart and exact persisted state verification"
+}

@@ -1,0 +1,22 @@
+{
+  "at": "2026-09-09T13:30:24.308714+00:00",
+  "source_task": "01a0761d-ea55-7871-ae33-4c07929b9bb7",
+  "stage": "after_controlled_restart",
+  "user_words": [
+    "Yeah, still Sauce",
+    "Vibration and there is something sound-ish in the background, but it's not very loud."
+  ],
+  "sauce_visible": true,
+  "felt_vibration": true,
+  "sound": "faint background; inadequate audibility",
+  "repeating_cadence_confirmed": false,
+  "full_five_item_summary_confirmed": false,
+  "rice_absence_confirmed": false,
+  "needs_sync_confirmed": true,
+  "audio_acceptance": "not passed",
+  "apron_strength": null,
+  "next": "final statusline observation, freshfullpostbenchbackup and acceptedapprestore",
+  "final_status_user_words": "Yeah, blue acknowlix\u2014one need sync, it says.",
+  "interpretation": "NEEDS SYNC explicitly confirmed; other fragmented wording retained without inferring an additional button press.",
+  "final_status_at": "2026-09-09T13:31:47.281841+00:00"
+}

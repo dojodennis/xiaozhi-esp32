@@ -1,0 +1,44 @@
+{
+  "commit": "45772685c082a55ef26673da078979a96facdbf6",
+  "files": {
+    "orbit_dial.cc": {
+      "source": "main/boards/m5stack/stopwatch/orbit_dial.cc",
+      "sha256": "de5a459812bbf12116128bf09a6e454c5d8854922ef4765f37eddbb3c929407e"
+    },
+    "orbit_dial.h": {
+      "source": "main/boards/m5stack/stopwatch/orbit_dial.h",
+      "sha256": "815ff2426235e0e949193e41d9cfd6486d0600cdff830a1d7d626f06fe89342a"
+    },
+    "provisions_timer_snapshot.h": {
+      "source": "main/provisions_timer_snapshot.h",
+      "sha256": "85ba7dba6984cf0509f41502f2448e2de88e6a41fb78360106efa851bae2e606"
+    },
+    "sdkconfig.h": {
+      "generated": "same portable codec compilation seam as frozen storage test"
+    },
+    "service_schedule.cc": {
+      "source": "main/boards/m5stack/stopwatch/service_schedule.cc",
+      "sha256": "af695d40b244c7c55f90302bb7b4e1cb35f8aee75d42815434ecf0a5c62861b2"
+    },
+    "service_schedule.h": {
+      "source": "main/boards/m5stack/stopwatch/service_schedule.h",
+      "sha256": "b6f5c3025f165ab792f62b172ccfdf2463d4002dd4fccf98cf37b1460a57c374"
+    },
+    "service_schedule_face.cc": {
+      "source": "main/boards/m5stack/stopwatch/service_schedule_face.cc",
+      "sha256": "83b0215d79c854bfe3a020779771f556ac11f3129519f256174ebded51308e64"
+    },
+    "service_schedule_face.h": {
+      "source": "main/boards/m5stack/stopwatch/service_schedule_face.h",
+      "sha256": "16af107d25995e10eb2c566daf897df8f932026bec421eede12c5a63d67c239c"
+    },
+    "service_schedule_storage.cc": {
+      "source": "main/boards/m5stack/stopwatch/service_schedule_storage.cc",
+      "sha256": "aed4d54bab16b0af745d07eb9ff0d221a52452d22142f30a889a579b150a7989"
+    },
+    "service_schedule_storage.h": {
+      "source": "main/boards/m5stack/stopwatch/service_schedule_storage.h",
+      "sha256": "898201117ddebb08b855dd87bea275140c03344987a2d644e5e638fd735a0fd2"
+    }
+  }
+}

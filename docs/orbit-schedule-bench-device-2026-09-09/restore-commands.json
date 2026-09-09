@@ -1,0 +1,42 @@
+{
+  "write_argv": [
+    "/Users/dojo/.local/bin/esptool",
+    "--chip",
+    "esp32s3",
+    "--port",
+    "/dev/cu.usbmodem2101",
+    "--baud",
+    "460800",
+    "--before",
+    "no-reset",
+    "--after",
+    "no-reset",
+    "write-flash",
+    "--flash-mode",
+    "keep",
+    "--flash-freq",
+    "keep",
+    "--flash-size",
+    "keep",
+    "--no-progress",
+    "0x20000",
+    "/Users/dojo/.codex/device-builds/provisions-kitchen-helper/2026-09-06/stopwatch-2.4.8-talk-release-a84ab070/application.bin"
+  ],
+  "verify_argv": [
+    "/Users/dojo/.local/bin/esptool",
+    "--chip",
+    "esp32s3",
+    "--port",
+    "/dev/cu.usbmodem2101",
+    "--baud",
+    "460800",
+    "--before",
+    "no-reset",
+    "--after",
+    "no-reset",
+    "verify-flash",
+    "0",
+    "/Users/dojo/.codex/device-builds/orbit-schedule-bench/2026-09-09-supervised-1308/expected-restore-full.bin"
+  ],
+  "status": "prepared, not yet executed"
+}
