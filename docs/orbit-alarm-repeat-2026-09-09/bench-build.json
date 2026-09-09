@@ -1,0 +1,56 @@
+{
+  "recorded_at": "2026-09-09T14:20:39.545044+00:00",
+  "source_base": "45772685c082a55ef26673da078979a96facdbf6",
+  "source_state": "diagnostic candidate committed with this report; exact source hashes below",
+  "builder_image": "sha256:0d8c9773d48a327233f9c1d7c654ff0bcf133ae24503ea2e97a57cfe02b8cb67",
+  "idf": "6.0.2",
+  "variant": "provisions-kitchen-helper-stopwatch-schedule-bench",
+  "command": [
+    "python3",
+    "scripts/build.py",
+    "m5stack/stopwatch",
+    "--name",
+    "provisions-kitchen-helper-stopwatch-schedule-bench",
+    "--language",
+    "en-US",
+    "--wake-word",
+    "disabled"
+  ],
+  "build_exit_code": 0,
+  "network": "none",
+  "device_mounted": false,
+  "signed": false,
+  "installed": false,
+  "semantic_config_matches_frozen": true,
+  "dependency_lock_matches_frozen": true,
+  "files": {
+    "build/xiaozhi.bin": {
+      "bytes": 3080192,
+      "sha256": "701d115b5dfca263757a0195090bbd7bdbe4fc39864c37cbd58648de5f0f178d"
+    },
+    "sdkconfig": {
+      "bytes": 128921,
+      "sha256": "2cd000f6e964b07e76dfc08fcef8b2ca615d24d959732c8bce3640b139a1dd50"
+    },
+    "dependencies.lock": {
+      "bytes": 33916,
+      "sha256": "3d627e36af969bb3c0847bc92036d6875faa7f266f899a4a63fced3e586cee7c"
+    },
+    "main/boards/m5stack/stopwatch/hardware_bench_profile.json": {
+      "bytes": 1928,
+      "sha256": "bb1b23af70dd76d187508b26ae84a8be358bc2315085ab2193128ff7089fd139"
+    }
+  },
+  "source_files": {
+    "main/audio/audio_service.cc": "75658d45f6b87a0458fa33335fbba2cb9a1fa1ff4be4c96a915ecfc6e17b6a32",
+    "main/audio/audio_service.h": "a8632333fb3f754766071c3373a6c2d0647545e1c34a4a5dfcf428a0880a882f",
+    "main/audio/local_feedback_trace.h": "6388c3117ceda731a4b8adb7c0146c446616b09fe16562e5d810bd0df7945cc6",
+    "main/boards/m5stack/stopwatch/m5stack_stopwatch.cc": "d5a47afca49436fbc8743bb58094d959f5a9392aaff2cf44cca7d56fb92ab9f2",
+    "main/boards/m5stack/stopwatch/service_schedule_alarm_output.cc": "fba9d2b288d261f48405945e46ffe6e235c6b5fdb06bf74a25cfa93b575335ce",
+    "main/boards/m5stack/stopwatch/service_schedule_alarm_output.h": "b0292b32fbb64702b020a497c91b6bfee5d00716b9345460e984fe9e3ccb45b7"
+  },
+  "log": {
+    "path": "/Users/dojo/.codex/device-builds/orbit-alarm-repeat/2026-09-09/bench-build-v2.log",
+    "sha256": "e4a6ca8eaef083d1bb13bc63dc0347eba675227d49a4bace90d6951d8d504171"
+  }
+}

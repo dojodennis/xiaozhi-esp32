@@ -196,6 +196,10 @@ void AudioService::Stop() {
     bool notify_drained = false;
     {
         std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+        local_feedback_trace_.Finish("stop", local_feedback_errors_.load(),
+                                     decode_in_flight_, output_in_flight_);
+#endif
         ++playback_generation_;
         audio_encode_queue_.clear();
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
@@ -597,8 +601,16 @@ void AudioService::AudioOutputTask() {
             debug_statistics_.playback_count++;
         }
 
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+        const auto trace_level = played ? LocalFeedbackTrace::Measure(task->pcm)
+                                        : LocalFeedbackTrace::Level{};
+#endif
         bool notify_drained = false;
         lock.lock();
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+        if (task->playback_generation == playback_generation_ && !service_stopped_.load())
+            local_feedback_trace_.Output(task->playback_generation, current, played, trace_level);
+#endif
         const bool failed = current && !played && task->playback_generation == playback_generation_;
         if (failed) {
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
@@ -750,6 +762,10 @@ void AudioService::OpusCodecTask() {
             }
 
             lock.lock();
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+            if (generation == playback_generation_ && !service_stopped_.load())
+                local_feedback_trace_.Decoded(generation, decoded, task->pcm.size());
+#endif
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
             // A local clip must not look successfully drained when its decoder
             // failed, including on builds without the optional output fence.
@@ -1297,8 +1313,20 @@ bool AudioService::PlayLocalFeedback(const std::string_view& sound) {
         return false;
 #endif
     if (sound.empty() || sound.size() > 32768 || service_stopped_.load() ||
-        local_recording_press_.load() != 0 || timer_output_owner_.load() != 0)
+        local_recording_press_.load() != 0 || timer_output_owner_.load() != 0) {
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+        local_feedback_trace_.Reject(service_stopped_.load() ? "rejected_stopped"
+                                     : local_recording_press_.load() != 0 ? "rejected_recording"
+                                     : timer_output_owner_.load() != 0 ? "rejected_timer_owner"
+                                     : "rejected_asset");
+#endif
         return false;
+    }
+
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+    local_feedback_trace_.Finish("replaced", local_feedback_errors_.load(),
+                                 decode_in_flight_, output_in_flight_);
+#endif
     ++playback_generation_;
     audio_decode_queue_.clear();
     audio_playback_queue_.clear();
@@ -1306,14 +1334,29 @@ bool AudioService::PlayLocalFeedback(const std::string_view& sound) {
     local_feedback_offset_ = 0;
     local_feedback_active_ = true;
     playback_drained_notified_ = false;
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+    local_feedback_trace_.Start(playback_generation_, local_feedback_errors_.load());
+#endif
     audio_queue_cv_.notify_all();
     return true;
 }
+
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+std::optional<LocalFeedbackTrace::Event> AudioService::TakeBenchAudioTrace() {
+    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+    return local_feedback_trace_.Pop();
+}
+#endif
 
 void AudioService::CancelLocalFeedback() {
     std::lock_guard<std::mutex> lock(audio_queue_mutex_);
     if (!local_feedback_active_)
         return;
+
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+    local_feedback_trace_.Finish("cancel", local_feedback_errors_.load(),
+                                 decode_in_flight_, output_in_flight_);
+#endif
     ++playback_generation_;
     local_feedback_ = {};
     local_feedback_active_ = false;
@@ -1430,6 +1473,10 @@ void AudioService::ResetDecoder() {
     bool notify_drained = false;
     {
         std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+        local_feedback_trace_.Finish("reset", local_feedback_errors_.load(),
+                                     decode_in_flight_, output_in_flight_);
+#endif
         ++playback_generation_;
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
         local_feedback_ = {};
@@ -1466,6 +1513,9 @@ bool AudioService::MarkPlaybackDrainedLocked() {
         return false;
     }
     playback_drained_notified_ = true;
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+    local_feedback_trace_.Finish("drain", local_feedback_errors_.load());
+#endif
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
     local_feedback_active_ = false;
 #endif

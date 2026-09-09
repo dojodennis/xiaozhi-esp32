@@ -1,0 +1,60 @@
+{
+  "recorded_at": "2026-09-09T14:23:05.561978+00:00",
+  "state": "reviewed unsigned diagnostic candidate; physical audibility unpassed",
+  "tests": [
+    {
+      "log": "/Users/dojo/.codex/device-builds/orbit-alarm-repeat/2026-09-09/host-tests-final.log",
+      "tests": 317,
+      "exit_code": 0,
+      "sha256": "d6a68b80b3d965fa564baefa541276c262e4b1693a0e193d875db4be1f42d43f"
+    },
+    {
+      "log": "/Users/dojo/.codex/device-builds/orbit-alarm-repeat/2026-09-09/focused-tests.log",
+      "tests": 20,
+      "exit_code": 0,
+      "sha256": "ba4e0174b220284444141cc2a7c7e919f408105f29d8d062afe04d100b0987a7"
+    },
+    {
+      "log": "/Users/dojo/.codex/device-builds/orbit-alarm-repeat/2026-09-09/adjacent-tests.log",
+      "tests": 34,
+      "exit_code": 0,
+      "sha256": "12b83f7e011af2017f4254b99f5257b0d8c7c9aaf2ff7b91b2ce040093f57169"
+    }
+  ],
+  "count_note": "Focused and adjacent suites overlap the final 317-test repository suite; do not sum these counts. Controlled host codec/output doubles are not ESP hardware proof.",
+  "review": {
+    "reviewer_task": "01a0709d-0b27-7a73-b135-8502288e632f",
+    "result": "GO for diagnostic-only source after cancellation/rejection/locking fixes; now both final build and host conditions have passed",
+    "reviewed_scope": [
+      "main/audio/local_feedback_trace.h",
+      "main/audio/audio_service.cc",
+      "main/audio/audio_service.h",
+      "main/boards/m5stack/stopwatch/m5stack_stopwatch.cc",
+      "scripts/tests/test_provisions_local_feedback_review.py"
+    ],
+    "limits": [
+      "decoded_samples is post-resampler PCM",
+      "lost_events is cumulative loss as of pop",
+      "empty/oversized assets share rejected_asset",
+      "aborted in-flight driver output may finish and is not claimed absent",
+      "driver write/drain does not prove physical audibility"
+    ]
+  },
+  "builds": [
+    "bench-build.json",
+    "capture-build.json"
+  ],
+  "physical_device_actions": false,
+  "provider_calls": false,
+  "signed": false,
+  "installed": false,
+  "formatting": "Touched source reviewed against repository style; git diff --check passes. No clang-format binary was available; no formatter pass claimed.",
+  "source_hashes": {
+    "main/audio/local_feedback_trace.h": "6388c3117ceda731a4b8adb7c0146c446616b09fe16562e5d810bd0df7945cc6",
+    "main/audio/audio_service.cc": "75658d45f6b87a0458fa33335fbba2cb9a1fa1ff4be4c96a915ecfc6e17b6a32",
+    "main/audio/audio_service.h": "a8632333fb3f754766071c3373a6c2d0647545e1c34a4a5dfcf428a0880a882f",
+    "main/boards/m5stack/stopwatch/m5stack_stopwatch.cc": "d5a47afca49436fbc8743bb58094d959f5a9392aaff2cf44cca7d56fb92ab9f2",
+    "scripts/tests/test_provisions_hardware_bench_adapter.py": "cd1cc9c0e5d0afb2a5cc840aa13661d5c532390f1c6fd6b88c6f4f5648bb483b",
+    "scripts/tests/test_provisions_local_feedback_review.py": "39abe90a960560c19ac4dbb6b965486cfe30ad21852b299402201158311b6e48"
+  }
+}

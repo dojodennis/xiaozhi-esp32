@@ -1596,6 +1596,31 @@ private:
             // in the gap between worker publication and the display mutation.
             std::atomic_store(&bench_rendered_, publication);
         }
+        // Consume one bounded diagnostic record on the application owner.
+        // Audio tasks retain counters only; serial I/O never holds their mutex.
+        if (const auto event = Application::GetInstance().GetAudioService().TakeBenchAudioTrace()) {
+            const auto& trace = event->counts;
+            ESP_LOGI(TAG,
+                     "bench_clip %s t=%lld seq=%llu attempt=%llu gen=%lu "
+                     "decode=%lu/%lu written=%lu drop=%lu fail=%lu "
+                     "samples=%llu/%llu peak=%lu squares=%llu errors=%lu "
+                     "inflight=%d/%d lost=%llu",
+                     event->reason, static_cast<long long>(event->at_ms),
+                     static_cast<unsigned long long>(trace.sequence),
+                     static_cast<unsigned long long>(event->attempt),
+                     static_cast<unsigned long>(trace.generation),
+                     static_cast<unsigned long>(trace.decoded_packets),
+                     static_cast<unsigned long>(trace.decode_attempts),
+                     static_cast<unsigned long>(trace.output_packets),
+                     static_cast<unsigned long>(trace.dropped_packets),
+                     static_cast<unsigned long>(trace.failed_writes),
+                     static_cast<unsigned long long>(trace.decoded_samples),
+                     static_cast<unsigned long long>(trace.output_samples),
+                     static_cast<unsigned long>(trace.peak),
+                     static_cast<unsigned long long>(trace.square_sum),
+                     static_cast<unsigned long>(event->errors), event->decode_in_flight,
+                     event->output_in_flight, static_cast<unsigned long long>(event->lost_events));
+        }
     }
     void QueueBenchGesture(bool blue) {
         auto* bench = bench_published_.load();

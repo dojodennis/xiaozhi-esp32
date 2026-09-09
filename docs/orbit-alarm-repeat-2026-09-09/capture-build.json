@@ -1,0 +1,41 @@
+{
+  "recorded_at": "2026-09-09T14:22:39.710965+00:00",
+  "variant": "provisions-kitchen-helper-stopwatch",
+  "command": [
+    "python3",
+    "scripts/build.py",
+    "m5stack/stopwatch",
+    "--name",
+    "provisions-kitchen-helper-stopwatch",
+    "--language",
+    "en-US",
+    "--wake-word",
+    "disabled"
+  ],
+  "build_exit_code": 0,
+  "idf": "6.0.2",
+  "network": "none",
+  "device_mounted": false,
+  "bench_diagnostics_compiled_out": true,
+  "bench_log_string_absent": true,
+  "signed": false,
+  "installed": false,
+  "files": {
+    "build/xiaozhi.bin": {
+      "bytes": 3062816,
+      "sha256": "cc56a8ea0e8a32e3f5de8c66e5208b31044102a0402b275cb84cb5982cdf55e1"
+    },
+    "sdkconfig": {
+      "bytes": 128571,
+      "sha256": "5570735e3c84c331c27647d5398ea278ad0a6c707e796e037efc390da88bb97e"
+    },
+    "dependencies.lock": {
+      "bytes": 33916,
+      "sha256": "3d627e36af969bb3c0847bc92036d6875faa7f266f899a4a63fced3e586cee7c"
+    }
+  },
+  "log": {
+    "path": "/Users/dojo/.codex/device-builds/orbit-alarm-repeat/2026-09-09/capture-build-v2.log",
+    "sha256": "69e5bc4f8aa2d61a15d7f7ea45d1447e094ae9ae2bc6594ec84ccc8cfacb1b1f"
+  }
+}

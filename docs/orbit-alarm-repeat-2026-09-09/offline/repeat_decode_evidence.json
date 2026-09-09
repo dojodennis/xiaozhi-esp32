@@ -1,0 +1,290 @@
+{
+  "asset": {
+    "bytes": 1663,
+    "ffprobe": {
+      "format": {
+        "bit_rate": "14855",
+        "duration": "0.895563",
+        "filename": "/Users/dojo/.codex/worktrees/orbit-alarm-audibility/main/assets/common/exclamation.ogg",
+        "format_long_name": "Ogg",
+        "format_name": "ogg",
+        "nb_programs": 0,
+        "nb_stream_groups": 0,
+        "nb_streams": 1,
+        "probe_score": 100,
+        "size": "1663",
+        "start_time": "0.000000"
+      },
+      "streams": [
+        {
+          "avg_frame_rate": "0/0",
+          "bits_per_sample": 0,
+          "channel_layout": "mono",
+          "channels": 1,
+          "codec_long_name": "Opus (Opus Interactive Audio Codec)",
+          "codec_name": "opus",
+          "codec_tag": "0x0000",
+          "codec_tag_string": "[0][0][0][0]",
+          "codec_type": "audio",
+          "disposition": {
+            "attached_pic": 0,
+            "captions": 0,
+            "clean_effects": 0,
+            "comment": 0,
+            "default": 0,
+            "dependent": 0,
+            "descriptions": 0,
+            "dub": 0,
+            "forced": 0,
+            "hearing_impaired": 0,
+            "karaoke": 0,
+            "lyrics": 0,
+            "metadata": 0,
+            "multilayer": 0,
+            "non_diegetic": 0,
+            "original": 0,
+            "still_image": 0,
+            "timed_thumbnails": 0,
+            "visual_impaired": 0
+          },
+          "duration": "0.895562",
+          "duration_ts": 42987,
+          "extradata_size": 19,
+          "index": 0,
+          "initial_padding": 312,
+          "mime_codec_string": "opus",
+          "r_frame_rate": "0/0",
+          "sample_fmt": "fltp",
+          "sample_rate": "48000",
+          "start_pts": 0,
+          "start_time": "0.000000",
+          "tags": {
+            "encoder": "Lavc59.37.100 libopus"
+          },
+          "time_base": "1/48000"
+        }
+      ]
+    },
+    "path": "/Users/dojo/.codex/worktrees/orbit-alarm-audibility/main/assets/common/exclamation.ogg",
+    "sha256": "61d0a91d7658e62c2ee0a940bd8b99e2062c4b760848f0ba2d793c852def4716"
+  },
+  "ffmpeg_resampled_repeated": {
+    "command": [
+      "/opt/homebrew/bin/ffmpeg",
+      "-v",
+      "error",
+      "-stream_loop",
+      "9",
+      "-i",
+      "/Users/dojo/.codex/worktrees/orbit-alarm-audibility/main/assets/common/exclamation.ogg",
+      "-f",
+      "s16le",
+      "-acodec",
+      "pcm_s16le",
+      "-ar",
+      "24000",
+      "-ac",
+      "1",
+      "-"
+    ],
+    "passes": [
+      {
+        "pass": 0,
+        "peak": 24383,
+        "peak_dbfs": -2.567,
+        "rms": 9422.79,
+        "rms_dbfs": -10.825,
+        "samples": 21478
+      },
+      {
+        "pass": 1,
+        "peak": 24382,
+        "peak_dbfs": -2.568,
+        "rms": 9422.78,
+        "rms_dbfs": -10.825,
+        "samples": 21478
+      },
+      {
+        "pass": 2,
+        "peak": 24383,
+        "peak_dbfs": -2.567,
+        "rms": 9422.79,
+        "rms_dbfs": -10.825,
+        "samples": 21478
+      },
+      {
+        "pass": 3,
+        "peak": 24382,
+        "peak_dbfs": -2.568,
+        "rms": 9422.78,
+        "rms_dbfs": -10.825,
+        "samples": 21478
+      },
+      {
+        "pass": 4,
+        "peak": 24383,
+        "peak_dbfs": -2.567,
+        "rms": 9422.79,
+        "rms_dbfs": -10.825,
+        "samples": 21478
+      },
+      {
+        "pass": 5,
+        "peak": 24382,
+        "peak_dbfs": -2.568,
+        "rms": 9423.0,
+        "rms_dbfs": -10.825,
+        "samples": 21477
+      },
+      {
+        "pass": 6,
+        "peak": 24383,
+        "peak_dbfs": -2.567,
+        "rms": 9422.79,
+        "rms_dbfs": -10.825,
+        "samples": 21478
+      },
+      {
+        "pass": 7,
+        "peak": 24382,
+        "peak_dbfs": -2.568,
+        "rms": 9422.78,
+        "rms_dbfs": -10.825,
+        "samples": 21478
+      },
+      {
+        "pass": 8,
+        "peak": 24383,
+        "peak_dbfs": -2.567,
+        "rms": 9422.79,
+        "rms_dbfs": -10.825,
+        "samples": 21478
+      },
+      {
+        "pass": 9,
+        "peak": 24382,
+        "peak_dbfs": -2.568,
+        "rms": 9422.78,
+        "rms_dbfs": -10.825,
+        "samples": 21478
+      }
+    ],
+    "total_samples": 214779,
+    "version": "ffmpeg version 8.1 Copyright (c) 2000-2026 the FFmpeg developers"
+  },
+  "host": {
+    "ffmpeg": "/opt/homebrew/bin/ffmpeg",
+    "ffprobe": "/opt/homebrew/bin/ffprobe",
+    "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "python": "3.14.6"
+  },
+  "limitations": [
+    "Host libopus and FFmpeg only; this does not exercise the ESP Opus wrapper.",
+    "Host resampling is FFmpeg/libswresample, not the ESP audio-effects resampler.",
+    "No ES8311, DMA, PA_EN, speaker, enclosure, power, or physical audibility proof.",
+    "The experiment does not prove the frozen device cannot lose output at runtime."
+  ],
+  "ogg": {
+    "audio_packet_bytes_max": 138,
+    "audio_packet_bytes_min": 53,
+    "audio_packets": 15,
+    "packets_total": 17
+  },
+  "same_decoder_repeated": {
+    "library": "/opt/homebrew/lib/libopus.0.dylib",
+    "passes": [
+      {
+        "packets_decoded": 15,
+        "pass": 0,
+        "peak": 24363,
+        "peak_dbfs": -2.574,
+        "rms": 9387.86,
+        "rms_dbfs": -10.858,
+        "samples": 14400
+      },
+      {
+        "packets_decoded": 15,
+        "pass": 1,
+        "peak": 24363,
+        "peak_dbfs": -2.574,
+        "rms": 9387.86,
+        "rms_dbfs": -10.858,
+        "samples": 14400
+      },
+      {
+        "packets_decoded": 15,
+        "pass": 2,
+        "peak": 24363,
+        "peak_dbfs": -2.574,
+        "rms": 9387.86,
+        "rms_dbfs": -10.858,
+        "samples": 14400
+      },
+      {
+        "packets_decoded": 15,
+        "pass": 3,
+        "peak": 24363,
+        "peak_dbfs": -2.574,
+        "rms": 9387.86,
+        "rms_dbfs": -10.858,
+        "samples": 14400
+      },
+      {
+        "packets_decoded": 15,
+        "pass": 4,
+        "peak": 24363,
+        "peak_dbfs": -2.574,
+        "rms": 9387.86,
+        "rms_dbfs": -10.858,
+        "samples": 14400
+      },
+      {
+        "packets_decoded": 15,
+        "pass": 5,
+        "peak": 24363,
+        "peak_dbfs": -2.574,
+        "rms": 9387.86,
+        "rms_dbfs": -10.858,
+        "samples": 14400
+      },
+      {
+        "packets_decoded": 15,
+        "pass": 6,
+        "peak": 24363,
+        "peak_dbfs": -2.574,
+        "rms": 9387.86,
+        "rms_dbfs": -10.858,
+        "samples": 14400
+      },
+      {
+        "packets_decoded": 15,
+        "pass": 7,
+        "peak": 24363,
+        "peak_dbfs": -2.574,
+        "rms": 9387.86,
+        "rms_dbfs": -10.858,
+        "samples": 14400
+      },
+      {
+        "packets_decoded": 15,
+        "pass": 8,
+        "peak": 24363,
+        "peak_dbfs": -2.574,
+        "rms": 9387.86,
+        "rms_dbfs": -10.858,
+        "samples": 14400
+      },
+      {
+        "packets_decoded": 15,
+        "pass": 9,
+        "peak": 24363,
+        "peak_dbfs": -2.574,
+        "rms": 9387.86,
+        "rms_dbfs": -10.858,
+        "samples": 14400
+      }
+    ],
+    "version": "libopus 1.6.1"
+  },
+  "source_commit": "45772685c082a55ef26673da078979a96facdbf6"
+}

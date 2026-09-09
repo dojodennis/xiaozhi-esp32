@@ -34,6 +34,10 @@ PREFIX = r'''
 #include <memory>
 #include <string>
 #include <utility>
+#include "local_feedback_trace.h"
+#define TAG "test"
+template<typename... Args> void Log(Args&&...) {}
+#define ESP_LOGI Log
 
 int64_t esp_timer_get_time() { return 1000000; }
 namespace orbit::service_schedule {
@@ -52,6 +56,11 @@ struct HardwareBench {
 }
 using namespace orbit::service_schedule;
 struct Application {
+    struct Audio {
+        LocalFeedbackTrace trace;
+        auto TakeBenchAudioTrace() { return trace.Pop(); }
+    } audio;
+    Audio& GetAudioService() { return audio; }
     std::deque<std::function<void()>> tasks;
     static Application& GetInstance() { static Application app; return app; }
     void Schedule(std::function<void()> action) { tasks.push_back(std::move(action)); }
@@ -151,7 +160,7 @@ class HardwareBenchAdapterTests(unittest.TestCase):
         result = subprocess.run([
             compiler, "-std=c++17", "-Wall", "-Wextra", "-Werror", "-pedantic",
             "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-g",
-            str(source), "-o", str(cls.executable),
+            "-I", str(ROOT / "main/audio"), str(source), "-o", str(cls.executable),
         ], capture_output=True, text=True, timeout=60)
         if result.returncode:
             raise RuntimeError(result.stdout + result.stderr)

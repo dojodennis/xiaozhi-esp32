@@ -26,6 +26,9 @@
 #include "audio_engine.h"
 #include "ogg_demuxer.h"
 #include "protocol.h"
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+#include "local_feedback_trace.h"
+#endif
 
 /*
  * There are two types of audio data flow:
@@ -302,6 +305,9 @@ public:
     // Monotonic failure observation for the local-feedback owner. A drained
     // queue can also follow a decode/output failure; it is not a success receipt.
     uint32_t LocalFeedbackErrors() const { return local_feedback_errors_.load(); }
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+    std::optional<LocalFeedbackTrace::Event> TakeBenchAudioTrace();
+#endif
 #endif
     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
     void ResetDecoder();
@@ -380,6 +386,9 @@ private:
     std::atomic<uint32_t> local_feedback_errors_{0};
     OggDemuxer local_feedback_demuxer_;
     void FillLocalFeedbackLocked();
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+    LocalFeedbackTrace local_feedback_trace_;
+#endif
 #endif
     // For server AEC
     std::deque<uint32_t> timestamp_queue_;

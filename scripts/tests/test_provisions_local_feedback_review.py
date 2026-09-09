@@ -40,6 +40,8 @@ PROGRAM = r'''
 #include <thread>
 #include <vector>
 #include "ogg_demuxer.h"
+#include "local_feedback_trace.h"
+#include "service_schedule_alarm_output.h"
 #define CONFIG_PROVISIONS_LOCAL_CAPTURE 1
 #define CONFIG_PROVISIONS_GATEWAY_REQUIRED 1
 #define CONFIG_USE_SERVER_AEC 0
@@ -52,6 +54,7 @@ PROGRAM = r'''
 #define AUDIO_POWER_CHECK_INTERVAL_MS 1000
 #define ESP_LOGW(...) ((void)0)
 #define ESP_LOGE(...) ((void)0)
+#define ESP_LOGI(...) ((void)0)
 using namespace std::chrono_literals;
 void esp_timer_stop(int){}void esp_timer_start_periodic(int,int){}void xEventGroupSetBits(int,int){}
 constexpr int ESP_AUDIO_DEC_RECOVERY_NONE=0,ESP_AUDIO_ERR_OK=0;
@@ -92,9 +95,10 @@ struct Callbacks {
     std::function<void(uint32_t)> on_recording_error;
 };
 struct Codec {
+    std::atomic<bool> block{false},entered{false},release{false};
     std::mutex mutex;std::vector<int16_t> played;bool fail=false;bool output_enabled(){return true;}void EnableOutput(bool){}
     int output_sample_rate(){return 24000;}
-    bool OutputData(const std::vector<int16_t>& pcm){std::lock_guard<std::mutex> lock(mutex);if(fail)return false;played.push_back(pcm.at(0));return true;}
+    bool OutputData(const std::vector<int16_t>& pcm){if(block.exchange(false)){entered=true;while(!release)std::this_thread::sleep_for(100us);}std::lock_guard<std::mutex> lock(mutex);if(fail)return false;played.push_back(pcm.at(0));return true;}
     bool IsOutputDrained() const{return true;}
     size_t size(){std::lock_guard<std::mutex> lock(mutex);return played.size();}
 };
@@ -103,6 +107,7 @@ struct AudioService {
     std::mutex audio_queue_mutex_,decoder_mutex_;std::condition_variable audio_queue_cv_;
     std::string_view local_feedback_;size_t local_feedback_offset_=0;bool local_feedback_active_=false;std::atomic<uint32_t> local_feedback_errors_{0};
     OggDemuxer local_feedback_demuxer_;
+    LocalFeedbackTrace local_feedback_trace_;
     std::deque<std::unique_ptr<AudioTask>> audio_encode_queue_,audio_playback_queue_;
     std::deque<std::unique_ptr<AudioStreamPacket>> audio_send_queue_,audio_decode_queue_,audio_testing_queue_;
     std::deque<uint32_t> timestamp_queue_;
@@ -162,6 +167,11 @@ int main(int argc,char** argv){assert(argc==5);const std::string test=argv[1],sa
         audio.decoder.release=true;
         wait_for([&]{std::lock_guard<std::mutex> lock(audio.audio_queue_mutex_);return !audio.decode_in_flight_;});
         {std::lock_guard<std::mutex> lock(audio.audio_queue_mutex_);assert(audio.audio_playback_queue_.empty() && audio.local_feedback_.empty());}
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+        {std::lock_guard<std::mutex> lock(audio.audio_queue_mutex_);auto start=audio.local_feedback_trace_.Pop();auto cancel=audio.local_feedback_trace_.Pop();
+            assert(start && cancel && std::string(cancel->reason)=="cancel" && cancel->decode_in_flight);
+            assert(cancel->counts.decoded_packets==0 && audio.local_feedback_trace_.decoded_packets==0 && audio.local_feedback_trace_.reported);}
+#endif
         audio.Stop();worker.join();
     }else if(test=="replace_during_decode"){
         AudioService audio;audio.decoder.block=true;assert(audio.PlayLocalFeedback(saved));std::thread worker([&]{audio.OpusCodecTask();});
@@ -170,6 +180,11 @@ int main(int argc,char** argv){assert(argc==5);const std::string test=argv[1],sa
         wait_for([&]{std::lock_guard<std::mutex> lock(audio.audio_queue_mutex_);return audio.audio_playback_queue_.size()==2;});
         auto reference=demux(failed);
         {std::lock_guard<std::mutex> lock(audio.audio_queue_mutex_);size_t index=0;for(const auto& task:audio.audio_playback_queue_){assert(static_cast<uint16_t>(task->pcm.at(0))==fingerprint(reference[index].payload.data(),reference[index].payload.size()));++index;}assert(!audio.local_feedback_.empty());}
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+        {std::lock_guard<std::mutex> lock(audio.audio_queue_mutex_);auto start=audio.local_feedback_trace_.Pop();auto cancel=audio.local_feedback_trace_.Pop();auto replacement=audio.local_feedback_trace_.Pop();
+            assert(start && cancel && replacement && std::string(cancel->reason)=="cancel" && cancel->counts.decoded_packets==0);
+            assert(replacement->counts.sequence==2 && audio.local_feedback_trace_.decoded_packets==2);}
+#endif
         std::this_thread::sleep_for(5ms);{std::lock_guard<std::mutex> lock(audio.audio_queue_mutex_);assert(audio.audio_playback_queue_.size()==2 && audio.audio_decode_queue_.empty());}
         audio.Stop();worker.join();
     }else if(test=="complete_playback"){
@@ -225,6 +240,90 @@ int main(int argc,char** argv){assert(argc==5);const std::string test=argv[1],sa
         wait_for([&]{return drained.load()==1;});
         {std::lock_guard<std::mutex> lock(audio.audio_queue_mutex_);assert(audio.IsPlaybackDrainedLocked() && !audio.local_feedback_active_);}
         audio.Stop();worker.join();assert(drained==1);
+    }else if(test=="bench_repeat_trace"){
+        const auto packets=demux(success).size();assert(packets==15);
+        AudioService audio;std::atomic<int> drained{0};bool motor=false;
+        audio.callbacks_.on_playback_drained=[&]{++drained;};
+        orbit::service_schedule::AlarmOutput alarm({
+            [&]{return audio.PlayLocalFeedback(success);},[&]{audio.CancelLocalFeedback();},
+            [&]{std::lock_guard<std::mutex> lock(audio.audio_queue_mutex_);return audio.IsPlaybackDrainedLocked();},
+            [&]{return audio.local_feedback_errors_.load();},[&](bool on){motor=on;}});
+        alarm.SetWanted(true,0);
+        std::thread worker([&]{audio.OpusCodecTask();}),output([&]{audio.AudioOutputTask();});
+        for(int pass=1;pass<=10;++pass){
+            const int64_t start=(pass-1)*1900;
+            wait_for([&]{return drained.load()==pass;});
+            {std::lock_guard<std::mutex> lock(audio.audio_queue_mutex_);const auto& trace=audio.local_feedback_trace_;
+                assert(trace.sequence==static_cast<uint64_t>(pass) && trace.reported);
+                assert(trace.decode_attempts==packets && trace.decoded_packets==packets && trace.output_packets==packets);
+                assert(trace.decoded_samples==packets && trace.output_samples==packets && trace.peak>0 && trace.square_sum>0);
+                assert(trace.dropped_packets==0 && trace.failed_writes==0 && audio.local_feedback_errors_==0);}
+            {std::lock_guard<std::mutex> lock(audio.audio_queue_mutex_);auto start_event=audio.local_feedback_trace_.Pop();auto first_event=audio.local_feedback_trace_.Pop();auto drain_event=audio.local_feedback_trace_.Pop();
+                assert(start_event && first_event && drain_event && !audio.local_feedback_trace_.Pop());
+                assert(std::string(start_event->reason)=="start" && std::string(first_event->reason)=="first_write" && std::string(drain_event->reason)=="drain");
+                assert(start_event->at_ms<=first_event->at_ms && first_event->at_ms<=drain_event->at_ms && drain_event->lost_events==0);}
+            alarm.Poll(start+900);assert(!alarm.fault());
+            alarm.Poll(start+1899);assert(drained==pass);
+            if(pass!=10)alarm.Poll(start+1900);
+        }
+        alarm.SetWanted(false,19000);assert(!motor);
+        audio.Stop();worker.join();output.join();assert(drained==10);
+    }else if(test=="bench_failed_repeat_trace"){
+        for(int mode=0;mode<3;++mode){
+            AudioService audio;std::atomic<int> drained{0};bool motor=false;
+            audio.callbacks_.on_playback_drained=[&]{++drained;};
+            orbit::service_schedule::AlarmOutput alarm({
+                [&]{return audio.PlayLocalFeedback(success);},[&]{audio.CancelLocalFeedback();},
+                [&]{std::lock_guard<std::mutex> lock(audio.audio_queue_mutex_);return audio.IsPlaybackDrainedLocked();},
+                [&]{return audio.local_feedback_errors_.load();},[&](bool on){motor=on;}});
+            alarm.SetWanted(true,0);
+            std::thread worker([&]{audio.OpusCodecTask();}),output([&]{audio.AudioOutputTask();});
+            wait_for([&]{return drained.load()==1;});alarm.Poll(900);
+            // Workers are drained and waiting; inject only the second repeat.
+            audio.decoder.fail=mode==0;audio.codec.fail=mode==1;
+            if(mode==2)audio.local_physical_boundary_=1;
+            alarm.Poll(1900);wait_for([&]{return drained.load()==2;});alarm.Poll(2800);
+            {std::lock_guard<std::mutex> lock(audio.audio_queue_mutex_);const auto& trace=audio.local_feedback_trace_;
+                assert(trace.sequence==2 && trace.reported && trace.output_packets==0);
+                if(mode==0)assert(trace.decode_attempts==1 && trace.decoded_packets==0 && audio.local_feedback_errors_==1);
+                if(mode==1)assert(trace.failed_writes==1 && audio.local_feedback_errors_==1);
+                // Diagnostics reveal a stale admission drop without claiming
+                // this artificial boundary mismatch occurred on the board.
+                if(mode==2)assert(trace.dropped_packets==15 && audio.local_feedback_errors_==0);}
+            if(mode<2){assert(alarm.fault() && !motor);alarm.Poll(10000);assert(drained==2);}
+            alarm.SetWanted(false,10001);audio.Stop();worker.join();output.join();
+        }
+    }else if(test=="bench_abort_during_write"){
+        for(bool stop:{false,true}){
+            AudioService audio;audio.codec.block=true;std::atomic<int> drained{0};audio.callbacks_.on_playback_drained=[&]{++drained;};
+            assert(audio.PlayLocalFeedback(success));
+            std::thread worker([&]{audio.OpusCodecTask();}),output([&]{audio.AudioOutputTask();});
+            wait_for([&]{return audio.codec.entered.load();});
+            if(stop)audio.Stop();else audio.CancelLocalFeedback();
+            {std::lock_guard<std::mutex> lock(audio.audio_queue_mutex_);auto start=audio.local_feedback_trace_.Pop();auto abort=audio.local_feedback_trace_.Pop();
+                assert(start && abort && std::string(abort->reason)==(stop?"stop":"cancel") && abort->output_in_flight);
+                assert(abort->counts.output_packets==0 && audio.local_feedback_trace_.reported);}
+            audio.codec.release=true;
+            if(!stop){wait_for([&]{return drained.load()==1;});audio.Stop();}
+            worker.join();output.join();
+            assert(audio.local_feedback_trace_.output_packets==0 && !audio.local_feedback_trace_.Pop());
+            // A pre-cancel driver write can finish. The abort explicitly marks
+            // in-flight output; it never claims that nothing reached hardware.
+            assert(audio.codec.size()==1);
+        }
+    }else if(test=="bench_rejected_and_overflow"){
+        AudioService audio;assert(audio.PlayLocalFeedback(success));audio.local_recording_press_=1;assert(!audio.PlayLocalFeedback(success));audio.local_recording_press_=0;
+        audio.timer_output_owner_=7;assert(!audio.PlayLocalFeedback(success));audio.timer_output_owner_=0;
+        assert(!audio.PlayLocalFeedback({}));audio.service_stopped_=true;assert(!audio.PlayLocalFeedback(success));
+        const char* expected[]={"start","rejected_recording","rejected_timer_owner","rejected_asset","rejected_stopped"};
+        for(size_t i=0;i<5;++i){auto event=audio.local_feedback_trace_.Pop();assert(event && event->attempt==i+1 && std::string(event->reason)==expected[i]);}
+        assert(audio.local_feedback_trace_.sequence==1 && !audio.local_feedback_trace_.reported);
+        LocalFeedbackTrace trace;
+        for(uint32_t i=0;i<20;++i){trace.Start(i,0);trace.Finish("cancel",0);}
+        assert(trace.lost_events==32 && trace.count==8);
+        for(int i=0;i<8;++i){auto event=trace.Pop();assert(event && event->lost_events==32);}
+        assert(!trace.Pop());
+        auto level=LocalFeedbackTrace::Measure({-32768,32767,0});assert(level.peak==32768 && level.square_sum==2147418113u);
     }else assert(false);
 }
 '''
@@ -251,8 +350,11 @@ class ProvisionsLocalFeedbackReview(unittest.TestCase):
         (cls.path / "review.cc").write_text(PROGRAM + actual + CASES)
         cls.binary = cls.path / "review"
         built = subprocess.run([shutil.which("c++"), "-std=c++17", "-pthread", "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
-                                "-I", str(cls.path), "-I", str(ROOT / "main/audio/demuxer"), str(cls.path / "review.cc"),
-                                str(ROOT / "main/audio/demuxer/ogg_demuxer.cc"), "-o", str(cls.binary)], capture_output=True, text=True)
+                                f"-DCONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH={getattr(cls, 'bench_trace', 0)}",
+                                "-I", str(cls.path), "-I", str(ROOT / "main/audio/demuxer"),
+                                "-I", str(ROOT / "main/audio"), "-I", str(ROOT / "main/boards/m5stack/stopwatch"), str(cls.path / "review.cc"),
+                                str(ROOT / "main/audio/demuxer/ogg_demuxer.cc"),
+                                str(ROOT / "main/boards/m5stack/stopwatch/service_schedule_alarm_output.cc"), "-o", str(cls.binary)], capture_output=True, text=True)
         if built.returncode:
             raise RuntimeError(built.stderr)
 
@@ -262,7 +364,8 @@ class ProvisionsLocalFeedbackReview(unittest.TestCase):
 
     def run_case(self, case):
         result = subprocess.run([str(self.binary), case, str(ROOT / "main/assets/provisions/saved_on_orbit.ogg"),
-                                 str(ROOT / "main/assets/provisions/could_not_save.ogg"), str(ROOT / "main/assets/common/success.ogg")], capture_output=True, text=True, timeout=10,
+                                 str(ROOT / "main/assets/provisions/could_not_save.ogg"),
+                                 str(ROOT / ("main/assets/common/exclamation.ogg" if case.startswith("bench_") else "main/assets/common/success.ogg"))], capture_output=True, text=True, timeout=10,
                                 env={**os.environ, "ASAN_OPTIONS": "detect_leaks=0" if sys.platform == "darwin" else "detect_leaks=1"})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
@@ -296,6 +399,22 @@ class ProvisionsLocalFeedbackReview(unittest.TestCase):
 
     def test_valid_empty_ogg_tail_notifies_drain(self):
         self.run_case("valid_empty_tail")
+
+
+class ProvisionsBenchFeedbackTrace(ProvisionsLocalFeedbackReview):
+    bench_trace = 1
+
+    def test_ten_actual_worker_and_sequencer_repeats_keep_separate_counts(self):
+        self.run_case("bench_repeat_trace")
+
+    def test_second_repeat_faults_and_drops_remain_visible(self):
+        self.run_case("bench_failed_repeat_trace")
+
+    def test_cancel_and_stop_mark_inflight_driver_writes(self):
+        self.run_case("bench_abort_during_write")
+
+    def test_rejected_attempts_and_trace_overflow_are_visible(self):
+        self.run_case("bench_rejected_and_overflow")
 
 
 if __name__ == "__main__":
