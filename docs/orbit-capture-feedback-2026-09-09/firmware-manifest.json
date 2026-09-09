@@ -1,0 +1,83 @@
+{
+  "runtime_source_commit": "b608ee43089acd8a19a5393c36a3a5c2a44e4854",
+  "author_commit": "3d02ac423fab698833a07fb809e4bdc385845e50",
+  "base": "45772685c082a55ef26673da078979a96facdbf6",
+  "build_passed": true,
+  "idf": "6.0.2",
+  "profile": "capture_profile.json",
+  "flags": {
+    "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME": "\"partitions/provisions/16m.csv\"",
+    "CONFIG_ESPTOOLPY_FLASHSIZE_16MB": "y",
+    "CONFIG_BOOTLOADER_SKIP_VALIDATE_ALWAYS": "n",
+    "CONFIG_BOOTLOADER_SKIP_VALIDATE_ON_POWER_ON": "n",
+    "CONFIG_BOOTLOADER_SKIP_VALIDATE_IN_DEEP_SLEEP": "n",
+    "CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE": "y",
+    "CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT": "y",
+    "CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME": "y",
+    "CONFIG_SECURE_BOOT": "n",
+    "CONFIG_SECURE_FLASH_ENC_ENABLED": "n",
+    "CONFIG_NVS_ENCRYPTION": "n",
+    "CONFIG_PROVISIONS_LOCAL_CAPTURE": "y",
+    "CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH": "n",
+    "CONFIG_LANGUAGE_EN_US": "y",
+    "CONFIG_WAKE_WORD_DISABLED": "y",
+    "CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH": "y"
+  },
+  "demo_mode": "Unavailable because Kconfig depends on !LOCAL_CAPTURE; absent from generated header, compiled false.",
+  "files": {
+    "unsigned.bin": {
+      "bytes": 3080192,
+      "sha256": "73b710fadb9321a9d56b59834b232917b21726e47bcd6decd666c12fdf51368a"
+    },
+    "sdkconfig": {
+      "bytes": 128932,
+      "sha256": "5d64b9556dc6d8f3ad70cd945a9d64656dddb21b352b9a033e25235afe253c68"
+    },
+    "dependencies.lock": {
+      "bytes": 33916,
+      "sha256": "3d627e36af969bb3c0847bc92036d6875faa7f266f899a4a63fced3e586cee7c"
+    },
+    "capture_profile.json": {
+      "bytes": 1913,
+      "sha256": "43ae474e73b0475d760ada52fa0cdae40857ff0d59d07f0875d5d807d200ae3b"
+    }
+  },
+  "source_files": {
+    "main/application.cc": "2f138fb390c5cd5b225f88f0148d52249ce128414bf857b82d430a4060d63d17",
+    "main/boards/common/board.h": "f3438df58b89d36050aa077b7f593df098379a5ca9eebb7355f010599363ccf9",
+    "main/boards/m5stack/stopwatch/m5stack_stopwatch.cc": "183a5383454d8aa44f973ab8fcf55ad14d6909127f13aec4b6fba2c320695ac7",
+    "main/display/display.h": "97232338e609c0b26a5f004667948a54e64ae6652e6d540d07f0a80bda4e6b5e",
+    "main/provisions_local_capture_feedback.h": "a99770d158051cdcc7332d4fc3909ce4d7b6942a1d42395db88fdfad4a848411",
+    "main/provisions_voice_recorder.cc": "3a01274cfb11dd8c182c31760aa2c4125671625a884877814a7912d1039777ed",
+    "main/provisions_voice_recorder.h": "0414e783155ec282460cfef8f67df3fee0bc52e8a51fc1c6afd316cd2fa653d3",
+    "scripts/tests/test_provisions_local_capture_feedback.py": "c60e35b6ccb2609001d3eeda613529ad5b04aab1dbd10ecedcf6ece3bfc33d0f",
+    "scripts/tests/test_provisions_local_capture_integration_review.py": "6eaa49c1985d180bcb9fd46328879933deb5448f5afd3f7a901b133d68a80668",
+    "scripts/tests/test_provisions_stopwatch.py": "a118b4ad8b08b77acd823becd9769153333d89c572e218e7318696fcf0987855",
+    "scripts/tests/test_provisions_voice_recorder_review.py": "059773dd1e6e6c1762478dc13368ac58c9124eac2ecda4eb8eaaeccd7327826c"
+  },
+  "signed": true,
+  "installed": false,
+  "network": "none",
+  "usb_mounted": false,
+  "signed_bytes": 3084288,
+  "signed_sha256": "75a36af07e55a2e7a81e5f6fcb16538881055d2d580dab1e0dc7bbc0bbf7c4c7",
+  "unsigned_prefix_exact": true,
+  "rsa_verified": true,
+  "signing_public_key_sha256": "09d1e0fd2dfb13640b8a99fcd7e284b6b24e6a06003bce4e3c72a49004364250",
+  "partition_table_bytes": 3072,
+  "partition_table_sha256": "5d8d16317648dc292e807db7834e3ec86b4cf9784ab2992348be47f0aa17f7d1",
+  "partition_sector_with_ff_padding_sha256": "210c66d84c8033068b14234274a9f242eedaa3d8c0f42f4de0603e4df6d346da",
+  "elf_sha256": "ae6916d7a8f15fd84dd89f064e525681768a93818fcac0f68f80df05492c503c",
+  "host_tests": 307,
+  "host_tests_passed": true,
+  "app_offset": 131072,
+  "end_exclusive": 3215360,
+  "checked_at": "2026-09-09T19:53:46.831939+00:00",
+  "logs": {
+    "sign.log": "09803c7f34cb152265054ce696a1044c2a20590df89d8e876b5e3c77210403bf",
+    "verify.log": "b2df7e3c1a56eac1935e7fcb7aaba7600c231d2489c9da1899b5f34aac2338e4",
+    "image.log": "19de47ae5efb7c63b53c07ef147c6d150876d988f00e64ef50750031130d8425"
+  },
+  "host_log_sha256": "345f9c22cf9e0045f2871233b76bc7a48f216ccecb1a1406ef97e56ea8768c95",
+  "build_log_sha256": "4eef48b03290a69dd1f8406573dd9df9697937da433816c4ff76c42d325d70d6"
+}

@@ -1,0 +1,128 @@
+{
+  "status": "Prepared and reviewed source; activation and physical session not started",
+  "operator": "Codex lead only; new supervised session, never reuse closed speaker window",
+  "candidate": {
+    "path": "/Users/dojo/.codex/device-builds/orbit-capture-feedback/2026-09-09/firmware/application.bin",
+    "sha256": "75a36af07e55a2e7a81e5f6fcb16538881055d2d580dab1e0dc7bbc0bbf7c4c7"
+  },
+  "first_fallback": {
+    "path": "/Users/dojo/.codex/device-builds/orbit-capture-feedback/2026-09-09/recovery/application.bin",
+    "sha256": "146d37fa69c571d23327c6581e56cdce7280b9e1873fb3bdffe768bdab2b22b0",
+    "purpose": "F3 v3 outbox-compatible fallback without local cue patch; not previously device accepted"
+  },
+  "application_span": {
+    "offset": 131072,
+    "length": 3084288,
+    "end_exclusive": 3215360
+  },
+  "target": {
+    "chip": "ESP32-S3",
+    "mac": "28:84:85:44:6b:10",
+    "flash_bytes": 16777216,
+    "active_slot": "ota_0 VALID; fresh selector CRC check",
+    "partition_sector_sha256": "210c66d84c8033068b14234274a9f242eedaa3d8c0f42f4de0603e4df6d346da",
+    "current_application_sha256": "32473218a5c311c164815cc1ad0535eff0e182f178f0b7af59d657da13418f7a"
+  },
+  "install_argv_template": [
+    "/Users/dojo/.local/bin/esptool",
+    "--chip",
+    "esp32s3",
+    "--port",
+    "FRESH_VERIFIED_PORT",
+    "--baud",
+    "460800",
+    "--before",
+    "no-reset",
+    "--after",
+    "no-reset",
+    "write-flash",
+    "--flash-mode",
+    "keep",
+    "--flash-freq",
+    "keep",
+    "--flash-size",
+    "keep",
+    "--no-progress",
+    "0x20000",
+    "/Users/dojo/.codex/device-builds/orbit-capture-feedback/2026-09-09/firmware/application.bin"
+  ],
+  "fallback_argv_template": [
+    "/Users/dojo/.local/bin/esptool",
+    "--chip",
+    "esp32s3",
+    "--port",
+    "FRESH_VERIFIED_PORT",
+    "--baud",
+    "460800",
+    "--before",
+    "no-reset",
+    "--after",
+    "no-reset",
+    "write-flash",
+    "--flash-mode",
+    "keep",
+    "--flash-freq",
+    "keep",
+    "--flash-size",
+    "keep",
+    "--no-progress",
+    "0x20000",
+    "/Users/dojo/.codex/device-builds/orbit-capture-feedback/2026-09-09/recovery/application.bin"
+  ],
+  "full_verify_argv_template": [
+    "/Users/dojo/.local/bin/esptool",
+    "--chip",
+    "esp32s3",
+    "--port",
+    "FRESH_VERIFIED_PORT",
+    "--baud",
+    "460800",
+    "--before",
+    "no-reset",
+    "--after",
+    "no-reset",
+    "verify-flash",
+    "0",
+    "FRESH_PRIVATE_SESSION_DIR/expected-PHASE-full.bin"
+  ],
+  "backup_read_argv_template": [
+    "/Users/dojo/.local/bin/esptool",
+    "--chip",
+    "esp32s3",
+    "--port",
+    "FRESH_VERIFIED_PORT",
+    "--baud",
+    "460800",
+    "--before",
+    "no-reset",
+    "--after",
+    "no-reset",
+    "read-flash",
+    "CURRENT_CHUNK_OFFSET",
+    "0x40000",
+    "FRESH_PRIVATE_SESSION_DIR/PHASE/chunk-NN.bin"
+  ],
+  "backup_policy": "Exactly 64 complete contiguous 256 KiB reads from one stopped state; assemble 16 MiB and verify-flash the whole backup. Fresh backup before install and again before recovery. Failed reads excluded; no-reset identity recheck. Never reuse a chunk across reset/phase.",
+  "binding": "Bind port/session/chunk offset only after fresh ownership and identity checks. First deliberate download entry permits default-reset; every following inspect/read/write/verify uses no-reset. Boot only after exact full-image verification.",
+  "preservation": "Overlay only signed app span onto freshly verified CURRENT backup; all other bytes must match including NVS, selector, partition table, credentials, assets and outbox. No reseed, erase, old full-flash restore or phone process signal.",
+  "recovery_compatibility": "457 fallback supports ORBAUD03/v3, 152-byte audio headers and orbit_dct_v1. Historical a84 only parses v2/124-byte headers, quarantines v3 and cannot replay it. After F3 capture use compatible fallback and retain the F3 gateway intake until terminal receipt cleanup. a84 is allowed only after every v3 slot has verified terminal receipt and compatible firmware removed it, or separately proven compatibility.",
+  "test_steps": [
+    "Gateway-only activation with unchanged environment and proxy; verify health and dictation_v1 capability before capture.",
+    "Fresh device backup/identity/layout/NVS audit, exact overlay check, app-only write, full verify and deliberate boot; confirm candidate ELF and authenticated gateway.",
+    "Double blue to enter dictation, single blue to Start. Lead observes actual Start ACK before instructing yellow; RoundLcd currently has no readiness panel.",
+    "Hold yellow and dictate one shopping note, then release. Observe immediate RECORDED / ON ORBIT, nonverbal earcon and haptic; no spoken readback. Measure release-to-cue rather than claim latency from host tests.",
+    "Repeat one prep/work note only after first capture receives its existing committed journal receipt. Verify durable identifiers/receipt, not a canonical shopping save or Reminders sync.",
+    "If accepted, candidate may remain installed. If cue/regression fails, stop new capture, take fresh current backup and install signed F3 fallback preserving all data. No return to a84 with unrecovered v3 slots."
+  ],
+  "stop_conditions": [
+    "unexpected identity/security/layout/key/selector or current app",
+    "incomplete/unverified backup or mismatching artifact",
+    "storage fault, failed boot, missing negotiated dictation or Start ACK",
+    "untruthful or absent durable cue; preserve evidence before recovery"
+  ],
+  "remaining_acceptance": [
+    "physical cue timing/feel/visibility",
+    "live committed journal receipt without spoken reply",
+    "canonical shopping/work save and Reminders sync remain separate existing-plan slices"
+  ]
+}

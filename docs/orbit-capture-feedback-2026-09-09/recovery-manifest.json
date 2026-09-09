@@ -1,0 +1,63 @@
+{
+  "source_commit": "45772685c082a55ef26673da078979a96facdbf6",
+  "build_passed": true,
+  "signed": true,
+  "installed": false,
+  "purpose": "F3 v3 outbox-compatible fallback without local cue patch; not previously device accepted",
+  "files": {
+    "unsigned.bin": {
+      "bytes": 3080192,
+      "sha256": "33c14a0c477d59fb91f927f930cecc85eebd12c85c52cdeb422d20d70c512ce5"
+    },
+    "sdkconfig": {
+      "bytes": 128932,
+      "sha256": "5d64b9556dc6d8f3ad70cd945a9d64656dddb21b352b9a033e25235afe253c68"
+    },
+    "dependencies.lock": {
+      "bytes": 33916,
+      "sha256": "3d627e36af969bb3c0847bc92036d6875faa7f266f899a4a63fced3e586cee7c"
+    },
+    "capture_profile.json": {
+      "bytes": 1913,
+      "sha256": "43ae474e73b0475d760ada52fa0cdae40857ff0d59d07f0875d5d807d200ae3b"
+    },
+    "partition-table.bin": {
+      "bytes": 3072,
+      "sha256": "5d8d16317648dc292e807db7834e3ec86b4cf9784ab2992348be47f0aa17f7d1"
+    }
+  },
+  "elf_sha256": "3c2344d450a3af076e9baaa5977411cccda0894dad404ede08748d1b4fe17bed",
+  "partition_sector_with_ff_padding_sha256": "210c66d84c8033068b14234274a9f242eedaa3d8c0f42f4de0603e4df6d346da",
+  "flags": {
+    "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME": "\"partitions/provisions/16m.csv\"",
+    "CONFIG_ESPTOOLPY_FLASHSIZE_16MB": "y",
+    "CONFIG_BOOTLOADER_SKIP_VALIDATE_ALWAYS": "n",
+    "CONFIG_BOOTLOADER_SKIP_VALIDATE_ON_POWER_ON": "n",
+    "CONFIG_BOOTLOADER_SKIP_VALIDATE_IN_DEEP_SLEEP": "n",
+    "CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE": "y",
+    "CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT": "y",
+    "CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME": "y",
+    "CONFIG_SECURE_BOOT": "n",
+    "CONFIG_SECURE_FLASH_ENC_ENABLED": "n",
+    "CONFIG_NVS_ENCRYPTION": "n",
+    "CONFIG_PROVISIONS_LOCAL_CAPTURE": "y",
+    "CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH": "n",
+    "CONFIG_LANGUAGE_EN_US": "y",
+    "CONFIG_WAKE_WORD_DISABLED": "y",
+    "CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH": "y"
+  },
+  "build_log_sha256": "9c82eefdfe3094c098f389ad24454921adf6b231079a62864602463825d88071",
+  "signed_bytes": 3084288,
+  "signed_sha256": "146d37fa69c571d23327c6581e56cdce7280b9e1873fb3bdffe768bdab2b22b0",
+  "unsigned_prefix_exact": true,
+  "rsa_verified": true,
+  "signing_public_key_sha256": "09d1e0fd2dfb13640b8a99fcd7e284b6b24e6a06003bce4e3c72a49004364250",
+  "app_offset": 131072,
+  "end_exclusive": 3215360,
+  "checked_at": "2026-09-09T20:00:51.753556+00:00",
+  "logs": {
+    "sign.log": "09803c7f34cb152265054ce696a1044c2a20590df89d8e876b5e3c77210403bf",
+    "verify.log": "b2df7e3c1a56eac1935e7fcb7aaba7600c231d2489c9da1899b5f34aac2338e4",
+    "image.log": "e36b128a5bbd42b94c89e537d18b21699c96e1d222526aeb11d125c36e238b36"
+  }
+}
