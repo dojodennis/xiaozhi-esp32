@@ -79,5 +79,18 @@ The first observation did not pass: the exact shopping note reached the server
 through ordinary conversation and produced a needs-attention request. The
 dictation journal was stopped with zero segments. Dennis reported Recorded text,
 no felt haptic and a later follow-up message. That does not prove the new
-DictationRecorded path executed. A controlled mode/Resume retry is pending;
+DictationRecorded path executed. That observation was superseded by the genuine dictation below;
 `device-test-status.json` separates physical observation from route evidence.
+
+
+## Genuine dictation and corrected receipt — 20:59 UTC
+
+The resumed journal retained Dennis's 3.6-second soy-sauce note once, with one processing attempt and a terminal transcript receipt. He confirmed RECORDED / ON ORBIT. No ordinary conversation request was created. This is the actual dictation path, distinct from the earlier wrong-mode observation.
+
+Gateway fix e810f46 removes incompatible ordinary retry fields from dictation receipts. All 124 targeted checks, independent review and actual-image/frozen-firmware parser checks passed. Only the gateway changed. After activation at 20:57:35 UTC, the board authenticated and remained free of the prior rejection/reconnect loop for the 129.66-second observed window. No additional user utterance was required. Local slot erasure and the genuine capture's haptic/earcon/no-readback still lack direct physical confirmation.
+
+The old P display is a real merge regression, not a gateway fallback. The existing source owner is restoring the crest onto this runtime with later timer/dictation behavior retained. The current signed app remains installed; any new app-only candidate requires its exact build/signature review and approval before flashing. Do not blindly revert to old firmware.
+
+The nominally passive console open also produced a USB_UART_CHIP_RESET despite no reset request. This session is not uninterrupted-uptime evidence. Keep raw diagnostic material private and do not reopen that reader as if reset-free.
+
+[Gateway correction and measured evidence](https://github.com/dojodennis/provisions-voice-gateway/tree/codex/orbit-capture-hello-compat/docs/orbit-capture-receipt-2026-09-09).

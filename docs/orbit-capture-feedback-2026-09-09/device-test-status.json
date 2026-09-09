@@ -2,19 +2,20 @@
   "candidate_installed": true,
   "signed_application_sha256": "75a36af07e55a2e7a81e5f6fcb16538881055d2d580dab1e0dc7bbc0bbf7c4c7",
   "whole_expected_flash_verified": true,
-  "gateway_daemon_image_id": "sha256:3546a52a0e3b9fc9ef6e8bcba4051668764caa7246e0a407536a1fc3bd8f7a64",
-  "gateway_container": "ede077a0fd8d8d5e17740ca87d58251ab4cba6a87214f03701bec031d9979769",
+  "gateway_daemon_image_id": "sha256:094c16463ae1dc1be803fb32d834568bdc9a784a2e51df9089a4ecc51a8efc13",
+  "gateway_container": "cb2aebcb1fad1435ffb0cad644724078d7482e0aaa63cb54179f3a815d00382f",
   "authenticated_boot": true,
   "device_ready_at_boot_ms": 16080,
   "gateway_authenticated_at": "2026-09-09T20:33:33.696Z",
-  "physical_capture_test": "Not accepted: exact six-lemons note used ordinary conversation, not dictation; controlled retry awaiting one double-blue completion.",
-  "recorded_at": "2026-09-09T20:34:33.987835+00:00",
+  "physical_capture_test": "Genuine dictation visual and one retained transcript verified; corrected gateway has a stable observed connection. Full local sensory acceptance remains pending.",
+  "recorded_at": "2026-09-09T20:59:55.916409+00:00",
   "first_observation": {
     "visual": "Dennis reported Recorded / On Orbit",
     "haptic": "Not felt",
     "later_message": "Approximately cannot answer / saved for follow-up; spoken versus screen-only not yet confirmed"
   },
-  "server_evidence": {
+  "acceptance_limits": "Genuine local Recorded visual and terminal dictation transcript verified. Haptic/earcon/no spoken readback on this attempt and local flash-slot erasure are not separately observed. No canonical list, Reminders or sharing pass.",
+  "first_server_evidence": {
     "exact_requested_transcript_received": true,
     "audio_state": "transcribed",
     "purpose": null,
@@ -24,5 +25,25 @@
     "dictation_control_revision": 2,
     "dictation_segments": 0
   },
-  "acceptance_limits": "The displayed word alone does not prove the new DictationRecorded path. Its haptic and durable dictation acceptance remain unverified. No canonical list or Reminders save."
+  "genuine_dictation_observation": {
+    "recorded_at": "2026-09-09T20:59:55.916409+00:00",
+    "user_reported_local_recorded_visual": true,
+    "genuine_dictation_segments": 1,
+    "processing_attempt_count": 1,
+    "terminal_transcript_persisted": true,
+    "ordinary_conversation_request_created": false,
+    "capture_duration_ms": 3600,
+    "server_received_at": "2026-09-09T20:45:08.068428Z",
+    "server_completed_at": "2026-09-09T20:45:09.333647Z",
+    "post_fix_authenticated_at": "2026-09-09T20:57:40.908Z",
+    "observed_after_authentication_seconds": 129.66,
+    "post_authentication_invalid_response": false,
+    "post_authentication_disconnect": false,
+    "local_outbox_erasure_directly_observed": false,
+    "fresh_press_required": false,
+    "haptic_earcon_no_readback_physically_confirmed_for_this_capture": false,
+    "canonical_list_or_reminders_save": false,
+    "usb_uart_reset_observed_when_console_opened": true
+  },
+  "next_scope": "Restore crest integration while preserving later timer/dictation/capture feedback; reviewed exact signed candidate and approval before any new app-only flash."
 }
