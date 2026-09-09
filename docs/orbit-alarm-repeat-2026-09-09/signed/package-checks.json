@@ -1,0 +1,63 @@
+{
+  "recorded_at": "2026-09-09T14:49:52.594841+00:00",
+  "checks": [
+    {
+      "check": "exact signed hash and length",
+      "passed": true
+    },
+    {
+      "check": "entire reviewed unsigned prefix",
+      "passed": true
+    },
+    {
+      "check": "same accepted signer, separately verified",
+      "passed": true
+    },
+    {
+      "check": "app span aligned and within ota0",
+      "passed": true
+    },
+    {
+      "check": "preserve map covers every byte outside app",
+      "passed": true
+    },
+    {
+      "check": "current existing bench state retained",
+      "passed": true
+    },
+    {
+      "check": "install_write_argv_template one app span and explicit reset controls",
+      "passed": true
+    },
+    {
+      "check": "restore_write_argv_template one app span and explicit reset controls",
+      "passed": true
+    },
+    {
+      "check": "sixteen contiguous1MiB reads from same stopped state",
+      "passed": true
+    },
+    {
+      "check": "fresh whole-device backup verification required",
+      "passed": true
+    },
+    {
+      "check": "accepted recovery exact",
+      "passed": true
+    },
+    {
+      "check": "signing tools succeeded and removed",
+      "passed": true
+    },
+    {
+      "check": "archived logs match hashes",
+      "passed": true
+    },
+    {
+      "check": "no device installation claimed",
+      "passed": true
+    }
+  ],
+  "device_operations": 0,
+  "limitations": "Offline consistency checks; no current device state, fresh backup or physical outcome is inferred."
+}

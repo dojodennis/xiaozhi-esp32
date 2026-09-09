@@ -1,0 +1,82 @@
+{
+  "created_at": "2026-09-09T14:44:14.722608+00:00",
+  "source_commit": "201dbbce9b076fd26155d42b618d7bd2d048eeb2",
+  "runtime_commit": "fa0b92f8ec5d0601d1aa7b6df691ef7d2004ba66",
+  "profile": "provisions-kitchen-helper-stopwatch-schedule-bench",
+  "unsigned_bytes": 3080192,
+  "unsigned_sha256": "701d115b5dfca263757a0195090bbd7bdbe4fc39864c37cbd58648de5f0f178d",
+  "signed_bytes": 3084288,
+  "signed_sha256": "ff8a26d6cc0c9c395a4d8d0ecfa06bf0af32b9b5e691d78cdedf83a762f1ebca",
+  "unsigned_payload_exact": true,
+  "public_key_sha256": "09d1e0fd2dfb13640b8a99fcd7e284b6b24e6a06003bce4e3c72a49004364250",
+  "existing_signer_public_exact": true,
+  "signer_mode": "0600",
+  "tool_image": "sha256:0d8c9773d48a327233f9c1d7c654ff0bcf133ae24503ea2e97a57cfe02b8cb67",
+  "checks": [
+    {
+      "check": "sign",
+      "exit_code": 0,
+      "command": [
+        "python",
+        "-m",
+        "espsecure",
+        "sign-data",
+        "--version",
+        "2",
+        "--keyfile",
+        "/signer/key.pem",
+        "--output",
+        "/candidate/application.bin",
+        "/input/unsigned.bin"
+      ],
+      "network": "none",
+      "serial_or_usb_mounts": [],
+      "container_removed": true,
+      "log_sha256": "f24e6edbe9f9f11c433c4ab2607d4ae6de1dc3214110194cb53ef9f20f09a584"
+    },
+    {
+      "check": "verify",
+      "exit_code": 0,
+      "command": [
+        "python",
+        "-m",
+        "espsecure",
+        "verify-signature",
+        "--version",
+        "2",
+        "--keyfile",
+        "/accepted/public.pem",
+        "/candidate/application.bin"
+      ],
+      "network": "none",
+      "serial_or_usb_mounts": [],
+      "container_removed": true,
+      "log_sha256": "f436514d65cf942609a67bd2cfd545daaa5e97741c63baebd4f442b6ca286e3a"
+    },
+    {
+      "check": "image",
+      "exit_code": 0,
+      "command": [
+        "python",
+        "-m",
+        "esptool",
+        "image-info",
+        "/candidate/application.bin"
+      ],
+      "network": "none",
+      "serial_or_usb_mounts": [],
+      "container_removed": true,
+      "log_sha256": "635a1fcb3c14cf5f0499fa8af178075fda2e25f92c5913632f704f95615ea7c5"
+    }
+  ],
+  "proposed_offset": 131072,
+  "end_exclusive": 3215360,
+  "range": "0x020000-0x311000",
+  "signature_verified": true,
+  "image_info_passed": true,
+  "device_operations": 0,
+  "installed": false,
+  "limits": "Off-board signed diagnostic candidate only; same-key signed-on-update profile, not hardware Secure Boot. Fresh device proof, exact overlay and supervised approval remain.",
+  "unsigned_archive_path": "/Users/dojo/.codex/device-builds/orbit-alarm-repeat/2026-09-09/bench/xiaozhi.bin",
+  "signed_archive_path": "/Users/dojo/.codex/device-builds/orbit-alarm-repeat/2026-09-09/signed/application.bin"
+}

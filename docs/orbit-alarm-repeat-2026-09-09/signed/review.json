@@ -1,0 +1,25 @@
+{
+  "reviewed_at": "2026-09-09T14:52:11.796192+00:00",
+  "reviewer_task": "01a0709d-0b27-7a73-b135-8502288e632f",
+  "result": "GO for off-board signed package and proposed supervised retest; no device authorization",
+  "verified": [
+    "signed hash ff8a26d6cc0c9c395a4d8d0ecfa06bf0af32b9b5e691d78cdedf83a762f1ebca and3084288bytes",
+    "entire prefix identical to retained bench/xiaozhi.bin, unsigned701d115b5dfca263757a0195090bbd7bdbe4fc39864c37cbd58648de5f0f178d",
+    "accepted public key09d1e0fd2dfb13640b8a99fcd7e284b6b24e6a06003bce4e3c72a49004364250 and recovery32473218a5c311c164815cc1ad0535eff0e182f178f0b7af59d657da13418f7a",
+    "source201dbbce and all bench manifest source hashes",
+    "cached IDF6.0.2/espsecure5.3.0 sign,public verify,image logs",
+    "application span0x020000\u20130x311000 fits",
+    "sixteen1MiB fresh-backup templates, independent whole-image verify and explicit no-reset controls",
+    "existing Rice pendingACK/five due bench state preserved; no seed/blue/reseed",
+    "fresh post-bench backup and exact accepted a84 restore/full verify/authenticated voicecheck"
+  ],
+  "clarifications": [
+    "The retained unsigned input is bench/xiaozhi.bin; its exact path is now explicit in manifest/README. No duplicate unsigned/application.bin is required.",
+    "BACKUP_PHASE must bind separately to each pre-install/post-bench stopped snapshot; no mixing or reuse across phases/resets."
+  ],
+  "limits": [
+    "current device identity/state and fresh backups are not attested off-board",
+    "physical alarm sound and haptics remain unpassed",
+    "new supervised authorization is required; prior completed session is closed"
+  ]
+}
