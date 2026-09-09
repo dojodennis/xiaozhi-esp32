@@ -260,27 +260,47 @@ Result Decode(std::string_view bytes, const Context& context, const Validators& 
     if (!Uuid(context.websocket_session_id) || session != context.websocket_session_id)
         return Result::SessionMismatch;
     const auto payload = Field(root.get(), "service_schedule");
-    if (!Keys(payload, {"version", "assignment_id", "device_id", "service_occurrence_id",
-                        "service_revision", "snapshot_revision", "service_at_ms", "timezone",
-                        "server_now_ms", "cues", "timers"}))
-        return Result::Malformed;
     Snapshot candidate;
     int64_t version = 0;
-    if (!Integer(Field(payload, "version"), 1, 1, version) ||
-        !ParseUuid(Field(payload, "assignment_id"), candidate.scope.assignment_id) ||
+    if (!Integer(Field(payload, "version"), 1, 2, version))
+        return Result::Malformed;
+    candidate.version = static_cast<int>(version);
+    const bool v2 = version == 2;
+    if ((!v2 && !Keys(payload, {"version", "assignment_id", "device_id", "service_occurrence_id",
+                                "service_revision", "snapshot_revision", "service_at_ms",
+                                "timezone", "server_now_ms", "cues", "timers"})) ||
+        (v2 && !Keys(payload, {"version", "assignment_id", "device_id", "service_occurrence_id",
+                               "service_revision", "snapshot_revision", "service_at_ms", "timezone",
+                               "cues", "timers"})))
+        return Result::Malformed;
+    if (!ParseUuid(Field(payload, "assignment_id"), candidate.scope.assignment_id) ||
         !ParseUuid(Field(payload, "device_id"), candidate.scope.device_id) ||
-        !ParseUuid(Field(payload, "service_occurrence_id"), candidate.service_occurrence_id) ||
-        !Revision(Field(payload, "service_revision"), candidate.service_revision) ||
-        !Revision(Field(payload, "snapshot_revision"), candidate.snapshot_revision) ||
-        !Integer(Field(payload, "service_at_ms"), 1, kMaximumEpochMs, candidate.service_at_ms) ||
-        !Integer(Field(payload, "server_now_ms"), 1, kMaximumEpochMs, candidate.server_now_ms) ||
-        !Timezone(Field(payload, "timezone"), validators, candidate.timezone))
+        !Revision(Field(payload, "snapshot_revision"), candidate.snapshot_revision))
+        return Result::Malformed;
+    const bool absent = v2 && cJSON_IsNull(Field(payload, "service_occurrence_id"));
+    if (absent) {
+        int64_t revision = 0;
+        if (!Integer(Field(payload, "service_revision"), 0, 0, revision) ||
+            !Integer(Field(payload, "service_at_ms"), 0, 0, candidate.service_at_ms) ||
+            !IsText(Field(payload, "timezone"), ""))
+            return Result::Malformed;
+        candidate.service_revision = 0;
+    } else if (!ParseUuid(Field(payload, "service_occurrence_id"),
+                          candidate.service_occurrence_id) ||
+               !Revision(Field(payload, "service_revision"), candidate.service_revision) ||
+               !Integer(Field(payload, "service_at_ms"), 1, kMaximumEpochMs,
+                        candidate.service_at_ms) ||
+               !Timezone(Field(payload, "timezone"), validators, candidate.timezone)) {
+        return Result::Malformed;
+    }
+    if (!v2 &&
+        !Integer(Field(payload, "server_now_ms"), 1, kMaximumEpochMs, candidate.server_now_ms))
         return Result::Malformed;
     if (!Uuid(context.enrolled_scope.assignment_id) || !Uuid(context.enrolled_scope.device_id) ||
         candidate.scope.assignment_id != context.enrolled_scope.assignment_id ||
         candidate.scope.device_id != context.enrolled_scope.device_id)
         return Result::ScopeMismatch;
-    if (!Uuid(context.service_occurrence_id) ||
+    if ((!context.service_occurrence_id.empty() && !Uuid(context.service_occurrence_id)) ||
         candidate.service_occurrence_id != context.service_occurrence_id)
         return Result::OccurrenceMismatch;
     const auto cues = Field(payload, "cues");
@@ -289,7 +309,8 @@ Result Decode(std::string_view bytes, const Context& context, const Validators& 
         return Result::Malformed;
     const auto cue_count = static_cast<size_t>(cJSON_GetArraySize(cues));
     const auto timer_count = static_cast<size_t>(cJSON_GetArraySize(timers));
-    if (cue_count > kMaximumItems || timer_count > kMaximumItems - cue_count)
+    if ((absent && cue_count != 0) || cue_count > kMaximumItems ||
+        timer_count > kMaximumItems - cue_count)
         return Result::Malformed;
     candidate.cues.reserve(cue_count);
     candidate.timers.reserve(timer_count);
@@ -316,6 +337,62 @@ Result Decode(std::string_view bytes, const Context& context, const Validators& 
     }
     output = std::move(candidate);
     return Result::Accepted;
+}
+
+Result DecodeClock(std::string_view bytes, const Context& context, ClockResponse& output) {
+    if (!RawBudget(bytes))
+        return Result::Malformed;
+    const std::string terminated(bytes);
+    const char* end = nullptr;
+    const std::unique_ptr<cJSON, decltype(&cJSON_Delete)> root(
+        cJSON_ParseWithLengthOpts(terminated.c_str(), terminated.size() + 1, &end, false),
+        cJSON_Delete);
+    if (!root || end == nullptr)
+        return Result::Malformed;
+    while (end < terminated.data() + terminated.size() && Space(*end))
+        ++end;
+    if (end != terminated.data() + terminated.size() ||
+        !Keys(root.get(), {"type", "session_id", "state", "service_schedule_clock"}) ||
+        !IsText(Field(root.get(), "type"), "provisions") ||
+        !IsText(Field(root.get(), "state"), "service_schedule_clock"))
+        return Result::Malformed;
+    ClockResponse candidate;
+    auto& request = candidate.request;
+    const auto payload = Field(root.get(), "service_schedule_clock");
+    int64_t version = 0;
+    if (!ParseUuid(Field(root.get(), "session_id"), request.session_id) ||
+        !Keys(payload, {"version", "assignment_id", "device_id", "request_id", "snapshot_revision",
+                        "server_now_ms"}) ||
+        !Integer(Field(payload, "version"), 1, 1, version) ||
+        !ParseUuid(Field(payload, "assignment_id"), request.scope.assignment_id) ||
+        !ParseUuid(Field(payload, "device_id"), request.scope.device_id) ||
+        !ParseUuid(Field(payload, "request_id"), request.request_id) ||
+        !Revision(Field(payload, "snapshot_revision"), request.snapshot_revision) ||
+        !Integer(Field(payload, "server_now_ms"), 1, kMaximumEpochMs, candidate.server_now_ms))
+        return Result::Malformed;
+    if (!Uuid(context.websocket_session_id) || request.session_id != context.websocket_session_id)
+        return Result::SessionMismatch;
+    if (!Uuid(context.enrolled_scope.assignment_id) || !Uuid(context.enrolled_scope.device_id) ||
+        request.scope.assignment_id != context.enrolled_scope.assignment_id ||
+        request.scope.device_id != context.enrolled_scope.device_id)
+        return Result::ScopeMismatch;
+    output = std::move(candidate);
+    return Result::Accepted;
+}
+
+bool EncodeClockRequest(const ClockRequest& request, std::string& output) {
+    if (!Uuid(request.session_id) || !Uuid(request.request_id) ||
+        !Uuid(request.scope.assignment_id) || !Uuid(request.scope.device_id) ||
+        request.snapshot_revision == 0 || request.snapshot_revision > kMaximumRevision)
+        return false;
+    // Canonical UUIDs have no JSON metacharacters; all other bytes are literals.
+    output = "{\"type\":\"provisions\",\"session_id\":\"" + request.session_id +
+             "\",\"state\":\"service_schedule_clock_request\",\"service_schedule_clock\":{"
+             "\"version\":1,\"assignment_id\":\"" +
+             request.scope.assignment_id + "\",\"device_id\":\"" + request.scope.device_id +
+             "\",\"request_id\":\"" + request.request_id +
+             "\",\"snapshot_revision\":" + std::to_string(request.snapshot_revision) + "}}";
+    return true;
 }
 
 }  // namespace orbit::service_schedule::wire

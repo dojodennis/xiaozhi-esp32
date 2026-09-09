@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -48,6 +49,22 @@ struct Snapshot {
     std::vector<Timer> timers;
 };
 
+// Ephemeral locally owned request identity. The caller generates an unpredictable,
+// never-reused nonce and supplies the current authenticated socket session. These
+// strings do not authenticate a payload and are never restored from persistence.
+struct ClockRequest {
+    Scope scope;
+    std::string session_id;
+    std::string request_id;
+    uint64_t snapshot_revision = 0;
+};
+struct ClockResponse {
+    ClockRequest request;
+    int64_t server_now_ms = 0;
+};
+enum class ClockResult { Accepted, Rejected, InvalidClock };
+inline constexpr int64_t kMaximumClockRoundTripMs = 2000;
+
 enum class ItemKind { Cue, Timer };
 struct AlarmKey {
     Scope scope;
@@ -92,7 +109,7 @@ enum class AckResult { Acknowledged, AlreadyAcknowledged, NotDue, NotFound };
 // hooks. The caller must serialize calls on the application's owning task.
 //
 // BEFORE Apply: authenticate the current websocket/session and device assignment,
-// enforce the opt-in v1 frame schema, reject unknown/duplicate JSON keys, validate
+// enforce the opt-in v1/v2 frame schema, reject unknown/duplicate JSON keys, validate
 // the IANA zone and Unicode control categories, and bound allocations while parsing.
 // The typed checks below are defense in depth, not authorization or a JSON parser.
 // Scope comes from enrollment, never from an incoming snapshot. To change scope,
@@ -110,9 +127,17 @@ class Scheduler {
 public:
     explicit Scheduler(Scope enrolled_scope);
 
+    // V1 requires externally verified fresh time. V2 has no time sample and
+    // preserves only a previously running clock. A v2 owner cannot downgrade.
     ApplyResult Apply(const Snapshot& snapshot, int64_t monotonic_ms);
     ClockState Tick(int64_t monotonic_ms);
-    void SetConnected(bool connected) { connected_ = connected; }
+    void SetConnected(bool connected);
+    bool SetClockSession(const std::string& session_id);
+    // A fresh nonce may replace a lost request only after its 2000 ms window.
+    // Caller serializes actual socket generation and captures monotonic times.
+    bool BeginClockRequest(const ClockRequest& request, int64_t sent_monotonic_ms);
+    ClockResult AcceptClock(const ClockResponse& response, int64_t received_monotonic_ms);
+    void CancelClockRequest() { pending_clock_.reset(); }
     bool connected() const { return connected_; }
     ClockState clock_state() const { return clock_state_; }
     int64_t now_ms() const { return last_known_epoch_ms_; }
@@ -125,8 +150,9 @@ public:
     // Acknowledge changes RAM only; do not claim durable success before save/readback.
     AckResult Acknowledge(const AlarmKey& key);
     bool ExportState(PersistentState& output) const;
-    // Fresh instance only. No alarms are newly latched after restore until Apply
-    // accepts a NEWER authenticated snapshot with fresh server time. Replay cannot
+    // Fresh instance only. No alarms are newly latched after restore until a
+    // newer v1 snapshot with verified fresh time, or a v2 owned clock exchange.
+    // V2 snapshots never establish time; replay cannot
     // reset the stale gate or manufacture a fresh clock. Already-due alarms survive.
     bool Restore(const PersistentState& state);
 
@@ -140,6 +166,9 @@ private:
     ClockState clock_state_ = ClockState::AwaitingSnapshot;
     int64_t last_monotonic_ms_ = 0;
     int64_t last_known_epoch_ms_ = 0;
+    std::string clock_session_id_;
+    std::optional<ClockRequest> pending_clock_;
+    int64_t clock_sent_monotonic_ms_ = 0;
     void LatchDue();
 };
 

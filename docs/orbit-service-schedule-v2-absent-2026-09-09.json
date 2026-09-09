@@ -1,0 +1,58 @@
+{
+  "scope": "Synthetic host-only v1-to-v2 absent-Service rendering using actual LVGL view; inherited trusted monotonic fixture clock, no real connection or physical acceptance.",
+  "command": "absent_service",
+  "state": {
+    "accepted": true,
+    "zero_time_calls": 0,
+    "valid": true,
+    "stage": "17:59 / dinner 19:00, setup 18:00",
+    "connected": true,
+    "clock_trusted": true,
+    "now_ms": 1788883140000,
+    "alarm_active": false,
+    "receipt_confirmed": false,
+    "alarm_change": "none",
+    "flushes": 2,
+    "frame_written": true,
+    "labels": [
+      "Rice",
+      "2:00",
+      "Sauce",
+      "3:00",
+      "Bread",
+      "4:00",
+      "+",
+      "",
+      "+",
+      "",
+      "+",
+      "",
+      "DINNER / DEMO",
+      "--:--",
+      "No cues",
+      "DEMO / CONNECTED",
+      "DEMO / ALERT",
+      "",
+      "BLUE: ACK ONE ALERT",
+      "DEMO / CONNECTED"
+    ],
+    "due": [],
+    "pending": [],
+    "snapshot_revision": 11,
+    "service_at_ms": 0,
+    "deadlines": {
+      "Rice": 1788883260000,
+      "Sauce": 1788883320000,
+      "Bread": 1788883380000
+    }
+  },
+  "png_sha256": "e59b302378743c3428f127cef9d78452f8f76a85a371876ca3c1bd045522ff70",
+  "source_sha256": {
+    "main/boards/m5stack/stopwatch/service_schedule_view.cc": "ddba36166b12c40d7d91aceedc91a4ab57e21c856666ad185c193c2d42470294",
+    "main/boards/m5stack/stopwatch/service_schedule.cc": "2ca4ec8164cf9e98dcc7ddd153b09ed77977b34be88c4dc562206ec7eaf102a3",
+    "main/boards/m5stack/stopwatch/service_schedule_face.cc": "2631bce180120462e34a6b482b2a2e0d520dc0c8fb2744158edcecf490f4a149",
+    "main/boards/m5stack/stopwatch/tests/service_schedule_demo_host.cc": "cf1ef28cf838335ba7b0d3c453f8f0adb18e9febc5e0788457a204e97f19f541",
+    "main/boards/m5stack/stopwatch/tests/run_service_schedule_demo.py": "4f48098d4aa07c6f2fd00d375b3aae646068912a5c9cf9c765668c646226d289"
+  },
+  "visual_review": "Root viewed actual generated PNG: three retained timer labels/countdowns readable, absent Service --:--, no visible clipping or overlap. Final instrumented capture has zero epoch-zero formatter calls. Existing design only, not new product design approval."
+}

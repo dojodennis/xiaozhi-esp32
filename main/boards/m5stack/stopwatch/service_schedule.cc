@@ -101,9 +101,13 @@ bool Zone(std::string_view s) {
     return true;  // IANA membership is validated upstream; no tz database on this device.
 }
 bool Valid(const Snapshot& s) {
-    if (s.version != 1 || !Valid(s.scope) || !Uuid(s.service_occurrence_id) ||
-        !Revision(s.service_revision) || !Revision(s.snapshot_revision) ||
-        !Epoch(s.service_at_ms) || !Epoch(s.server_now_ms) || !Zone(s.timezone) ||
+    const bool absent = s.version == 2 && s.service_occurrence_id.empty();
+    if ((s.version != 1 && s.version != 2) || !Valid(s.scope) || !Revision(s.snapshot_revision) ||
+        (s.version == 1 ? !Epoch(s.server_now_ms) : s.server_now_ms != 0) ||
+        (absent ? (s.service_revision != 0 || s.service_at_ms != 0 || !s.timezone.empty() ||
+                   !s.cues.empty())
+                : (!Uuid(s.service_occurrence_id) || !Revision(s.service_revision) ||
+                   !Epoch(s.service_at_ms) || !Zone(s.timezone))) ||
         s.cues.size() > kMaximumItems || s.timers.size() > kMaximumItems - s.cues.size())
         return false;
     std::vector<std::string_view> ids;
@@ -167,6 +171,8 @@ ApplyResult Scheduler::Apply(const Snapshot& next, int64_t monotonic_ms) {
     if (!Valid(scope_) || !Same(scope_, next.scope))
         return ApplyResult::ScopeMismatch;
     if (has_snapshot_) {
+        if (snapshot_.version == 2 && next.version != 2)
+            return ApplyResult::ConflictingRevision;
         if (next.snapshot_revision < snapshot_.snapshot_revision)
             return ApplyResult::StaleRevision;
         if (next.snapshot_revision == snapshot_.snapshot_revision)
@@ -217,16 +223,18 @@ ApplyResult Scheduler::Apply(const Snapshot& next, int64_t monotonic_ms) {
     int64_t projected_now = last_known_epoch_ms_;
     if (monotonic_ms < 0 ||
         (clock_state_ == ClockState::Trusted && monotonic_ms < last_monotonic_ms_) ||
-        (has_snapshot_ && next.server_now_ms < snapshot_.server_now_ms) ||
-        (clock_state_ != ClockState::Trusted && has_snapshot_ &&
+        (next.version == 1 && has_snapshot_ && next.server_now_ms < snapshot_.server_now_ms) ||
+        (next.version == 1 && clock_state_ != ClockState::Trusted && has_snapshot_ &&
          next.server_now_ms < last_known_epoch_ms_)) {
         clock_state_ = ClockState::Invalid;
+        pending_clock_.reset();
         return ApplyResult::InvalidClock;
     }
     if (clock_state_ == ClockState::Trusted) {
         const auto elapsed = monotonic_ms - last_monotonic_ms_;
         if (elapsed > kMaximumEpochMs - projected_now) {
             clock_state_ = ClockState::Invalid;
+            pending_clock_.reset();
             return ApplyResult::InvalidClock;
         }
         projected_now += elapsed;
@@ -242,11 +250,17 @@ ApplyResult Scheduler::Apply(const Snapshot& next, int64_t monotonic_ms) {
     items_ = std::move(next_items);
     retired_ids_ = std::move(next_retired);
     has_snapshot_ = true;
+    pending_clock_.reset();
     last_monotonic_ms_ = monotonic_ms;
     // Variable delivery delay must never wind a running countdown backwards.
-    last_known_epoch_ms_ = std::max(projected_now, next.server_now_ms);
-    clock_state_ = ClockState::Trusted;
-    LatchDue();
+    last_known_epoch_ms_ =
+        next.version == 1 ? std::max(projected_now, next.server_now_ms) : projected_now;
+    if (next.version == 1)
+        clock_state_ = ClockState::Trusted;
+    else if (clock_state_ == ClockState::AwaitingSnapshot)
+        clock_state_ = ClockState::AwaitingFreshTime;
+    if (clock_state_ == ClockState::Trusted)
+        LatchDue();
     return ApplyResult::Applied;
 }
 
@@ -256,6 +270,7 @@ ClockState Scheduler::Tick(int64_t monotonic_ms) {
     if (monotonic_ms < last_monotonic_ms_ || monotonic_ms < 0 ||
         monotonic_ms - last_monotonic_ms_ > kMaximumEpochMs - last_known_epoch_ms_) {
         clock_state_ = ClockState::Invalid;
+        pending_clock_.reset();
         return clock_state_;
     }
     last_known_epoch_ms_ += monotonic_ms - last_monotonic_ms_;
@@ -292,8 +307,9 @@ bool Scheduler::ExportState(PersistentState& output) const {
 }
 
 bool Scheduler::Restore(const PersistentState& saved) {
+    const bool zero_clock = saved.snapshot.version == 2 && saved.last_known_epoch_ms == 0;
     if (has_snapshot_ || saved.version != 1 || !Valid(saved.snapshot) ||
-        !Same(saved.snapshot.scope, scope_) || !Epoch(saved.last_known_epoch_ms) ||
+        !Same(saved.snapshot.scope, scope_) || (!zero_clock && !Epoch(saved.last_known_epoch_ms)) ||
         saved.last_known_epoch_ms < saved.snapshot.server_now_ms)
         return false;
     const auto expected = NewItems(saved.snapshot);
@@ -313,6 +329,7 @@ bool Scheduler::Restore(const PersistentState& saved) {
     for (size_t i = 0; i < expected.size(); ++i) {
         const auto& item = saved.items[i];
         if (!Same(item.key, expected[i].key) || (item.acknowledged && !item.due) ||
+            (zero_clock && (item.due || item.acknowledged)) ||
             (item.due && Deadline(saved.snapshot, i) > saved.last_known_epoch_ms))
             return false;
     }
@@ -322,7 +339,84 @@ bool Scheduler::Restore(const PersistentState& saved) {
     last_known_epoch_ms_ = saved.last_known_epoch_ms;
     has_snapshot_ = true;
     clock_state_ = ClockState::AwaitingFreshTime;
+    connected_ = false;
+    clock_session_id_.clear();
+    pending_clock_.reset();
     return true;
+}
+
+void Scheduler::SetConnected(bool connected) {
+    connected_ = connected;
+    if (!connected) {
+        pending_clock_.reset();
+        clock_session_id_.clear();
+    }
+}
+
+bool Scheduler::SetClockSession(const std::string& session_id) {
+    if (!Uuid(session_id))
+        return false;
+    if (clock_session_id_ != session_id) {
+        pending_clock_.reset();
+        clock_session_id_ = session_id;
+    }
+    return true;
+}
+
+bool Scheduler::BeginClockRequest(const ClockRequest& request, int64_t sent_monotonic_ms) {
+    if (!connected_ || !has_snapshot_ || snapshot_.version != 2 || !Valid(request.scope) ||
+        !Same(request.scope, scope_) || !Uuid(request.session_id) ||
+        request.session_id != clock_session_id_ || !Uuid(request.request_id) ||
+        request.snapshot_revision != snapshot_.snapshot_revision || sent_monotonic_ms < 0 ||
+        (clock_state_ == ClockState::Trusted && sent_monotonic_ms < last_monotonic_ms_))
+        return false;
+    if (pending_clock_) {
+        if (sent_monotonic_ms < clock_sent_monotonic_ms_ ||
+            sent_monotonic_ms - clock_sent_monotonic_ms_ <= kMaximumClockRoundTripMs ||
+            request.request_id == pending_clock_->request_id)
+            return false;
+        pending_clock_.reset();
+    }
+    pending_clock_ = request;
+    clock_sent_monotonic_ms_ = sent_monotonic_ms;
+    return true;
+}
+
+ClockResult Scheduler::AcceptClock(const ClockResponse& response, int64_t received_monotonic_ms) {
+    const auto& key = response.request;
+    if (!connected_ || !pending_clock_ || !has_snapshot_ || snapshot_.version != 2 ||
+        !Same(key.scope, scope_) || key.session_id != clock_session_id_ ||
+        key.session_id != pending_clock_->session_id ||
+        key.request_id != pending_clock_->request_id ||
+        key.snapshot_revision != snapshot_.snapshot_revision ||
+        key.snapshot_revision != pending_clock_->snapshot_revision)
+        return ClockResult::Rejected;
+    // Consume this exact response once even when it is late or has invalid time.
+    pending_clock_.reset();
+    if (received_monotonic_ms < clock_sent_monotonic_ms_ || received_monotonic_ms < 0 ||
+        (clock_state_ == ClockState::Trusted && received_monotonic_ms < last_monotonic_ms_)) {
+        clock_state_ = ClockState::Invalid;
+        return ClockResult::InvalidClock;
+    }
+    if (received_monotonic_ms - clock_sent_monotonic_ms_ > kMaximumClockRoundTripMs ||
+        !Epoch(response.server_now_ms))
+        return ClockResult::Rejected;
+    int64_t projected = last_known_epoch_ms_;
+    if (clock_state_ == ClockState::Trusted) {
+        const auto elapsed = received_monotonic_ms - last_monotonic_ms_;
+        if (elapsed > kMaximumEpochMs - projected) {
+            clock_state_ = ClockState::Invalid;
+            return ClockResult::InvalidClock;
+        }
+        projected += elapsed;
+    } else if (response.server_now_ms < last_known_epoch_ms_) {
+        return ClockResult::Rejected;
+    }
+    last_known_epoch_ms_ = std::max(projected, response.server_now_ms);
+    last_monotonic_ms_ = received_monotonic_ms;
+    clock_state_ = ClockState::Trusted;
+    LatchDue();
+    return ClockResult::Accepted;
 }
 
 }  // namespace orbit::service_schedule

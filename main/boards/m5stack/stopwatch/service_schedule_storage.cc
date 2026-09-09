@@ -136,7 +136,7 @@ CodecResult Encode(const FacePersistentState& state, const Scope& enrolled_scope
     Writer w;
     w.bytes.reserve(kWorstCaseRecordBytes);
     w.bytes.insert(w.bytes.end(), std::begin(kMagic), std::end(kMagic));
-    w.Number(kEncodingVersion, 1);
+    w.Number(s.version == 2 ? 2 : kEncodingVersion, 1);
     w.Number(0, 2);  // Patched with exact final record length below.
     w.Number(0, 1);  // Reserved flags: v1 accepts only zero.
     w.Number(s.cues.size(), 1);
@@ -145,7 +145,12 @@ CodecResult Encode(const FacePersistentState& state, const Scope& enrolled_scope
     w.Number(state.pending.size(), 1);
     w.Uuid(s.scope.assignment_id);
     w.Uuid(s.scope.device_id);
-    w.Uuid(s.service_occurrence_id);
+    if (s.version == 2 && s.service_occurrence_id.empty()) {
+        w.Number(0, 8);
+        w.Number(0, 8);
+    } else {
+        w.Uuid(s.service_occurrence_id);
+    }
     w.Number(s.service_revision, 7);
     w.Number(s.snapshot_revision, 7);
     w.Number(s.service_at_ms, 6);
@@ -194,7 +199,7 @@ CodecResult Decode(const uint8_t* data, size_t size, const Scope& enrolled_scope
         return CodecResult::LimitExceeded;
     if (!data || size < kHeaderBytes + 4 || !std::equal(std::begin(kMagic), std::end(kMagic), data))
         return CodecResult::Corrupt;
-    if (data[4] != kEncodingVersion)
+    if (data[4] != kEncodingVersion && data[4] != 2)
         return CodecResult::UnsupportedVersion;
     Reader checksum(data + size - 4, 4);
     if (Crc32(data, size - 4) != checksum.Number(4))
@@ -213,9 +218,12 @@ CodecResult Decode(const uint8_t* data, size_t size, const Scope& enrolled_scope
     FacePersistentState candidate;
     auto& schedule = candidate.schedule;
     auto& s = schedule.snapshot;
+    s.version = data[4];
     s.scope.assignment_id = r.Uuid();
     s.scope.device_id = r.Uuid();
     s.service_occurrence_id = r.Uuid();
+    if (s.version == 2 && s.service_occurrence_id == "00000000-0000-0000-0000-000000000000")
+        s.service_occurrence_id.clear();
     s.service_revision = r.Number(7);
     s.snapshot_revision = r.Number(7);
     s.service_at_ms = static_cast<int64_t>(r.Number(6));

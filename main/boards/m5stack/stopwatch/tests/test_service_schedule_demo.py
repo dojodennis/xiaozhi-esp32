@@ -34,6 +34,19 @@ class ServiceScheduleDemoTests(unittest.TestCase):
             self.assertIn(label, state["labels"])
         self.assertFalse(state["alarm_active"])
 
+    def test_absent_service_does_not_format_epoch_zero(self):
+        state = self.demo.command("absent_service")
+        self.assertTrue(state["accepted"])
+        self.assertEqual(state["service_at_ms"], 0)
+        self.assertEqual(state["zero_time_calls"], 0)
+        self.assertNotIn("INVALID ZERO TIME", state["labels"])
+        self.assertIn("--:--", state["labels"])
+        self.assertNotIn("19:00", state["labels"])
+        for label in ("Rice", "Sauce", "Bread"):
+            self.assertIn(label, state["labels"])
+        self.assertEqual(len(state["deadlines"]), 3)
+        self.assertFalse(state["alarm_active"])
+
     def test_service_edit_only_moves_linked_setup_and_updates_pixels(self):
         before = self.demo.state
         before_png = hashlib.sha256(self.demo.png).digest()

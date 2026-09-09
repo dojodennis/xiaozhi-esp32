@@ -1,0 +1,132 @@
+{
+  "baseline": "69afde7b1ce454d022fb987f88035d778240d569",
+  "gateway_contract_commit": "4887498759b31760eddfd0344f02587697d56250",
+  "evidence_scope": "Local compiled behavioral/build tests only; no authentication, live source, board or acoustic proof.",
+  "unittest_count": 92,
+  "contained_groups": {
+    "v2_python_tests": 6,
+    "v2_model_codec_clock_scenarios": 11,
+    "threaded_worker_scenarios": 20,
+    "lvgl_scenarios": 9,
+    "storage_scenarios": 16,
+    "hardware_bench_coordinator_scenarios": 9
+  },
+  "host_log": {
+    "path": "/tmp/orbit-v2-final-host.log",
+    "bytes": 11807,
+    "sha256": "6de5aba1251a843d711beb9716705bc0e247cd2290a12cc82d020cfaa887da11"
+  },
+  "negative_control": {
+    "old_renderer_commit": "69afde7",
+    "old_epoch_zero_formatter_calls": 1,
+    "candidate_epoch_zero_formatter_calls": 0,
+    "log": {
+      "path": "/tmp/orbit-v2-view-negative-control.log",
+      "bytes": 255,
+      "sha256": "f591529c955519b1c363e6a126047ae2d569c430ade9b17dc4941487bb4cd7e5"
+    }
+  },
+  "v1_oss1_golden": {
+    "source_commit": "69afde7b1ce454d022fb987f88035d778240d569",
+    "capture": "Separately compiled committed scheduler/wire/face/storage/dial; first unchanged v1 fixture at monotonic zero.",
+    "decoded_bytes": 315,
+    "candidate_matches": true
+  },
+  "shared_v2_fixture_exact": true,
+  "checks": {
+    "ruff": "passed for four changed Python files",
+    "clang_format": "all touched C++ dry-run passed",
+    "git_diff_check": "passed"
+  },
+  "production": {
+    "main/boards/m5stack/stopwatch/service_schedule.cc": {
+      "bytes": 17882,
+      "sha256": "2ca4ec8164cf9e98dcc7ddd153b09ed77977b34be88c4dc562206ec7eaf102a3"
+    },
+    "main/boards/m5stack/stopwatch/service_schedule.h": {
+      "bytes": 6927,
+      "sha256": "898e58cb42fb4ed68b773a439773e21355021247c138655ff7a38188f369043d"
+    },
+    "main/boards/m5stack/stopwatch/service_schedule_face.cc": {
+      "bytes": 7442,
+      "sha256": "2631bce180120462e34a6b482b2a2e0d520dc0c8fb2744158edcecf490f4a149"
+    },
+    "main/boards/m5stack/stopwatch/service_schedule_face.h": {
+      "bytes": 3231,
+      "sha256": "bd901a7ca07fea20c8772c1aadd9a5ed8f37453433eb879e1b4599b5ace533f1"
+    },
+    "main/boards/m5stack/stopwatch/service_schedule_storage.cc": {
+      "bytes": 10409,
+      "sha256": "6ae484ab66b5104e800c27b64b09bee8d8915f481ab9f1fb7edbfece5aa3b2d2"
+    },
+    "main/boards/m5stack/stopwatch/service_schedule_storage.h": {
+      "bytes": 2204,
+      "sha256": "4d653112f5c06170317771a881d40db4d1e0fe5da41b7d5c5eb33ea649bfa670"
+    },
+    "main/boards/m5stack/stopwatch/service_schedule_view.cc": {
+      "bytes": 7336,
+      "sha256": "ddba36166b12c40d7d91aceedc91a4ab57e21c856666ad185c193c2d42470294"
+    },
+    "main/boards/m5stack/stopwatch/service_schedule_wire.cc": {
+      "bytes": 17560,
+      "sha256": "1b1976da41cc635acf77052741ba3312f1e53907df27f2f42ca4ed6458c6993d"
+    },
+    "main/boards/m5stack/stopwatch/service_schedule_wire.h": {
+      "bytes": 2723,
+      "sha256": "296cd2415a69c2111ed171aa6ef27e5a7301e2b62c4450f3ebcc2a1782a2c74c"
+    },
+    "main/boards/m5stack/stopwatch/service_schedule_worker.cc": {
+      "bytes": 15724,
+      "sha256": "2e381cb7b20e818a1e5df278364054ef998fc37654c3c20d1ee26db42c7786fb"
+    },
+    "main/boards/m5stack/stopwatch/service_schedule_worker.h": {
+      "bytes": 6332,
+      "sha256": "b4a9947d4ba8d3610a2d5d3fd95068f27916893353d5f9e69380168b025936cb"
+    }
+  },
+  "tests": {
+    "main/boards/m5stack/stopwatch/tests/run_service_schedule_demo.py": {
+      "bytes": 12244,
+      "sha256": "4f48098d4aa07c6f2fd00d375b3aae646068912a5c9cf9c765668c646226d289"
+    },
+    "main/boards/m5stack/stopwatch/tests/service_schedule_demo_host.cc": {
+      "bytes": 8230,
+      "sha256": "cf1ef28cf838335ba7b0d3c453f8f0adb18e9febc5e0788457a204e97f19f541"
+    },
+    "main/boards/m5stack/stopwatch/tests/service_schedule_worker_test.cc": {
+      "bytes": 37123,
+      "sha256": "7e80a7793578cc75861849df77771282160c6f632bdffba382774744f620a02d"
+    },
+    "main/boards/m5stack/stopwatch/tests/test_service_schedule_demo.py": {
+      "bytes": 6284,
+      "sha256": "176491a1ccc9bf07e567bc616213bd4b2fad67825060534965f5824e8ee609ae"
+    },
+    "main/boards/m5stack/stopwatch/tests/test_service_schedule_worker.py": {
+      "bytes": 2300,
+      "sha256": "2a6c4488e428bdf8b66053ad096d6ac069eb87056ef1cc57d4544e93906b6b98"
+    },
+    "main/boards/m5stack/stopwatch/tests/orbit_service_schedule_v1_oss1.hex": {
+      "bytes": 631,
+      "sha256": "fd2a1637f456328c0a60472bb74b6ef37f4447ab4bc6f2431b21624b8d067e02"
+    },
+    "main/boards/m5stack/stopwatch/tests/orbit_service_schedule_v2.json": {
+      "bytes": 10481,
+      "sha256": "28558b5efd8f8db859cae2ec20da8f9665523c99377c2eb6b380afdf2e28f5a0"
+    },
+    "main/boards/m5stack/stopwatch/tests/service_schedule_v2_test.cc": {
+      "bytes": 15113,
+      "sha256": "2023f9202b9f72f3d8de5c360c1d8ab55b4271af5b9f061f269971c80fee97a6"
+    },
+    "main/boards/m5stack/stopwatch/tests/test_service_schedule_v2.py": {
+      "bytes": 9235,
+      "sha256": "b8c1d95f480ff406fcaac4da2038d93afdaf8e9465c0ab2dc846b3cd051d6566"
+    }
+  },
+  "build_evidence": "orbit-service-schedule-v2-builds-2026-09-09.json",
+  "no_hardware_operations": true,
+  "reviews": {
+    "implementation": "Hume completed implementation and local host validation",
+    "integration": "Root reviewed changes, ran four affected IDF6.0.2 builds, inspected actual LVGL frame and verified packet hashes",
+    "independent": "Arendt final GO: all20 source/test hashes,11 build-source hashes,4 build logs,7 frozen archive hashes,92-test log, negative control and refreshed visual evidence match. No remaining findings; reviewer did not rerun tests or edit files."
+  }
+}

@@ -13,6 +13,7 @@ inline constexpr size_t kMaximumJsonDepth = 16;
 struct Context {
     std::string_view websocket_session_id;
     Scope enrolled_scope;
+    // Empty means positively authorized absence (v2 only), never unknown.
     std::string_view service_occurrence_id;
 };
 
@@ -34,13 +35,14 @@ enum class Result {
     OccurrenceMismatch,
 };
 
-// Strict complete raw-frame decoder for the opt-in v1 service schedule envelope.
+// Strict complete raw-frame decoder for the opt-in v1/v2 service schedule envelopes.
 // Output changes only on success. No capability advertisement or network hooks.
 //
 // Context MUST come from the already authenticated current transport/enrollment
 // and authorized occurrence, never from this payload. Matching supplied IDs does
 // not authenticate a sender. The caller must establish fresh authenticated server
-// time before passing a decoded snapshot to Scheduler::Apply; decoding a cached
+// time before passing a v1 snapshot to Scheduler::Apply. V2 snapshots carry no
+// clock sample and require a separately owned clock exchange. Decoding a cached
 // frame, reconnecting, or observing server_now_ms alone cannot establish freshness.
 // Scheduler still owns revision, retirement, edit and monotonic-clock state checks.
 //
@@ -49,6 +51,12 @@ enum class Result {
 // preserve escaped NUL. This decoder rejects those lexical forms before parsing.
 Result Decode(std::string_view bytes, const Context& context, const Validators& validators,
               Snapshot& output);
+
+// Decode only. Context binds the authenticated socket and enrolled scope; its
+// occurrence field is unused here. Scheduler consumes the locally owned nonce,
+// revision and measured <=2000 ms response window. Parsing does not prove freshness.
+Result DecodeClock(std::string_view bytes, const Context& context, ClockResponse& output);
+bool EncodeClockRequest(const ClockRequest& request, std::string& output);
 
 }  // namespace orbit::service_schedule::wire
 #endif  // PROVISIONS_STOPWATCH_SERVICE_SCHEDULE_WIRE_H_

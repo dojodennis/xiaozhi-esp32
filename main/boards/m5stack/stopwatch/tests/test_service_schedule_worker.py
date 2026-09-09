@@ -42,7 +42,7 @@ class ServiceScheduleWorkerTests(unittest.TestCase):
             run = subprocess.run([str(executable)], capture_output=True, text=True,
                                  env=environment, timeout=60)
             self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
-            self.assertIn("16 threaded worker scenarios passed", run.stdout)
+            self.assertIn("20 threaded worker scenarios passed", run.stdout)
             print(run.stdout, end="")
 
 

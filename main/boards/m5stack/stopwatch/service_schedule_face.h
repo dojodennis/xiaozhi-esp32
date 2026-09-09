@@ -27,6 +27,12 @@ public:
     ApplyResult ApplyVerified(const Snapshot& snapshot, int64_t monotonic_ms);
     void Tick(int64_t monotonic_ms);
     void SetConnected(bool connected) { scheduler_.SetConnected(connected); }
+    bool SetClockSession(const std::string& session) { return scheduler_.SetClockSession(session); }
+    bool BeginClockRequest(const ClockRequest& request, int64_t sent_monotonic_ms) {
+        return scheduler_.BeginClockRequest(request, sent_monotonic_ms);
+    }
+    void CancelClockRequest() { scheduler_.CancelClockRequest(); }
+    ClockResult AcceptClock(const ClockResponse& response, int64_t received_monotonic_ms);
     bool AcknowledgeNext();
     // Bind a physical gesture to the exact alarm the user was shown. Never
     // substitute a newer/different due item when work is processed later.

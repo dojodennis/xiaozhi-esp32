@@ -1,0 +1,324 @@
+{
+  "fixture_version": 2,
+  "evidence": "Synthetic local protocol fixture; no authentication, provider, deployment, board, live source or acoustic evidence. No frame is sent by a live handler.",
+  "websocket_session_id": "00000000-0000-4000-8000-000000000004",
+  "snapshots": [
+    {
+      "name": "dinner_1900",
+      "scope": {
+        "assignment_id": "00000000-0000-4000-8000-000000000001",
+        "device_id": "00000000-0000-4000-8000-000000000002",
+        "service_occurrence_id": "00000000-0000-4000-8000-000000000003"
+      },
+      "source": {
+        "version": 2,
+        "assignment_id": "00000000-0000-4000-8000-000000000001",
+        "device_id": "00000000-0000-4000-8000-000000000002",
+        "service_occurrence_id": "00000000-0000-4000-8000-000000000003",
+        "service_revision": 1,
+        "snapshot_revision": 20,
+        "service_at_ms": 1788886800000,
+        "timezone": "Europe/Brussels",
+        "cues": [
+          {
+            "id": "00000000-0000-4000-8000-000000000010",
+            "revision": 1,
+            "label": "Setup",
+            "kind": "service_offset",
+            "offset_ms": -3600000
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000011",
+            "revision": 1,
+            "label": "Fixed reminder",
+            "kind": "fixed",
+            "deadline_ms": 1788883200000
+          }
+        ],
+        "timers": [
+          {
+            "id": "00000000-0000-4000-8000-000000000020",
+            "revision": 1,
+            "label": "Rice",
+            "deadline_ms": 1788883260000
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000021",
+            "revision": 1,
+            "label": "Sauce",
+            "deadline_ms": 1788883320000
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000022",
+            "revision": 1,
+            "label": "Bread",
+            "deadline_ms": 1788883380000
+          }
+        ]
+      },
+      "wire": {
+        "type": "provisions",
+        "session_id": "00000000-0000-4000-8000-000000000004",
+        "state": "service_schedule_snapshot",
+        "service_schedule": {
+          "version": 2,
+          "assignment_id": "00000000-0000-4000-8000-000000000001",
+          "device_id": "00000000-0000-4000-8000-000000000002",
+          "service_occurrence_id": "00000000-0000-4000-8000-000000000003",
+          "service_revision": 1,
+          "snapshot_revision": 20,
+          "service_at_ms": 1788886800000,
+          "timezone": "Europe/Brussels",
+          "cues": [
+            {
+              "id": "00000000-0000-4000-8000-000000000010",
+              "revision": 1,
+              "label": "Setup",
+              "kind": "service_offset",
+              "offset_ms": -3600000,
+              "deadline_ms": 1788883200000
+            },
+            {
+              "id": "00000000-0000-4000-8000-000000000011",
+              "revision": 1,
+              "label": "Fixed reminder",
+              "kind": "fixed",
+              "deadline_ms": 1788883200000
+            }
+          ],
+          "timers": [
+            {
+              "id": "00000000-0000-4000-8000-000000000020",
+              "revision": 1,
+              "label": "Rice",
+              "deadline_ms": 1788883260000
+            },
+            {
+              "id": "00000000-0000-4000-8000-000000000021",
+              "revision": 1,
+              "label": "Sauce",
+              "deadline_ms": 1788883320000
+            },
+            {
+              "id": "00000000-0000-4000-8000-000000000022",
+              "revision": 1,
+              "label": "Bread",
+              "deadline_ms": 1788883380000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "service_retired_timers_retained",
+      "scope": {
+        "assignment_id": "00000000-0000-4000-8000-000000000001",
+        "device_id": "00000000-0000-4000-8000-000000000002",
+        "service_occurrence_id": null
+      },
+      "source": {
+        "version": 2,
+        "assignment_id": "00000000-0000-4000-8000-000000000001",
+        "device_id": "00000000-0000-4000-8000-000000000002",
+        "service_occurrence_id": null,
+        "service_revision": 0,
+        "snapshot_revision": 21,
+        "service_at_ms": 0,
+        "timezone": "",
+        "cues": [],
+        "timers": [
+          {
+            "id": "00000000-0000-4000-8000-000000000020",
+            "revision": 1,
+            "label": "Rice",
+            "deadline_ms": 1788883260000
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000021",
+            "revision": 1,
+            "label": "Sauce",
+            "deadline_ms": 1788883320000
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000022",
+            "revision": 1,
+            "label": "Bread",
+            "deadline_ms": 1788883380000
+          }
+        ]
+      },
+      "wire": {
+        "type": "provisions",
+        "session_id": "00000000-0000-4000-8000-000000000004",
+        "state": "service_schedule_snapshot",
+        "service_schedule": {
+          "version": 2,
+          "assignment_id": "00000000-0000-4000-8000-000000000001",
+          "device_id": "00000000-0000-4000-8000-000000000002",
+          "service_occurrence_id": null,
+          "service_revision": 0,
+          "snapshot_revision": 21,
+          "service_at_ms": 0,
+          "timezone": "",
+          "cues": [],
+          "timers": [
+            {
+              "id": "00000000-0000-4000-8000-000000000020",
+              "revision": 1,
+              "label": "Rice",
+              "deadline_ms": 1788883260000
+            },
+            {
+              "id": "00000000-0000-4000-8000-000000000021",
+              "revision": 1,
+              "label": "Sauce",
+              "deadline_ms": 1788883320000
+            },
+            {
+              "id": "00000000-0000-4000-8000-000000000022",
+              "revision": 1,
+              "label": "Bread",
+              "deadline_ms": 1788883380000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "new_service",
+      "scope": {
+        "assignment_id": "00000000-0000-4000-8000-000000000001",
+        "device_id": "00000000-0000-4000-8000-000000000002",
+        "service_occurrence_id": "00000000-0000-4000-8000-000000000005"
+      },
+      "source": {
+        "version": 2,
+        "assignment_id": "00000000-0000-4000-8000-000000000001",
+        "device_id": "00000000-0000-4000-8000-000000000002",
+        "service_occurrence_id": "00000000-0000-4000-8000-000000000005",
+        "service_revision": 1,
+        "snapshot_revision": 22,
+        "service_at_ms": 1788888600000,
+        "timezone": "Europe/Brussels",
+        "cues": [
+          {
+            "id": "00000000-0000-4000-8000-000000000030",
+            "revision": 1,
+            "label": "Setup",
+            "kind": "service_offset",
+            "offset_ms": -3600000
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000031",
+            "revision": 1,
+            "label": "Fixed reminder",
+            "kind": "fixed",
+            "deadline_ms": 1788883200000
+          }
+        ],
+        "timers": [
+          {
+            "id": "00000000-0000-4000-8000-000000000020",
+            "revision": 1,
+            "label": "Rice",
+            "deadline_ms": 1788883260000
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000021",
+            "revision": 1,
+            "label": "Sauce",
+            "deadline_ms": 1788883320000
+          },
+          {
+            "id": "00000000-0000-4000-8000-000000000022",
+            "revision": 1,
+            "label": "Bread",
+            "deadline_ms": 1788883380000
+          }
+        ]
+      },
+      "wire": {
+        "type": "provisions",
+        "session_id": "00000000-0000-4000-8000-000000000004",
+        "state": "service_schedule_snapshot",
+        "service_schedule": {
+          "version": 2,
+          "assignment_id": "00000000-0000-4000-8000-000000000001",
+          "device_id": "00000000-0000-4000-8000-000000000002",
+          "service_occurrence_id": "00000000-0000-4000-8000-000000000005",
+          "service_revision": 1,
+          "snapshot_revision": 22,
+          "service_at_ms": 1788888600000,
+          "timezone": "Europe/Brussels",
+          "cues": [
+            {
+              "id": "00000000-0000-4000-8000-000000000030",
+              "revision": 1,
+              "label": "Setup",
+              "kind": "service_offset",
+              "offset_ms": -3600000,
+              "deadline_ms": 1788885000000
+            },
+            {
+              "id": "00000000-0000-4000-8000-000000000031",
+              "revision": 1,
+              "label": "Fixed reminder",
+              "kind": "fixed",
+              "deadline_ms": 1788883200000
+            }
+          ],
+          "timers": [
+            {
+              "id": "00000000-0000-4000-8000-000000000020",
+              "revision": 1,
+              "label": "Rice",
+              "deadline_ms": 1788883260000
+            },
+            {
+              "id": "00000000-0000-4000-8000-000000000021",
+              "revision": 1,
+              "label": "Sauce",
+              "deadline_ms": 1788883320000
+            },
+            {
+              "id": "00000000-0000-4000-8000-000000000022",
+              "revision": 1,
+              "label": "Bread",
+              "deadline_ms": 1788883380000
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "clock": {
+    "request": {
+      "type": "provisions",
+      "session_id": "00000000-0000-4000-8000-000000000004",
+      "state": "service_schedule_clock_request",
+      "service_schedule_clock": {
+        "version": 1,
+        "assignment_id": "00000000-0000-4000-8000-000000000001",
+        "device_id": "00000000-0000-4000-8000-000000000002",
+        "request_id": "00000000-0000-4000-8000-000000000099",
+        "snapshot_revision": 21
+      }
+    },
+    "response": {
+      "type": "provisions",
+      "session_id": "00000000-0000-4000-8000-000000000004",
+      "state": "service_schedule_clock",
+      "service_schedule_clock": {
+        "version": 1,
+        "assignment_id": "00000000-0000-4000-8000-000000000001",
+        "device_id": "00000000-0000-4000-8000-000000000002",
+        "request_id": "00000000-0000-4000-8000-000000000099",
+        "snapshot_revision": 21,
+        "server_now_ms": 1788883300000
+      }
+    },
+    "sent_monotonic_ms": 1000,
+    "received_monotonic_ms": 3000,
+    "maximum_round_trip_ms": 2000
+  }
+}

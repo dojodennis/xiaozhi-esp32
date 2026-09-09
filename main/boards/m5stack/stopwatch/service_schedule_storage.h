@@ -19,7 +19,10 @@ static_assert(kWorstCaseRecordBytes <= kMaximumRecordBytes);
 using Bytes = std::vector<uint8_t>;
 enum class CodecResult { Accepted, InvalidState, LimitExceeded, Corrupt, UnsupportedVersion };
 
-// Deterministic little-endian OSS1 format, encoding version 1. UUIDs are packed
+// Deterministic little-endian OSS1 format. Encoding 1 bytes remain unchanged for
+// v1 snapshots; encoding 2 stores v2 snapshots and an explicitly zero-packed absent
+// occurrence only with its exact zero/empty Service fields. Loading never converts
+// versions. The server-time slot remains zero for v2. UUIDs are packed
 // into 16 bytes; revisions use 7 bytes, epochs 6, signed offsets 4. Active keys
 // are derived from the snapshot; pending ACK keys retain their original revision
 // and occurrence even after replacement/retirement. Order is preserved exactly.

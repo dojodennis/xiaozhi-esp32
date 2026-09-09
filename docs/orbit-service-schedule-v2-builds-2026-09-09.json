@@ -1,0 +1,263 @@
+{
+  "started_at": "2026-09-09T04:27:35.905850+00:00",
+  "image": "espressif/idf@sha256:0d8c9773d48a327233f9c1d7c654ff0bcf133ae24503ea2e97a57cfe02b8cb67",
+  "base_commit": "69afde7b1ce454d022fb987f88035d778240d569",
+  "source_sha256": {
+    "main/boards/m5stack/stopwatch/service_schedule.cc": "2ca4ec8164cf9e98dcc7ddd153b09ed77977b34be88c4dc562206ec7eaf102a3",
+    "main/boards/m5stack/stopwatch/service_schedule.h": "898e58cb42fb4ed68b773a439773e21355021247c138655ff7a38188f369043d",
+    "main/boards/m5stack/stopwatch/service_schedule_face.cc": "2631bce180120462e34a6b482b2a2e0d520dc0c8fb2744158edcecf490f4a149",
+    "main/boards/m5stack/stopwatch/service_schedule_face.h": "bd901a7ca07fea20c8772c1aadd9a5ed8f37453433eb879e1b4599b5ace533f1",
+    "main/boards/m5stack/stopwatch/service_schedule_storage.cc": "6ae484ab66b5104e800c27b64b09bee8d8915f481ab9f1fb7edbfece5aa3b2d2",
+    "main/boards/m5stack/stopwatch/service_schedule_storage.h": "4d653112f5c06170317771a881d40db4d1e0fe5da41b7d5c5eb33ea649bfa670",
+    "main/boards/m5stack/stopwatch/service_schedule_view.cc": "ddba36166b12c40d7d91aceedc91a4ab57e21c856666ad185c193c2d42470294",
+    "main/boards/m5stack/stopwatch/service_schedule_wire.cc": "1b1976da41cc635acf77052741ba3312f1e53907df27f2f42ca4ed6458c6993d",
+    "main/boards/m5stack/stopwatch/service_schedule_wire.h": "296cd2415a69c2111ed171aa6ef27e5a7301e2b62c4450f3ebcc2a1782a2c74c",
+    "main/boards/m5stack/stopwatch/service_schedule_worker.cc": "2e381cb7b20e818a1e5df278364054ef998fc37654c3c20d1ee26db42c7786fb",
+    "main/boards/m5stack/stopwatch/service_schedule_worker.h": "b4a9947d4ba8d3610a2d5d3fd95068f27916893353d5f9e69380168b025936cb"
+  },
+  "frozen_archive_before": {
+    "source-commit.txt": "16c87f8f0d044bd957fc5ca625d2d8a1e9aafab0ec0bd4ee4223fb64c13c5de7",
+    "sdkconfig": "2cd000f6e964b07e76dfc08fcef8b2ca615d24d959732c8bce3640b139a1dd50",
+    "partitions.csv": "e7b8cedf1a8d0c2385b2b6a09a32be3fa1a6f11546e8032c1053102e4e7a1a2b",
+    "hardware_bench_profile.json": "bb1b23af70dd76d187508b26ae84a8be358bc2315085ab2193128ff7089fd139",
+    "manifest.json": "542e4e85e95c1f3055cbdf3da9758b034b23deccd611b70008987eab8e4c1e51",
+    "xiaozhi-unsigned.bin": "ecffe7aa30eddcf0e965a1beeeef82326357bbba28057ad418160d9f89ba706c",
+    "dependencies.lock": "3d627e36af969bb3c0847bc92036d6875faa7f266f899a4a63fced3e586cee7c"
+  },
+  "builds": [
+    {
+      "variant": "provisions-kitchen-helper-stopwatch-schedule-demo",
+      "config": "config.json",
+      "command": [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--name",
+        "orbit-schedule-v2-build-13f602e95b1f",
+        "--label",
+        "codex.task=orbit-schedule-v2",
+        "-v",
+        "/Users/dojo/.codex/worktrees/orbit-service-schedule:/project",
+        "-v",
+        "/Users/dojo/.codex/worktrees/a0bef4e3-51b3-46c1-acf1-b6a4c0d26e4f/xiaozhi-esp32/.git:/Users/dojo/.codex/worktrees/a0bef4e3-51b3-46c1-acf1-b6a4c0d26e4f/xiaozhi-esp32/.git:ro",
+        "-w",
+        "/project",
+        "-e",
+        "CCACHE_DISABLE=1",
+        "espressif/idf@sha256:0d8c9773d48a327233f9c1d7c654ff0bcf133ae24503ea2e97a57cfe02b8cb67",
+        "python",
+        "scripts/build.py",
+        "m5stack/stopwatch",
+        "--config",
+        "config.json",
+        "--name",
+        "provisions-kitchen-helper-stopwatch-schedule-demo",
+        "--language",
+        "en-US"
+      ],
+      "exit_code": 0,
+      "log": "/tmp/orbit-schedule-v2-idf/provisions-kitchen-helper-stopwatch-schedule-demo.log",
+      "log_sha256": "f85b1276cd678c8c4c3efa96130684bce9844a4418743398c9a4fef3f3fde746",
+      "source_unchanged": true,
+      "owned_container_removed": true,
+      "artifacts": {
+        "build/xiaozhi.bin": {
+          "bytes": 2934832,
+          "sha256": "ae28aae555422651262659d590597af9bc9b7cde7d83e039fe810680e6e44fd8"
+        },
+        "sdkconfig": {
+          "bytes": 128534,
+          "sha256": "6b39cafd5521a4d9f883b48c1a282ff300a0f8455b81b5d5cca516b055d498da"
+        },
+        "dependencies.lock": {
+          "bytes": 33916,
+          "sha256": "3d627e36af969bb3c0847bc92036d6875faa7f266f899a4a63fced3e586cee7c"
+        },
+        "build/generated_assets.bin": {
+          "bytes": 2694681,
+          "sha256": "11f3abd184183956f065a36fa352f93ce9a1b0b6090b5ece55c6709ee2c90561"
+        }
+      }
+    },
+    {
+      "variant": "provisions-kitchen-helper-stopwatch-schedule-bench",
+      "config": "hardware_bench_profile.json",
+      "command": [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--name",
+        "orbit-schedule-v2-build-6625ccbc4a74",
+        "--label",
+        "codex.task=orbit-schedule-v2",
+        "-v",
+        "/Users/dojo/.codex/worktrees/orbit-service-schedule:/project",
+        "-v",
+        "/Users/dojo/.codex/worktrees/a0bef4e3-51b3-46c1-acf1-b6a4c0d26e4f/xiaozhi-esp32/.git:/Users/dojo/.codex/worktrees/a0bef4e3-51b3-46c1-acf1-b6a4c0d26e4f/xiaozhi-esp32/.git:ro",
+        "-w",
+        "/project",
+        "-e",
+        "CCACHE_DISABLE=1",
+        "espressif/idf@sha256:0d8c9773d48a327233f9c1d7c654ff0bcf133ae24503ea2e97a57cfe02b8cb67",
+        "python",
+        "scripts/build.py",
+        "m5stack/stopwatch",
+        "--config",
+        "hardware_bench_profile.json",
+        "--name",
+        "provisions-kitchen-helper-stopwatch-schedule-bench",
+        "--language",
+        "en-US"
+      ],
+      "exit_code": 0,
+      "log": "/tmp/orbit-schedule-v2-idf/provisions-kitchen-helper-stopwatch-schedule-bench.log",
+      "log_sha256": "ef5519c81e122e577f0e3f76d80ad990eec5b09798a4f8fe265f443415682974",
+      "source_unchanged": true,
+      "owned_container_removed": true,
+      "artifacts": {
+        "build/xiaozhi.bin": {
+          "bytes": 3080192,
+          "sha256": "a98ac723e7ca5b8d238a4c6114cf6f8feff3dfdd6ff73413f28b8c5cde09e6ef"
+        },
+        "sdkconfig": {
+          "bytes": 128910,
+          "sha256": "687c70473c5504617c21c9578e7712fd45fb19130cda1499ef9e95e7174c5683"
+        },
+        "dependencies.lock": {
+          "bytes": 33916,
+          "sha256": "3d627e36af969bb3c0847bc92036d6875faa7f266f899a4a63fced3e586cee7c"
+        },
+        "build/generated_assets.bin": {
+          "bytes": 2694681,
+          "sha256": "11f3abd184183956f065a36fa352f93ce9a1b0b6090b5ece55c6709ee2c90561"
+        }
+      }
+    },
+    {
+      "variant": "provisions-kitchen-helper-stopwatch",
+      "config": "bench_profile.json",
+      "command": [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--name",
+        "orbit-schedule-v2-build-85e96b5c89e9",
+        "--label",
+        "codex.task=orbit-schedule-v2",
+        "-v",
+        "/Users/dojo/.codex/worktrees/orbit-service-schedule:/project",
+        "-v",
+        "/Users/dojo/.codex/worktrees/a0bef4e3-51b3-46c1-acf1-b6a4c0d26e4f/xiaozhi-esp32/.git:/Users/dojo/.codex/worktrees/a0bef4e3-51b3-46c1-acf1-b6a4c0d26e4f/xiaozhi-esp32/.git:ro",
+        "-w",
+        "/project",
+        "-e",
+        "CCACHE_DISABLE=1",
+        "espressif/idf@sha256:0d8c9773d48a327233f9c1d7c654ff0bcf133ae24503ea2e97a57cfe02b8cb67",
+        "python",
+        "scripts/build.py",
+        "m5stack/stopwatch",
+        "--config",
+        "bench_profile.json",
+        "--name",
+        "provisions-kitchen-helper-stopwatch",
+        "--language",
+        "en-US"
+      ],
+      "exit_code": 0,
+      "log": "/tmp/orbit-schedule-v2-idf/provisions-kitchen-helper-stopwatch.log",
+      "log_sha256": "59a49c474a891898df06a4db9f0ffddd65b235ce8e6771bb41319f0e0b05395b",
+      "source_unchanged": true,
+      "owned_container_removed": true,
+      "artifacts": {
+        "build/xiaozhi.bin": {
+          "bytes": 3080192,
+          "sha256": "5bbe3c2ee080815bf73ff3eeaa5ac4448028eb2b2475ab3aa405a99a3038c23d"
+        },
+        "sdkconfig": {
+          "bytes": 128943,
+          "sha256": "5d6856790462f003197559c29bb9d63310bfd079a486a1ca8e5be464aebe7c74"
+        },
+        "dependencies.lock": {
+          "bytes": 33916,
+          "sha256": "3d627e36af969bb3c0847bc92036d6875faa7f266f899a4a63fced3e586cee7c"
+        },
+        "build/generated_assets.bin": {
+          "bytes": 2694681,
+          "sha256": "11f3abd184183956f065a36fa352f93ce9a1b0b6090b5ece55c6709ee2c90561"
+        }
+      }
+    },
+    {
+      "variant": "m5stack-stopwatch",
+      "config": "config.json",
+      "command": [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "--name",
+        "orbit-schedule-v2-build-2780364676b9",
+        "--label",
+        "codex.task=orbit-schedule-v2",
+        "-v",
+        "/Users/dojo/.codex/worktrees/orbit-service-schedule:/project",
+        "-v",
+        "/Users/dojo/.codex/worktrees/a0bef4e3-51b3-46c1-acf1-b6a4c0d26e4f/xiaozhi-esp32/.git:/Users/dojo/.codex/worktrees/a0bef4e3-51b3-46c1-acf1-b6a4c0d26e4f/xiaozhi-esp32/.git:ro",
+        "-w",
+        "/project",
+        "-e",
+        "CCACHE_DISABLE=1",
+        "espressif/idf@sha256:0d8c9773d48a327233f9c1d7c654ff0bcf133ae24503ea2e97a57cfe02b8cb67",
+        "python",
+        "scripts/build.py",
+        "m5stack/stopwatch",
+        "--config",
+        "config.json",
+        "--name",
+        "m5stack-stopwatch",
+        "--language",
+        "en-US"
+      ],
+      "exit_code": 0,
+      "log": "/tmp/orbit-schedule-v2-idf/m5stack-stopwatch.log",
+      "log_sha256": "912e01b4f7f16bce55da2da5163c41c63e7f82560c2bdffa87b099193fc368d0",
+      "source_unchanged": true,
+      "owned_container_removed": true,
+      "artifacts": {
+        "build/xiaozhi.bin": {
+          "bytes": 2979248,
+          "sha256": "2be5ef21a2c66ed1454adad5444afa4553287b3b93efe48623a57e63f237fbce"
+        },
+        "sdkconfig": {
+          "bytes": 128437,
+          "sha256": "0d7864ef9b02933a48f0725acb0bc91196715ae2917a097963e09eb0011028e8"
+        },
+        "dependencies.lock": {
+          "bytes": 33916,
+          "sha256": "3d627e36af969bb3c0847bc92036d6875faa7f266f899a4a63fced3e586cee7c"
+        },
+        "build/generated_assets.bin": {
+          "bytes": 2985801,
+          "sha256": "25fbcfb290baf9c1dcfffcedb95ac015322736abbbdbab248ecd96a898a91cb1"
+        }
+      }
+    }
+  ],
+  "completed_at": "2026-09-09T04:32:30.848400+00:00",
+  "frozen_archive_unchanged": true,
+  "limits": {
+    "physical_acceptance": false,
+    "installed": false,
+    "signed": false,
+    "network": "none",
+    "existing_bench_candidate_replaced": false,
+    "notes": "Validation builds in the owning worktree only; application binaries were not installed or copied over the frozen bench archive. No device, serial, signing or network route operation."
+  }
+}

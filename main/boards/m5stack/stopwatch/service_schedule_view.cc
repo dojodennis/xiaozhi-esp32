@@ -101,7 +101,9 @@ void ScheduleView::Render(const FaceModel& model, const TimeLabel& time_label, b
         lv_obj_set_style_text_color(remaining_[i], lv_color_hex(color), 0);
     }
     lv_label_set_text(title_, demo ? "DINNER / DEMO" : "SERVICE");
-    const auto service = snapshot && time_label ? time_label(snapshot->service_at_ms) : "--:--";
+    const auto service = snapshot && !snapshot->service_occurrence_id.empty() && time_label
+                             ? time_label(snapshot->service_at_ms)
+                             : "--:--";
     lv_label_set_text(service_, service.c_str());
     const Cue* next = nullptr;
     if (snapshot) {

@@ -40,10 +40,16 @@ bool Bounded(const WorkerCommand& command) {
         if (timer.id.size() > 36 || timer.label.size() > 320)
             return false;
     const auto& k = command.key;
+    const auto clock_bounded = [](const ClockRequest& request) {
+        return request.scope.assignment_id.size() <= 36 && request.scope.device_id.size() <= 36 &&
+               request.session_id.size() <= 36 && request.request_id.size() <= 36;
+    };
     return k.scope.assignment_id.size() <= 36 && k.scope.device_id.size() <= 36 &&
            k.service_occurrence_id.size() <= 36 && k.id.size() <= 36 &&
+           command.clock_session_id.size() <= 36 && clock_bounded(command.clock_request) &&
+           clock_bounded(command.clock_response.request) &&
            command.kind >= WorkerCommandKind::Snapshot &&
-           command.kind <= WorkerCommandKind::Reconcile;
+           command.kind <= WorkerCommandKind::AcceptClock;
 }
 bool DueChanged(const FaceModel& before, const FaceModel& after) {
     const auto& a = before.scheduler().items();
@@ -291,11 +297,39 @@ void ServiceScheduleWorker::Process(const WorkerCommand& command) {
                 Publish(WorkerStatus::RejectedKey);
             return;
         case WorkerCommandKind::Connection:
+            if (command.connected &&
+                ((model_.scheduler().snapshot() && model_.scheduler().snapshot()->version == 2 &&
+                  command.clock_session_id.empty()) ||
+                 (!command.clock_session_id.empty() &&
+                  !model_.SetClockSession(command.clock_session_id)))) {
+                model_.SetConnected(false);
+                Publish(WorkerStatus::ClockRejected);
+                return;
+            }
             model_.SetConnected(command.connected);
             Publish(WorkerStatus::ConnectionChanged);
             return;
         case WorkerCommandKind::Reconcile:
             return;
+        case WorkerCommandKind::BeginClockRequest:
+            Publish(model_.BeginClockRequest(command.clock_request, command.monotonic_ms)
+                        ? WorkerStatus::ClockRequested
+                        : WorkerStatus::ClockRejected);
+            return;
+        case WorkerCommandKind::AcceptClock: {
+            const auto result = candidate.AcceptClock(command.clock_response, command.monotonic_ms);
+            if (result == ClockResult::Accepted && DueChanged(model_, candidate)) {
+                // Consume even if saving the newly due flags fails or is uncertain.
+                model_.CancelClockRequest();
+                Persist(std::move(candidate), WorkerStatus::ClockAccepted);
+            } else {
+                model_ = std::move(candidate);
+                Publish(result == ClockResult::Accepted       ? WorkerStatus::ClockAccepted
+                        : result == ClockResult::InvalidClock ? WorkerStatus::InvalidClock
+                                                              : WorkerStatus::ClockRejected);
+            }
+            return;
+        }
     }
 }
 void ServiceScheduleWorker::Reconcile() {

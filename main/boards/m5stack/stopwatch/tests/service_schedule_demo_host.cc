@@ -55,7 +55,17 @@ bool WriteFrame(const std::string& path) {
 
 void Emit(orbit::service_schedule::ScheduleDemo& demo, bool accepted, lv_display_t* display,
           orbit::service_schedule::ScheduleView& view, const std::string& frame_path) {
-    view.Render(demo.model(), demo.FixtureTime, true);
+    unsigned zero_time_calls = 0;
+    view.Render(
+        demo.model(),
+        [&](int64_t time) {
+            if (time == 0) {
+                ++zero_time_calls;
+                return std::string{"INVALID ZERO TIME"};
+            }
+            return demo.FixtureTime(time);
+        },
+        true);
     lv_obj_update_layout(lv_screen_active());
     lv_tick_inc(40);
     lv_refr_now(display);
@@ -63,6 +73,7 @@ void Emit(orbit::service_schedule::ScheduleDemo& demo, bool accepted, lv_display
     const auto& scheduler = model.scheduler();
     cJSON* root = cJSON_CreateObject();
     cJSON_AddBoolToObject(root, "accepted", accepted);
+    cJSON_AddNumberToObject(root, "zero_time_calls", zero_time_calls);
     cJSON_AddBoolToObject(root, "valid", demo.valid());
     cJSON_AddStringToObject(root, "stage", demo.stage());
     cJSON_AddBoolToObject(root, "connected", scheduler.connected());
@@ -142,6 +153,19 @@ int main(int argc, char** argv) {
                 demo->Elapse(delta);
                 accepted = true;
             }
+        } else if (command == "absent_service") {
+            // Host-only fixture transition through the actual model and view.
+            auto snapshot = *demo->model().scheduler().snapshot();
+            snapshot.version = 2;
+            snapshot.server_now_ms = 0;
+            snapshot.service_occurrence_id.clear();
+            snapshot.service_revision = 0;
+            snapshot.service_at_ms = 0;
+            snapshot.timezone.clear();
+            snapshot.cues.clear();
+            ++snapshot.snapshot_revision;
+            accepted = demo->model().ApplyVerified(snapshot, 0) ==
+                       orbit::service_schedule::ApplyResult::Applied;
         } else if (command == "ack")
             accepted = demo->Acknowledge();
         else if (command == "reset") {

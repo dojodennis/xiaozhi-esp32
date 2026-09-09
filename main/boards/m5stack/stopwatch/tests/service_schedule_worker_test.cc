@@ -646,6 +646,169 @@ void StopDuringDelayedCompletionAndNewOwner() {
     command.token = {111, 1};
     assert(newer.Submit(command) == WorkerAdmission::Stale);
 }
+Snapshot V2Snapshot() {
+    auto s = SnapshotForTest();
+    s.version = 2;
+    s.service_occurrence_id.clear();
+    s.service_revision = 0;
+    s.service_at_ms = s.server_now_ms = 0;
+    s.timezone.clear();
+    return s;
+}
+Publication V2Connect(ServiceScheduleWorker& worker, Publication current,
+                      std::string session = Id(4)) {
+    auto c = Command(WorkerCommandKind::Connection, current);
+    c.connected = true;
+    c.clock_session_id = session;
+    return Send(worker, c);
+}
+ClockRequest V2Request(uint64_t revision = 1, unsigned nonce = 99) {
+    return {Enrolled(), Id(4), Id(nonce), revision};
+}
+Publication V2Begin(ServiceScheduleWorker& worker, Publication current, const ClockRequest& request,
+                    int64_t mono = 1000) {
+    auto c = Command(WorkerCommandKind::BeginClockRequest, current);
+    c.clock_request = request;
+    c.monotonic_ms = mono;
+    return Send(worker, c);
+}
+WorkerCommand V2Clock(Publication current, const ClockRequest& request, int64_t epoch,
+                      int64_t mono = 1000) {
+    auto c = Command(WorkerCommandKind::AcceptClock, current);
+    c.clock_response = {request, epoch};
+    c.monotonic_ms = mono;
+    return c;
+}
+void V2OrdinaryTimeWithoutFlashAndReboot() {
+    auto disk = std::make_shared<Disk>();
+    {
+        ServiceScheduleWorker worker(Enrolled(), 600, Store(disk));
+        auto p = Apply(worker, Take(worker), V2Snapshot());
+        assert(p->status == WorkerStatus::Applied && disk->Writes() == 1);
+        assert(p->face->scheduler().clock_state() == ClockState::AwaitingFreshTime);
+        p = V2Connect(worker, p);
+        p = V2Begin(worker, p, V2Request());
+        assert(p->status == WorkerStatus::ClockRequested);
+        p = Send(worker, V2Clock(p, V2Request(), kNow));
+        assert(p->status == WorkerStatus::ClockAccepted && disk->Writes() == 1);
+        assert(p->face->scheduler().clock_state() == ClockState::Trusted && p->face->due().empty());
+        p = Tick(worker, p, 1500);
+        assert(p->face->scheduler().now_ms() == kNow + 500 && disk->Writes() == 1);
+        assert(DecodeState(disk->BytesOnDisk()).schedule.last_known_epoch_ms == 0);
+    }
+    ServiceScheduleWorker worker(Enrolled(), 601, Store(disk));
+    auto p = Take(worker);
+    assert(p->status == WorkerStatus::BootPresent && !p->face->scheduler().connected());
+    assert(p->face->scheduler().clock_state() == ClockState::AwaitingFreshTime);
+    p = Send(worker, V2Clock(p, V2Request(), kNow + 1000));
+    assert(p->status == WorkerStatus::ClockRejected && disk->Writes() == 1);
+    auto downgrade = SnapshotForTest();
+    downgrade.snapshot_revision = 2;
+    p = Apply(worker, p, downgrade);
+    assert(p->status == WorkerStatus::RejectedSnapshot && disk->Writes() == 1);
+    p = V2Connect(worker, p);
+    p = V2Begin(worker, p, V2Request(1, 100));
+    p = Send(worker, V2Clock(p, V2Request(1, 100), kNow + 1000));
+    assert(p->status == WorkerStatus::ClockAccepted && p->face->due().size() == 6 &&
+           disk->Writes() == 2);
+    assert(!p->face->receipt_confirmed());
+}
+void V2DueWaitsForVerifiedStorage() {
+    auto disk = std::make_shared<Disk>();
+    ServiceScheduleWorker worker(Enrolled(), 602, Store(disk));
+    auto p = V2Connect(worker, Apply(worker, Take(worker), V2Snapshot()));
+    p = V2Begin(worker, p, V2Request());
+    {
+        std::lock_guard<std::mutex> lock(disk->mutex);
+        disk->block_save = true;
+    }
+    auto c = V2Clock(p, V2Request(), kNow + 1000);
+    assert(worker.Submit(c) == WorkerAdmission::Accepted);
+    disk->WaitEntered();
+    assert(!worker.TryTakePublication() && p->face->due().empty());
+    assert(worker.Submit(c) == WorkerAdmission::Busy);
+    disk->Release();
+    p = Take(worker);
+    assert(p->status == WorkerStatus::ClockAccepted && p->face->due().size() == 6);
+    auto selected = p->face->scheduler().items()[0].key;
+    c = Command(WorkerCommandKind::Acknowledge, p);
+    c.key = selected;
+    p = Send(worker, c);
+    assert(p->face->due().size() == 5 && p->face->pending().size() == 1);
+    c.token = p->token;
+    p = Send(worker, c);
+    assert(p->status == WorkerStatus::RejectedKey && p->face->due().size() == 5);
+    p = Send(worker, V2Clock(p, V2Request(), kNow + 1000));
+    assert(p->status == WorkerStatus::ClockRejected && disk->Writes() == 3);
+}
+void V2FailedDueConsumesNonceAndUncertainRestoresUntrusted() {
+    for (auto fault :
+         {SaveFault::IoError, SaveFault::UncertainCandidate, SaveFault::UncertainPrior}) {
+        auto disk = std::make_shared<Disk>();
+        ServiceScheduleWorker worker(Enrolled(), 603, Store(disk));
+        auto p = V2Connect(worker, Apply(worker, Take(worker), V2Snapshot()));
+        p = V2Begin(worker, p, V2Request());
+        {
+            std::lock_guard<std::mutex> lock(disk->mutex);
+            disk->save_fault = fault;
+        }
+        p = Send(worker, V2Clock(p, V2Request(), kNow + 1000));
+        assert(p->face->due().empty() && !p->face->receipt_confirmed() && disk->Writes() == 2);
+        assert(p->status == (fault == SaveFault::IoError ? WorkerStatus::StorageIoError
+                                                         : WorkerStatus::Uncertain));
+        assert(p->recovery_required);
+        assert(worker.Submit(V2Clock(p, V2Request(), kNow + 1000)) ==
+               WorkerAdmission::RecoveryRequired);
+        p = Send(worker, Command(WorkerCommandKind::Reconcile, p));
+        assert(p->status == (fault == SaveFault::UncertainCandidate
+                                 ? WorkerStatus::ReconciledCandidate
+                                 : WorkerStatus::ReconciledPrior));
+        assert(p->face->scheduler().clock_state() == ClockState::AwaitingFreshTime &&
+               !p->face->scheduler().connected());
+        assert(p->face->due().size() == (fault == SaveFault::UncertainCandidate ? 6 : 0));
+        p = V2Connect(worker, p);
+        p = Send(worker, V2Clock(p, V2Request(), kNow + 1000));
+        assert(p->status == WorkerStatus::ClockRejected && disk->Writes() == 2);
+        {
+            std::lock_guard<std::mutex> lock(disk->mutex);
+            disk->save_fault = SaveFault::None;
+        }
+        p = V2Begin(worker, p, V2Request(1, 100), 2000);
+        p = Send(worker, V2Clock(p, V2Request(1, 100), kNow + 1000, 2000));
+        assert(p->status == WorkerStatus::ClockAccepted && p->face->due().size() == 6);
+        assert(disk->Writes() == (fault == SaveFault::UncertainCandidate ? 2 : 3));
+    }
+}
+void V2SessionAndRevisionFences() {
+    auto disk = std::make_shared<Disk>();
+    ServiceScheduleWorker worker(Enrolled(), 604, Store(disk));
+    auto p = V2Connect(worker, Apply(worker, Take(worker), V2Snapshot()));
+    p = V2Begin(worker, p, V2Request());
+    p = V2Connect(worker, p, "");
+    assert(p->status == WorkerStatus::ClockRejected && !p->face->scheduler().connected());
+    p = Send(worker, V2Clock(p, V2Request(), kNow));
+    assert(p->status == WorkerStatus::ClockRejected);
+    p = V2Connect(worker, p);
+    p = V2Begin(worker, p, V2Request(1, 100));
+    auto old = V2Clock(p, V2Request(1, 100), kNow);
+    auto next = V2Snapshot();
+    next.snapshot_revision++;
+    p = Apply(worker, p, next, 1500);
+    assert(worker.Submit(old) == WorkerAdmission::Stale);
+    old.token = p->token;
+    p = Send(worker, old);
+    assert(p->status == WorkerStatus::ClockRejected);
+    p = V2Begin(worker, p, V2Request(2, 101), 2000);
+    p = V2Begin(worker, p, V2Request(2, 102), 4000);
+    assert(p->status == WorkerStatus::ClockRejected);
+    p = V2Begin(worker, p, V2Request(2, 102), 4001);
+    assert(p->status == WorkerStatus::ClockRequested);
+    p = Send(worker, V2Clock(p, V2Request(2, 101), kNow, 4002));
+    assert(p->status == WorkerStatus::ClockRejected);
+    p = Send(worker, V2Clock(p, V2Request(2, 102), kNow, 6001));
+    assert(p->status == WorkerStatus::ClockAccepted && disk->Writes() == 2);
+}
+
 }  // namespace
 
 int main() {
@@ -664,5 +827,9 @@ int main() {
     StopDuringBootAndMalformedRestoration();
     StopDuringDelayedCompletionAndNewOwner();
     IdleStopWaitBoundary();
-    std::puts("16 threaded worker scenarios passed");
+    V2OrdinaryTimeWithoutFlashAndReboot();
+    V2DueWaitsForVerifiedStorage();
+    V2FailedDueConsumesNonceAndUncertainRestoresUntrusted();
+    V2SessionAndRevisionFences();
+    std::puts("20 threaded worker scenarios passed");
 }

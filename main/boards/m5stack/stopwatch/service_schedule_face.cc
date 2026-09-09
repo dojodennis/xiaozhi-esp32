@@ -74,6 +74,12 @@ void FaceModel::Tick(int64_t monotonic_ms) {
     Refresh();
 }
 
+ClockResult FaceModel::AcceptClock(const ClockResponse& response, int64_t received_monotonic_ms) {
+    const auto result = scheduler_.AcceptClock(response, received_monotonic_ms);
+    Refresh();
+    return result;
+}
+
 void FaceModel::Refresh() {
     const auto* snapshot = scheduler_.snapshot();
     if (!snapshot)
@@ -153,7 +159,8 @@ bool FaceModel::ExportState(FacePersistentState& output) const {
 }
 
 bool FaceModel::RestoreState(const FacePersistentState& saved) {
-    if (scheduler_.snapshot() || saved.version != 1 || saved.pending.size() > kMaximumItems)
+    if (scheduler_.snapshot() || saved.version != 1 || saved.pending.size() > kMaximumItems ||
+        (saved.schedule.last_known_epoch_ms == 0 && !saved.pending.empty()))
         return false;
     // Restore into a copy so an invalid pending outbox cannot partially install
     // a valid schedule. Scheduler::Restore owns all scope, snapshot and clock checks.

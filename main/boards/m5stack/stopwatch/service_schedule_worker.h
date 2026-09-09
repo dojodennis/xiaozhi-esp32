@@ -30,7 +30,16 @@ struct WorkerToken {
     uint64_t snapshot_revision = 0;
 };
 
-enum class WorkerCommandKind { Snapshot, Tick, Acknowledge, Connection, Receipt, Reconcile };
+enum class WorkerCommandKind {
+    Snapshot,
+    Tick,
+    Acknowledge,
+    Connection,
+    Receipt,
+    Reconcile,
+    BeginClockRequest,
+    AcceptClock
+};
 struct WorkerCommand {
     WorkerCommandKind kind = WorkerCommandKind::Tick;
     WorkerToken token;
@@ -38,6 +47,9 @@ struct WorkerCommand {
     AlarmKey key;
     int64_t monotonic_ms = 0;
     bool connected = false;
+    std::string clock_session_id;
+    ClockRequest clock_request;
+    ClockResponse clock_response;
 };
 
 enum class WorkerAdmission { Accepted, Busy, Stale, Invalid, RecoveryRequired, Stopped };
@@ -65,6 +77,9 @@ enum class WorkerStatus {
     ReconciledCandidate,
     ReconciledPrior,
     ReconciliationMismatch,
+    ClockRequested,
+    ClockAccepted,
+    ClockRejected,
 };
 
 struct WorkerPublication {
@@ -85,7 +100,14 @@ struct WorkerPublication {
 // is explicit backpressure, never silent replacement or an unbounded retry queue.
 //
 // Caller validates transport/session/assignment/occurrence, IANA/Unicode policy
-// and fresh server time BEFORE Snapshot; cached replay cannot establish time.
+// before Snapshot; v1 additionally needs verified fresh server time. V2 clock
+// samples use BeginClockRequest/AcceptClock only. Connection(true) for v2 requires
+// the current authenticated session ID; missing IDs disconnect and fail closed.
+// Use a never-reused unpredictable request UUID and actual monotonic send/receive
+// times. Begin admission precedes socket send; its timestamp conservatively starts
+// the response window before any worker wait. ClockRequested authorizes sending
+// that exact request only for the still-current socket/owner. No transport is here.
+// Caller fences each socket callback before Submit; payload IDs are not authority.
 // Connection and Receipt are explicit authenticated caller events. Tokens bind
 // every command to an enrolled owner and schedule revision. An ACK also binds the
 // exact key, allowing other alarms to become due without ACKing a different one.

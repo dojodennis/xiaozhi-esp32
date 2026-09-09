@@ -110,7 +110,7 @@ class Demo:
         tick = (isinstance(command, str) and command.startswith("tick ")
                 and command[5:].isascii() and command[5:].isdecimal()
                 and 0 <= int(command[5:]) <= 3_600_000)
-        if not tick and command not in {"next", "ack", "reset", "wrong_receipt", "receipt"}:
+        if not tick and command not in {"next", "ack", "reset", "wrong_receipt", "receipt", "absent_service"}:
             raise ValueError("Unknown fixture command")
         self.process.stdin.write(command + "\n")
         self.process.stdin.flush()
