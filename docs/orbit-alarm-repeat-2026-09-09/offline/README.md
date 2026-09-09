@@ -1,8 +1,11 @@
 # Orbit alarm repeat: offline evidence
 
-Date: 2026-09-09  
-Frozen source: `45772685c082a55ef26673da078979a96facdbf6`  
-Asset: `main/assets/common/exclamation.ogg`  
+Date: 2026-09-09
+
+Frozen source: `45772685c082a55ef26673da078979a96facdbf6`
+
+Asset: `main/assets/common/exclamation.ogg`
+
 Asset SHA-256: `61d0a91d7658e62c2ee0a940bd8b99e2062c4b760848f0ba2d793c852def4716`
 
 ## Reproduction
