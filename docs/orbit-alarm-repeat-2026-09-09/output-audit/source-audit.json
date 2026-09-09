@@ -1,0 +1,87 @@
+{
+  "scope": "Off-device source and protected prior-evidence audit; no runtime modification or device action.",
+  "component_version": "esp_codec_dev 1.5.11",
+  "component_files": [
+    {
+      "path": "managed_components/espressif__esp_codec_dev/esp_codec_dev.c",
+      "sha256": "b7a17e2ad412f4c08e0e9324aea0f217a49305510fd80e7ef3420fb31d7fd2ce",
+      "package_manifest_match": true
+    },
+    {
+      "path": "managed_components/espressif__esp_codec_dev/esp_codec_dev_vol.c",
+      "sha256": "3ec591e1757b331832c2b68c267bc18d0c6edc8b2a6933184c16935ca9ba102c",
+      "package_manifest_match": true
+    },
+    {
+      "path": "managed_components/espressif__esp_codec_dev/device/es8311/es8311.c",
+      "sha256": "89bea26707abf7313806c2fc15299a22bcd96d8072d83794ff0e2dd2afd20dbe",
+      "package_manifest_match": true
+    },
+    {
+      "path": "managed_components/espressif__esp_codec_dev/include/esp_codec_dev_vol.h",
+      "sha256": "2ee723bc80dc9cc3478eeaf6920fbce2dc707dfef33d9b4deb2d9175d702c572",
+      "package_manifest_match": true
+    }
+  ],
+  "accepted_build_log_sha256": "0f1e22d48428f754e9011212aac11a5c0b0c506c76dd9eea58f7b3d39ee38416",
+  "accepted_build_versions": [
+    "NOTICE: [21/73] espressif/esp_codec_dev (1.5.11)",
+    "NOTICE: [65/73] m5stack/m5ioe1 (1.0.9)"
+  ],
+  "source_provenance": [
+    {
+      "commit": "a84ab070dfb3205c900430902c949d899e77e4c8",
+      "files": {
+        "main/audio/codecs/es8311_audio_codec.cc": {
+          "sha256": "116f13f8d5ca7c220ccde331663d2b7b3ed8efccb61cbf39c5b6ed1d3f154952"
+        },
+        "main/boards/m5stack/stopwatch/config.h": {
+          "sha256": "b8d3df127eeda02d02580b1af75042a0d20b19c02b486cf866425a3ee8bafe3b"
+        },
+        "main/boards/m5stack/stopwatch/m5stack_stopwatch.cc": {
+          "sha256": "6c797a53cd081ca695d235cfcc5db25d3867b257f514d0e25e7357b7ff7d6b16"
+        }
+      },
+      "shared_config_assertions_pass": true
+    },
+    {
+      "commit": "fa0b92f8ec5d0601d1aa7b6df691ef7d2004ba66",
+      "files": {
+        "main/audio/codecs/es8311_audio_codec.cc": {
+          "sha256": "aedd037183c7151f7deff88e1b258997403e41670088148daf611e295f907dbc"
+        },
+        "main/boards/m5stack/stopwatch/config.h": {
+          "sha256": "b8d3df127eeda02d02580b1af75042a0d20b19c02b486cf866425a3ee8bafe3b"
+        },
+        "main/boards/m5stack/stopwatch/m5stack_stopwatch.cc": {
+          "sha256": "d5a47afca49436fbc8743bb58094d959f5a9392aaff2cf44cca7d56fb92ab9f2"
+        }
+      },
+      "shared_config_assertions_pass": true
+    }
+  ],
+  "saved_volume_target": 100,
+  "saved_volume_evidence": "Only audio.output_volume int32 hash from the already-verified pre-install NVS audit was matched; raw values for all other records remain private.",
+  "volume_callback_result_discarded": true,
+  "mute_callback_result_discarded": true,
+  "gain_model": [
+    {
+      "requested_percent": 90,
+      "default_curve_db": -5.0,
+      "configured_hw_gain_db": -3.609121289162627,
+      "target_dac_db": -1.3908787108373728,
+      "predicted_reg32": "0xbc",
+      "quantized_dac_db": -1.5
+    },
+    {
+      "requested_percent": 100,
+      "default_curve_db": 0.0,
+      "configured_hw_gain_db": -3.609121289162627,
+      "target_dac_db": 3.609121289162627,
+      "predicted_reg32": "0xc6",
+      "quantized_dac_db": 3.5
+    }
+  ],
+  "gain_model_limit": "Source-derived prediction using configured voltage assumptions and default curve. Not a hardware register readback, measured rail voltage, clipping measurement or acoustic proof.",
+  "current_measurement_gap": "No captured ES8311 register 0x31/0x32 readback and no measured amplifier rail/output. Successful software return/counter cannot close this gap."
+}
