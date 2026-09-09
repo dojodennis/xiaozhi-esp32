@@ -56,7 +56,7 @@
     "scripts/tests/test_provisions_voice_recorder_review.py": "059773dd1e6e6c1762478dc13368ac58c9124eac2ecda4eb8eaaeccd7327826c"
   },
   "signed": true,
-  "installed": false,
+  "installed": true,
   "network": "none",
   "usb_mounted": false,
   "signed_bytes": 3084288,
@@ -79,5 +79,8 @@
     "image.log": "19de47ae5efb7c63b53c07ef147c6d150876d988f00e64ef50750031130d8425"
   },
   "host_log_sha256": "345f9c22cf9e0045f2871233b76bc7a48f216ccecb1a1406ef97e56ea8768c95",
-  "build_log_sha256": "4eef48b03290a69dd1f8406573dd9df9697937da433816c4ff76c42d325d70d6"
+  "build_log_sha256": "4eef48b03290a69dd1f8406573dd9df9697937da433816c4ff76c42d325d70d6",
+  "whole_expected_flash_verified": true,
+  "authenticated_boot": true,
+  "gateway_compatibility_fix": "d487d7feb86a4a3c63303a55a37c98ca35196a67"
 }

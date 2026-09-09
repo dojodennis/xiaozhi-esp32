@@ -1,0 +1,12 @@
+{
+  "candidate_installed": true,
+  "signed_application_sha256": "75a36af07e55a2e7a81e5f6fcb16538881055d2d580dab1e0dc7bbc0bbf7c4c7",
+  "whole_expected_flash_verified": true,
+  "gateway_daemon_image_id": "sha256:3546a52a0e3b9fc9ef6e8bcba4051668764caa7246e0a407536a1fc3bd8f7a64",
+  "gateway_container": "ede077a0fd8d8d5e17740ca87d58251ab4cba6a87214f03701bec031d9979769",
+  "authenticated_boot": true,
+  "device_ready_at_boot_ms": 16080,
+  "gateway_authenticated_at": "2026-09-09T20:33:33.696Z",
+  "physical_capture_test": "First shopping note instructions issued; observation pending",
+  "recorded_at": "2026-09-09T20:34:33.987835+00:00"
+}

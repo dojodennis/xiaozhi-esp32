@@ -63,3 +63,17 @@ not apply to this different firmware test.
 Timer behavior remains accepted for its milestone. Speaker diagnostics are
 paused. Nothing in this package claims a new physical pass, complete list
 functionality, phone sharing, notification support or a 48-hour soak.
+
+## Supervised installation checkpoint
+
+The app-only write and whole expected-image verification passed on 9 September.
+The first boot exposed a pre-existing gateway handshake incompatibility with the
+StopWatch snapshot offer. The bounded gateway correction d487d7f accepts the
+known boolean offer without selecting snapshot support. The unchanged installed
+firmware then authenticated successfully after one deliberate restart. The current
+gateway daemon image is
+`sha256:3546a52a0e3b9fc9ef6e8bcba4051668764caa7246e0a407536a1fc3bd8f7a64`.
+See the companion gateway repository
+`docs/orbit-capture-hello-2026-09-09` and `device-test-status.json`.
+First physical capture observation is pending; no capture acceptance is inferred
+from installation or authentication.
