@@ -1,0 +1,158 @@
+{
+  "scope": "Sanitized counters, observations, structural preservation/verification and recovery evidence. Raw flash, NVS, credentials and normal runtime console remain private.",
+  "source_session": "2026-09-09-supervised-174021",
+  "files": {
+    "README.md": {
+      "bytes": 5951,
+      "sha256": "9d78f08de6f3eca97f9f76c75ddc2e6126c6cad0a8cdbebc045da7a61dbad60e"
+    },
+    "backup-adaptation-review.json": {
+      "bytes": 739,
+      "sha256": "08311d6e6cb2c378ee5db247021b3d4d8b4c9a06135dbc8019afd128326b1949"
+    },
+    "bench-1-boot.json": {
+      "bytes": 475,
+      "sha256": "c6bf75e7ae8dc990a4fea0d9d0ca937501280da0e91d3e77358f5438b4268af6"
+    },
+    "bench-1-console.json": {
+      "bytes": 178,
+      "sha256": "9c7eed3bf8a728b24092473b949b9205ec30ac50f59a922bc86e2092a0b23742"
+    },
+    "bench-1-counters.log": {
+      "bytes": 24397,
+      "sha256": "736dcbbda1153e0dd26286cd6b613c6a91d91c659b8209782319ca92f7d1fb37"
+    },
+    "bench-1-physical-observation.json": {
+      "bytes": 972,
+      "sha256": "fd3395be5a555072da49c32817192393f8ea207a45105178cb9c71653c98f0b3"
+    },
+    "bench-1-trace.json": {
+      "bytes": 88828,
+      "sha256": "5b6b889c868efad7d951fd44b85769986705a52460bfc856bb0cc98bc53dde4b"
+    },
+    "install-execution.json": {
+      "bytes": 1314,
+      "sha256": "bac8054ed22023155904fc70895912bfe500e7054dac42c57d784bc97698c43d"
+    },
+    "install-independent-review.json": {
+      "bytes": 1148,
+      "sha256": "dc13497248df11b74e92ac2ac1a7fdb3dc78dbca2a877fcccb0ba76db740c217"
+    },
+    "install-overlay.json": {
+      "bytes": 2611,
+      "sha256": "cb18472f37f11449f91bc1b0a7a110012ac236ae20e32588b42a9865fe35b102"
+    },
+    "install-verified.json": {
+      "bytes": 206,
+      "sha256": "a2098a263ce0a8c9877e9e9027ea55bf3689e74d4379749d7d618e2b46605348"
+    },
+    "install-verify.log": {
+      "bytes": 795,
+      "sha256": "55159bb286e165628ff3a3582031392efaccca3bb2f743f28da06208735e7b63"
+    },
+    "install-write.log": {
+      "bytes": 866,
+      "sha256": "e25ab53ceba8dea22d73955b3bd13965f7574f89b72d95d27059ca6421bd2dd3"
+    },
+    "physical-sound-correction.json": {
+      "bytes": 706,
+      "sha256": "2f85de9e6b86776ae955254b4a0ea47692593ead583a48ac8d384fa190eb0188"
+    },
+    "post-bench-backup-verified.json": {
+      "bytes": 446,
+      "sha256": "b62abca83d31289f5fbbaf51db102dcba8670e828692d956b2d95a996bfe7173"
+    },
+    "post-bench-bench-decoded.json": {
+      "bytes": 1174,
+      "sha256": "149dfa2ac23b7cb9ba4e5c67d5ebdac6a88ed3cf24cc8cb004519799ad4a3596"
+    },
+    "post-bench-coverage-verified.json": {
+      "bytes": 26108,
+      "sha256": "60b4cbad37540496e3324b9131b6f895bf425c745400ce57b1f1100d7f685c21"
+    },
+    "post-bench-layout.json": {
+      "bytes": 1313,
+      "sha256": "a0f40fa7ca7e2b971c2b1121b77fdb45f6888a0a0c9af88c969ed63f242ad617"
+    },
+    "post-bench-nvs-summary.json": {
+      "bytes": 1627,
+      "sha256": "9ab9a8126447f4e856eba7010ffc200ce99868a898569457504603cf38fc26b9"
+    },
+    "post-bench-verify-full.log": {
+      "bytes": 789,
+      "sha256": "79d58594ae0c2ba124f0774cd760b0e749f5e90caf93408409ce6cecc72f13b3"
+    },
+    "pre-install-backup-verified.json": {
+      "bytes": 447,
+      "sha256": "263fb666cf0a2ec6b594a692cf18dc8e035a9805533f9311e42fa7fe82f537fb"
+    },
+    "pre-install-bench-decoded.json": {
+      "bytes": 1174,
+      "sha256": "149dfa2ac23b7cb9ba4e5c67d5ebdac6a88ed3cf24cc8cb004519799ad4a3596"
+    },
+    "pre-install-coverage-verified.json": {
+      "bytes": 23698,
+      "sha256": "bb3f3240f09d414be5c06593c7cb587e74b864ba5a5db493060e55a773ec0949"
+    },
+    "pre-install-layout.json": {
+      "bytes": 1313,
+      "sha256": "235d1d13bb61173247ab06748f571186bcdecfbaee96a5804faea64b73622e70"
+    },
+    "pre-install-nvs-summary.json": {
+      "bytes": 1540,
+      "sha256": "652a538269ae587bfefdf74673076067d63f3ed027c4a86fe67092eb64a8eda2"
+    },
+    "pre-install-verify-full.log": {
+      "bytes": 790,
+      "sha256": "a168979dec793b0bcab91f27df75d4cd5f5c68bb5398cf7b3754e0712aa9c928"
+    },
+    "restoration-complete.json": {
+      "bytes": 776,
+      "sha256": "37778c3f3a0960170036a025eaa6f4c3d298af3cbd67f8e704fe092ba98f88dc"
+    },
+    "restore-execution.json": {
+      "bytes": 1352,
+      "sha256": "07f89537d6de234f053ba6f8370bbc11176ace55af3cb5db6f4c4b0946f702bd"
+    },
+    "restore-independent-review.json": {
+      "bytes": 1124,
+      "sha256": "6f66f07c9b3832602ccc33ea4a5eaa1de0a838c939b72afe47ef8d555b91df14"
+    },
+    "restore-overlay.json": {
+      "bytes": 2648,
+      "sha256": "d8b929bf84873507aebef1a65a34e18e1a5645bb8ec45d38aabd70ac92656947"
+    },
+    "restore-verified.json": {
+      "bytes": 206,
+      "sha256": "0804f3e21871e9c431223302039578575f2c8f46443bdd77f9a35d5178893000"
+    },
+    "restore-verify.log": {
+      "bytes": 795,
+      "sha256": "a87fcedb0f22d9a1391fb98f017975bcaf1e51f6161d76e2955e1543813c460b"
+    },
+    "restore-write.log": {
+      "bytes": 866,
+      "sha256": "6007b315c87283c883732c6d31dcd8c559b022aa16440c7c08c05b6446c0c23f"
+    },
+    "restored-voice-boot.json": {
+      "bytes": 475,
+      "sha256": "e21fe78b61733cf90030ca4d55631bcd7fce0918890c1999f1b55bd190f7b570"
+    },
+    "restored-voice-console.json": {
+      "bytes": 178,
+      "sha256": "d0213bb8394eb875d599d10524bf3ecd9f6eaf9da5e56e16e17cbef7448639ae"
+    },
+    "restored-voice-physical-observation.json": {
+      "bytes": 374,
+      "sha256": "10329b6b13eaa1e4b2142511923b1312e60ede3544f3b36d0fc5a181c9989654"
+    },
+    "restored-voice-startup.json": {
+      "bytes": 440,
+      "sha256": "5c22f00ef81fe2d854d9a7c489f9531ed2c7ae65241ee002a29a079815120568"
+    },
+    "trace-independent-review.json": {
+      "bytes": 885,
+      "sha256": "f9fc96a5697361f93b8168626661498e757a69284acb6e653bb42d2aa6c0dc96"
+    }
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "reviewer_task": "01a0709d-0b27-7a73-b135-8502288e632f",
+  "received_at": "2026-09-09T17:59:28.247526+00:00",
+  "independent_raw_reparse": true,
+  "events": 132,
+  "complete_clips": 44,
+  "sequence_attempt_generation_range": [
+    1,
+    44
+  ],
+  "events_per_clip": [
+    "start",
+    "first_write",
+    "drain"
+  ],
+  "decoded_written_packets_per_clip": [
+    15,
+    15
+  ],
+  "decoded_output_samples_per_clip": [
+    21600,
+    21600
+  ],
+  "peak": 24380,
+  "rms": 9387.87,
+  "errors_drops_failed_writes_lost_inflight_at_drain": 0,
+  "gap_ms": {
+    "min": 1013,
+    "max": 1038,
+    "mean": 1022.65
+  },
+  "physical_result": "Corrected: some sound but far too quiet; acoustic usability FAIL",
+  "interpretation_limit": "Decode/submission/drain proved; gain/amplifier/codec/routing versus speaker not isolated; historical normal-voice report not a current restoration check"
+}

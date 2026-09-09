@@ -1,0 +1,8 @@
+{
+  "phase": "pre-install",
+  "full_backup_bytes": 16777216,
+  "sha256": "017c6360634660d5ac2489ddb5afac1cc1ecfdc144420b54ab0c97fa323999be",
+  "full_device_verification_passed": true,
+  "snapshot_policy": "Same stopped phase: earlier complete MiB chunks plus four complete 256 KiB reads per remaining MiB; bounded no-reset identity-checked retries; whole file independently device-verified",
+  "completed_at": "2026-09-09T17:47:35.188394+00:00"
+}

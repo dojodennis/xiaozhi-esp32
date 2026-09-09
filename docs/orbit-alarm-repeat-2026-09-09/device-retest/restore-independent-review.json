@@ -1,0 +1,16 @@
+{
+  "decision": "GO",
+  "reviewer_task": "01a0709d-0b27-7a73-b135-8502288e632f",
+  "received_at": "2026-09-09T18:02:14.943033+00:00",
+  "independently_verified": [
+    "64unique successful256KiB reads cover16MiB; eachhash/argv/log expectedMAC/stub/no-reset; no failedretry",
+    "Fresh post-bench download phase began25.927seconds after passive reader closed",
+    "Full device verify matched poste9bbafae5dccbe1ee0da65033c46469946c5f69a2e1c14b542aa5ab18399b44b",
+    "Fresh postbench matches verified installedexpected image; partitionMD5/security/VALIDota0seq1CRCvalid",
+    "NVSbyteidentical;356Bbench7f64... andall16unrelatedrecords preserved",
+    "Expectedrestore017c6360634660d5ac2489ddb5afac1cc1ecfdc144420b54ab0c97fa323999be derived from NEW postbench plus accepted a84app",
+    "All outside0x020000\u20130x311000 bytes identical"
+  ],
+  "approved_sequence": "Exact accepted a84 app-only no-reset write; whole no-reset expected-image verify; then explicit normal boot no-reset/hard-reset read-mac; passive reader and authenticated startup plus one Dennis Talk/release check",
+  "device_access_by_reviewer": false
+}

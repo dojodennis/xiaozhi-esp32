@@ -1,0 +1,16 @@
+{
+  "accepted_voice_restoration_complete": true,
+  "completed_at": "2026-09-09T18:05:50.611822+00:00",
+  "normal_application_sha256": "32473218a5c311c164815cc1ad0535eff0e182f178f0b7af59d657da13418f7a",
+  "whole_expected_image_verified_sha256": "017c6360634660d5ac2489ddb5afac1cc1ecfdc144420b54ab0c97fa323999be",
+  "authenticated_startup": true,
+  "physical_reply_intelligible": true,
+  "volume_usability_passed": false,
+  "passive_reader_closed_normally": true,
+  "no_remaining_orbit_port_owner": true,
+  "data_preserved_from_fresh_post_bench_backup": true,
+  "diagnostic_second_restart_performed": false,
+  "yellow_blue_ack_seed_performed": false,
+  "phone_touched": false,
+  "raw_runtime_console_sha256": "7f0aa5229f85589614942d2755d81e93d1ce15ee7165ff0755e2295475da6af3"
+}

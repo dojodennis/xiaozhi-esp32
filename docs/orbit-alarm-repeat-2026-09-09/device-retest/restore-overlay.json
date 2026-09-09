@@ -1,0 +1,80 @@
+{
+  "operation": "restore",
+  "prepared_at": "2026-09-09T17:58:14.734260+00:00",
+  "backup_path": "<private-session>/post-bench/full.bin",
+  "backup_sha256": "e9bbafae5dccbe1ee0da65033c46469946c5f69a2e1c14b542aa5ab18399b44b",
+  "expected_path": "<private-session>/expected-restore-full.bin",
+  "expected_sha256": "017c6360634660d5ac2489ddb5afac1cc1ecfdc144420b54ab0c97fa323999be",
+  "application_path": "<private-builds>/provisions-kitchen-helper/2026-09-06/stopwatch-2.4.8-talk-release-a84ab070/application.bin",
+  "application_sha256": "32473218a5c311c164815cc1ad0535eff0e182f178f0b7af59d657da13418f7a",
+  "app_offset": 131072,
+  "app_end_exclusive": 3215360,
+  "app_bytes": 3084288,
+  "only_application_span_changed": true,
+  "whole_backup_device_verified": true,
+  "preserved_regions": [
+    {
+      "name": "bootloader",
+      "start": 0,
+      "end_exclusive": 32768,
+      "sha256": "2bfa9187b6cb16ffcb0b55872829f9f906ccf3e30f72eee0ad57c6ddfd7c7f2d",
+      "identical": true
+    },
+    {
+      "name": "partition_table",
+      "start": 32768,
+      "end_exclusive": 36864,
+      "sha256": "210c66d84c8033068b14234274a9f242eedaa3d8c0f42f4de0603e4df6d346da",
+      "identical": true
+    },
+    {
+      "name": "nvs",
+      "start": 36864,
+      "end_exclusive": 53248,
+      "sha256": "a8faedddaa2c11d4e8728ee1171ec185b39f39d9cd2c67ea0e2d324b42aa9197",
+      "identical": true
+    },
+    {
+      "name": "ota_selectors",
+      "start": 53248,
+      "end_exclusive": 61440,
+      "sha256": "8ba3b110139f45443d4f268d1a3373ef99a1718b71d51664531b83ee2d4b91a3",
+      "identical": true
+    },
+    {
+      "name": "phy_keys_padding",
+      "start": 61440,
+      "end_exclusive": 131072,
+      "sha256": "6a96e292f157482dc484ee06011553e6f74683d91469900f199b194c44c05b1c",
+      "identical": true
+    },
+    {
+      "name": "remaining_ota0",
+      "start": 3215360,
+      "end_exclusive": 4259840,
+      "sha256": "18277907ba3b50ffa904e2ec19ef41739e8ecb39b0fa46582abd0336717314f0",
+      "identical": true
+    },
+    {
+      "name": "ota1",
+      "start": 4259840,
+      "end_exclusive": 8388608,
+      "sha256": "9f4e67ead90b545ed21799aedfbc8262e108e34549957e54554ede5e93f43a6b",
+      "identical": true
+    },
+    {
+      "name": "assets_and_capture_journal",
+      "start": 8388608,
+      "end_exclusive": 16777216,
+      "sha256": "8abf0f6adb59ce5a6a952e4297bc3964dde299df8a94dd44b1940394f286b366",
+      "identical": true
+    },
+    {
+      "name": "capture_journal",
+      "start": 14680064,
+      "end_exclusive": 16777216,
+      "sha256": "06072853e8b897f12399dc86b4239c81c25b619d8f9bd33386440d6bbc6c80bd",
+      "identical": true
+    }
+  ]
+}

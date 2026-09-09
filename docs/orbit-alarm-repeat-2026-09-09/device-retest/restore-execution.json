@@ -1,0 +1,55 @@
+[
+  {
+    "step": "write",
+    "argv": [
+      "/Users/dojo/.local/bin/esptool",
+      "--chip",
+      "esp32s3",
+      "--port",
+      "/dev/cu.usbmodem2101",
+      "--baud",
+      "460800",
+      "--before",
+      "no-reset",
+      "--after",
+      "no-reset",
+      "write-flash",
+      "--flash-mode",
+      "keep",
+      "--flash-freq",
+      "keep",
+      "--flash-size",
+      "keep",
+      "--no-progress",
+      "0x20000",
+      "<private-builds>/provisions-kitchen-helper/2026-09-06/stopwatch-2.4.8-talk-release-a84ab070/application.bin"
+    ],
+    "started_at": "2026-09-09T18:02:14.991175+00:00",
+    "completed_at": "2026-09-09T18:02:35.799858+00:00",
+    "returncode": 0,
+    "log_sha256": "6007b315c87283c883732c6d31dcd8c559b022aa16440c7c08c05b6446c0c23f"
+  },
+  {
+    "step": "verify",
+    "argv": [
+      "/Users/dojo/.local/bin/esptool",
+      "--chip",
+      "esp32s3",
+      "--port",
+      "/dev/cu.usbmodem2101",
+      "--baud",
+      "460800",
+      "--before",
+      "no-reset",
+      "--after",
+      "no-reset",
+      "verify-flash",
+      "0",
+      "<private-session>/expected-restore-full.bin"
+    ],
+    "started_at": "2026-09-09T18:02:35.800382+00:00",
+    "completed_at": "2026-09-09T18:03:03.163844+00:00",
+    "returncode": 0,
+    "log_sha256": "540534fcbbdd237a955cb1e2f4261f98472cf7b06535314f64e8138ce1d24bac"
+  }
+]

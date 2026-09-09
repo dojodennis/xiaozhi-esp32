@@ -1,0 +1,11 @@
+{
+  "observed_at": "2026-09-09T18:03:55.657195+00:00",
+  "accepted_application_sha256": "32473218a5c311c164815cc1ad0535eff0e182f178f0b7af59d657da13418f7a",
+  "elf_prefix": "3d9044b8c",
+  "expected_normal_elf_observed": true,
+  "authenticated_gateway_startup": true,
+  "auth_log_application_ms": 15420,
+  "bench_boot_absent": true,
+  "fatal_boot_error": false,
+  "physical_reply": "Intelligible reply confirmed; volume still insufficient"
+}

@@ -1,0 +1,11 @@
+{
+  "received_at": "2026-09-09T17:57:03.155866+00:00",
+  "source_coordinator": "01a0761d-ea55-7871-ae33-4c07929b9bb7",
+  "report_type": "Coordinator relay of Dennis correction, not a verbatim quote",
+  "corrected_physical_alarm": "Some sound, far too quiet; supersedes initial absolute-silence description",
+  "normal_voice_report": "Normal voice replies consistently too quiet; historical/general observation, not proof this restoration has completed",
+  "user_suspected_cause": "Speaker",
+  "engineering_interpretation": "Shared output path is leading suspect; gain/amplifier/codec versus speaker not isolated",
+  "result": "Acoustic usability still fails",
+  "additional_device_test_requested": false
+}

@@ -1,0 +1,13 @@
+{
+  "reported_at": "2026-09-09T17:54:50.584Z",
+  "source_coordinator": "01a0761d-ea55-7871-ae33-4c07929b9bb7",
+  "verbatim": "The sound is silent. The watch face shows the binge alert, source spread, plus three more. Blue, acknowledge one, needs sync. Same like before.",
+  "physical_sound": "silent",
+  "face_transcription_interpretation": "Likely BENCH ALERT / Sauce, Bread +3 / BLUE ACKNOWLEDGES ONE / NEEDS SYNC; interpretation of speech transcription, not exact visual proof",
+  "button_press_reported": false,
+  "haptic_observation": "not reported in this retest",
+  "optional_second_restart": "not performed; source coordinator requested planned restoration after completed first window",
+  "result": "physical acoustic acceptance failed despite complete software trace repetitions",
+  "superseded_sound_description": "See physical-sound-correction.json: faint/too quiet, not absolute silence",
+  "current_physical_result": "too quiet; failed acoustic usability"
+}

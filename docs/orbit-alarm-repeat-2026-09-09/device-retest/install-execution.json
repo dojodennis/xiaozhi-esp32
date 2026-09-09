@@ -1,0 +1,55 @@
+[
+  {
+    "step": "write",
+    "argv": [
+      "/Users/dojo/.local/bin/esptool",
+      "--chip",
+      "esp32s3",
+      "--port",
+      "/dev/cu.usbmodem2101",
+      "--baud",
+      "460800",
+      "--before",
+      "no-reset",
+      "--after",
+      "no-reset",
+      "write-flash",
+      "--flash-mode",
+      "keep",
+      "--flash-freq",
+      "keep",
+      "--flash-size",
+      "keep",
+      "--no-progress",
+      "0x20000",
+      "<private-builds>/orbit-alarm-repeat/2026-09-09/signed/application.bin"
+    ],
+    "started_at": "2026-09-09T17:52:53.650443+00:00",
+    "completed_at": "2026-09-09T17:53:14.546667+00:00",
+    "returncode": 0,
+    "log_sha256": "e25ab53ceba8dea22d73955b3bd13965f7574f89b72d95d27059ca6421bd2dd3"
+  },
+  {
+    "step": "verify",
+    "argv": [
+      "/Users/dojo/.local/bin/esptool",
+      "--chip",
+      "esp32s3",
+      "--port",
+      "/dev/cu.usbmodem2101",
+      "--baud",
+      "460800",
+      "--before",
+      "no-reset",
+      "--after",
+      "no-reset",
+      "verify-flash",
+      "0",
+      "<private-session>/expected-install-full.bin"
+    ],
+    "started_at": "2026-09-09T17:53:14.546938+00:00",
+    "completed_at": "2026-09-09T17:53:41.917533+00:00",
+    "returncode": 0,
+    "log_sha256": "02e66a8a3622c52437081234950ee7a20d6b31188ce8cc293a141433f5adef20"
+  }
+]

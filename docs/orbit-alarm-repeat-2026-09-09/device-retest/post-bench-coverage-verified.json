@@ -1,0 +1,651 @@
+{
+  "exact_contiguous_coverage": [
+    0,
+    16777216
+  ],
+  "same_stopped_phase": true,
+  "all_successful_reads_identity_stub_and_no_reset_verified": true,
+  "successful_reads": [
+    {
+      "offset": 0,
+      "bytes": 262144,
+      "end_exclusive": 262144,
+      "path": "<private-session>/post-bench/subread-00-0-attempt-1.bin",
+      "sha256": "aab53877b542d3740b2c113fb638c8360994904f157ff1846eb7c392475aad5e",
+      "step": "subread-00-0-attempt-1",
+      "started_at": "2026-09-09T17:55:51.840622+00:00",
+      "completed_at": "2026-09-09T17:55:53.478812+00:00"
+    },
+    {
+      "offset": 262144,
+      "bytes": 262144,
+      "end_exclusive": 524288,
+      "path": "<private-session>/post-bench/subread-00-1-attempt-1.bin",
+      "sha256": "986cdfd96bd7ecab1fe6b681efcfa8332b900ee2d88bb05d55702f2ec1675b7d",
+      "step": "subread-00-1-attempt-1",
+      "started_at": "2026-09-09T17:55:53.483168+00:00",
+      "completed_at": "2026-09-09T17:55:55.087334+00:00"
+    },
+    {
+      "offset": 524288,
+      "bytes": 262144,
+      "end_exclusive": 786432,
+      "path": "<private-session>/post-bench/subread-00-2-attempt-1.bin",
+      "sha256": "2f1c43c57af78f92e80d7910acb79fb0aeefffe79f3843fbd45183dd4cfe41c3",
+      "step": "subread-00-2-attempt-1",
+      "started_at": "2026-09-09T17:55:55.087552+00:00",
+      "completed_at": "2026-09-09T17:55:56.687464+00:00"
+    },
+    {
+      "offset": 786432,
+      "bytes": 262144,
+      "end_exclusive": 1048576,
+      "path": "<private-session>/post-bench/subread-00-3-attempt-1.bin",
+      "sha256": "641b5f483340a9b1ad9793a64e7e4fb826208655525ea4788f4c6ba1f1cbbcfb",
+      "step": "subread-00-3-attempt-1",
+      "started_at": "2026-09-09T17:55:56.687677+00:00",
+      "completed_at": "2026-09-09T17:55:58.286382+00:00"
+    },
+    {
+      "offset": 1048576,
+      "bytes": 262144,
+      "end_exclusive": 1310720,
+      "path": "<private-session>/post-bench/subread-01-0-attempt-1.bin",
+      "sha256": "ad63094cd6669f82c4e5e73ec38bbe8fdddc0aa7cbd836aad016784ec0199c3e",
+      "step": "subread-01-0-attempt-1",
+      "started_at": "2026-09-09T17:55:58.287061+00:00",
+      "completed_at": "2026-09-09T17:55:59.889824+00:00"
+    },
+    {
+      "offset": 1310720,
+      "bytes": 262144,
+      "end_exclusive": 1572864,
+      "path": "<private-session>/post-bench/subread-01-1-attempt-1.bin",
+      "sha256": "eba3b30ccf89e3ca556b53226067cea64ac26d9daf2ddfea57b3173301d35d25",
+      "step": "subread-01-1-attempt-1",
+      "started_at": "2026-09-09T17:55:59.890098+00:00",
+      "completed_at": "2026-09-09T17:56:01.498703+00:00"
+    },
+    {
+      "offset": 1572864,
+      "bytes": 262144,
+      "end_exclusive": 1835008,
+      "path": "<private-session>/post-bench/subread-01-2-attempt-1.bin",
+      "sha256": "dc7eb8c264baf1879fc06cd0c396042d43d138f20ba74810c25b4d7fa85076e9",
+      "step": "subread-01-2-attempt-1",
+      "started_at": "2026-09-09T17:56:01.498944+00:00",
+      "completed_at": "2026-09-09T17:56:03.106697+00:00"
+    },
+    {
+      "offset": 1835008,
+      "bytes": 262144,
+      "end_exclusive": 2097152,
+      "path": "<private-session>/post-bench/subread-01-3-attempt-1.bin",
+      "sha256": "d4f4f8c5479e2ae69f12fb62ac21a40e7e0ef6bbe6e612ec1ca29cd5de560baf",
+      "step": "subread-01-3-attempt-1",
+      "started_at": "2026-09-09T17:56:03.106936+00:00",
+      "completed_at": "2026-09-09T17:56:04.709433+00:00"
+    },
+    {
+      "offset": 2097152,
+      "bytes": 262144,
+      "end_exclusive": 2359296,
+      "path": "<private-session>/post-bench/subread-02-0-attempt-1.bin",
+      "sha256": "08aeeeb3466eced27486db63b4ea7e101c99c54311d7803d2f0938b28d8f8690",
+      "step": "subread-02-0-attempt-1",
+      "started_at": "2026-09-09T17:56:04.710246+00:00",
+      "completed_at": "2026-09-09T17:56:06.317213+00:00"
+    },
+    {
+      "offset": 2359296,
+      "bytes": 262144,
+      "end_exclusive": 2621440,
+      "path": "<private-session>/post-bench/subread-02-1-attempt-1.bin",
+      "sha256": "dae319b587b7205add0a5665b88924b9be06ae4131eab6abf9ffa0f7a05abba0",
+      "step": "subread-02-1-attempt-1",
+      "started_at": "2026-09-09T17:56:06.317474+00:00",
+      "completed_at": "2026-09-09T17:56:07.925891+00:00"
+    },
+    {
+      "offset": 2621440,
+      "bytes": 262144,
+      "end_exclusive": 2883584,
+      "path": "<private-session>/post-bench/subread-02-2-attempt-1.bin",
+      "sha256": "c79bb6580bb82a9d3069d7bfd314a2ee4642146596f0d85834513e2164608f94",
+      "step": "subread-02-2-attempt-1",
+      "started_at": "2026-09-09T17:56:07.926168+00:00",
+      "completed_at": "2026-09-09T17:56:09.522236+00:00"
+    },
+    {
+      "offset": 2883584,
+      "bytes": 262144,
+      "end_exclusive": 3145728,
+      "path": "<private-session>/post-bench/subread-02-3-attempt-1.bin",
+      "sha256": "adbf76897ace922ee2439b21f4c3d7919383b61e380028cf38b792fc6192a42d",
+      "step": "subread-02-3-attempt-1",
+      "started_at": "2026-09-09T17:56:09.522520+00:00",
+      "completed_at": "2026-09-09T17:56:11.130878+00:00"
+    },
+    {
+      "offset": 3145728,
+      "bytes": 262144,
+      "end_exclusive": 3407872,
+      "path": "<private-session>/post-bench/subread-03-0-attempt-1.bin",
+      "sha256": "b7572d773c65208569c9c194860bb387aec9a8ed558a90eb2f411cba8bf94723",
+      "step": "subread-03-0-attempt-1",
+      "started_at": "2026-09-09T17:56:11.131934+00:00",
+      "completed_at": "2026-09-09T17:56:12.805969+00:00"
+    },
+    {
+      "offset": 3407872,
+      "bytes": 262144,
+      "end_exclusive": 3670016,
+      "path": "<private-session>/post-bench/subread-03-1-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-03-1-attempt-1",
+      "started_at": "2026-09-09T17:56:12.806338+00:00",
+      "completed_at": "2026-09-09T17:56:14.503102+00:00"
+    },
+    {
+      "offset": 3670016,
+      "bytes": 262144,
+      "end_exclusive": 3932160,
+      "path": "<private-session>/post-bench/subread-03-2-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-03-2-attempt-1",
+      "started_at": "2026-09-09T17:56:14.503443+00:00",
+      "completed_at": "2026-09-09T17:56:16.198381+00:00"
+    },
+    {
+      "offset": 3932160,
+      "bytes": 262144,
+      "end_exclusive": 4194304,
+      "path": "<private-session>/post-bench/subread-03-3-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-03-3-attempt-1",
+      "started_at": "2026-09-09T17:56:16.198713+00:00",
+      "completed_at": "2026-09-09T17:56:17.896854+00:00"
+    },
+    {
+      "offset": 4194304,
+      "bytes": 262144,
+      "end_exclusive": 4456448,
+      "path": "<private-session>/post-bench/subread-04-0-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-04-0-attempt-1",
+      "started_at": "2026-09-09T17:56:17.898350+00:00",
+      "completed_at": "2026-09-09T17:56:19.602150+00:00"
+    },
+    {
+      "offset": 4456448,
+      "bytes": 262144,
+      "end_exclusive": 4718592,
+      "path": "<private-session>/post-bench/subread-04-1-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-04-1-attempt-1",
+      "started_at": "2026-09-09T17:56:19.602543+00:00",
+      "completed_at": "2026-09-09T17:56:21.300033+00:00"
+    },
+    {
+      "offset": 4718592,
+      "bytes": 262144,
+      "end_exclusive": 4980736,
+      "path": "<private-session>/post-bench/subread-04-2-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-04-2-attempt-1",
+      "started_at": "2026-09-09T17:56:21.300372+00:00",
+      "completed_at": "2026-09-09T17:56:23.001878+00:00"
+    },
+    {
+      "offset": 4980736,
+      "bytes": 262144,
+      "end_exclusive": 5242880,
+      "path": "<private-session>/post-bench/subread-04-3-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-04-3-attempt-1",
+      "started_at": "2026-09-09T17:56:23.002152+00:00",
+      "completed_at": "2026-09-09T17:56:24.709621+00:00"
+    },
+    {
+      "offset": 5242880,
+      "bytes": 262144,
+      "end_exclusive": 5505024,
+      "path": "<private-session>/post-bench/subread-05-0-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-05-0-attempt-1",
+      "started_at": "2026-09-09T17:56:24.710742+00:00",
+      "completed_at": "2026-09-09T17:56:26.408500+00:00"
+    },
+    {
+      "offset": 5505024,
+      "bytes": 262144,
+      "end_exclusive": 5767168,
+      "path": "<private-session>/post-bench/subread-05-1-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-05-1-attempt-1",
+      "started_at": "2026-09-09T17:56:26.408771+00:00",
+      "completed_at": "2026-09-09T17:56:28.101559+00:00"
+    },
+    {
+      "offset": 5767168,
+      "bytes": 262144,
+      "end_exclusive": 6029312,
+      "path": "<private-session>/post-bench/subread-05-2-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-05-2-attempt-1",
+      "started_at": "2026-09-09T17:56:28.101824+00:00",
+      "completed_at": "2026-09-09T17:56:29.810263+00:00"
+    },
+    {
+      "offset": 6029312,
+      "bytes": 262144,
+      "end_exclusive": 6291456,
+      "path": "<private-session>/post-bench/subread-05-3-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-05-3-attempt-1",
+      "started_at": "2026-09-09T17:56:29.810543+00:00",
+      "completed_at": "2026-09-09T17:56:31.516451+00:00"
+    },
+    {
+      "offset": 6291456,
+      "bytes": 262144,
+      "end_exclusive": 6553600,
+      "path": "<private-session>/post-bench/subread-06-0-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-06-0-attempt-1",
+      "started_at": "2026-09-09T17:56:31.517116+00:00",
+      "completed_at": "2026-09-09T17:56:33.222079+00:00"
+    },
+    {
+      "offset": 6553600,
+      "bytes": 262144,
+      "end_exclusive": 6815744,
+      "path": "<private-session>/post-bench/subread-06-1-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-06-1-attempt-1",
+      "started_at": "2026-09-09T17:56:33.222339+00:00",
+      "completed_at": "2026-09-09T17:56:34.930404+00:00"
+    },
+    {
+      "offset": 6815744,
+      "bytes": 262144,
+      "end_exclusive": 7077888,
+      "path": "<private-session>/post-bench/subread-06-2-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-06-2-attempt-1",
+      "started_at": "2026-09-09T17:56:34.930877+00:00",
+      "completed_at": "2026-09-09T17:56:36.620452+00:00"
+    },
+    {
+      "offset": 7077888,
+      "bytes": 262144,
+      "end_exclusive": 7340032,
+      "path": "<private-session>/post-bench/subread-06-3-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-06-3-attempt-1",
+      "started_at": "2026-09-09T17:56:36.620792+00:00",
+      "completed_at": "2026-09-09T17:56:38.315236+00:00"
+    },
+    {
+      "offset": 7340032,
+      "bytes": 262144,
+      "end_exclusive": 7602176,
+      "path": "<private-session>/post-bench/subread-07-0-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-07-0-attempt-1",
+      "started_at": "2026-09-09T17:56:38.316156+00:00",
+      "completed_at": "2026-09-09T17:56:40.012306+00:00"
+    },
+    {
+      "offset": 7602176,
+      "bytes": 262144,
+      "end_exclusive": 7864320,
+      "path": "<private-session>/post-bench/subread-07-1-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-07-1-attempt-1",
+      "started_at": "2026-09-09T17:56:40.012616+00:00",
+      "completed_at": "2026-09-09T17:56:41.724718+00:00"
+    },
+    {
+      "offset": 7864320,
+      "bytes": 262144,
+      "end_exclusive": 8126464,
+      "path": "<private-session>/post-bench/subread-07-2-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-07-2-attempt-1",
+      "started_at": "2026-09-09T17:56:41.725039+00:00",
+      "completed_at": "2026-09-09T17:56:43.436908+00:00"
+    },
+    {
+      "offset": 8126464,
+      "bytes": 262144,
+      "end_exclusive": 8388608,
+      "path": "<private-session>/post-bench/subread-07-3-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-07-3-attempt-1",
+      "started_at": "2026-09-09T17:56:43.437358+00:00",
+      "completed_at": "2026-09-09T17:56:45.134094+00:00"
+    },
+    {
+      "offset": 8388608,
+      "bytes": 262144,
+      "end_exclusive": 8650752,
+      "path": "<private-session>/post-bench/subread-08-0-attempt-1.bin",
+      "sha256": "ccfce284d467fb3270d769b7526fec614a76d8662ae48e997ea1be3dc727c27e",
+      "step": "subread-08-0-attempt-1",
+      "started_at": "2026-09-09T17:56:45.135289+00:00",
+      "completed_at": "2026-09-09T17:56:46.735944+00:00"
+    },
+    {
+      "offset": 8650752,
+      "bytes": 262144,
+      "end_exclusive": 8912896,
+      "path": "<private-session>/post-bench/subread-08-1-attempt-1.bin",
+      "sha256": "670cbc28757ecab7c0f9f733db874c017672559bdc0653debd8e2dbc367f3907",
+      "step": "subread-08-1-attempt-1",
+      "started_at": "2026-09-09T17:56:46.736246+00:00",
+      "completed_at": "2026-09-09T17:56:48.345042+00:00"
+    },
+    {
+      "offset": 8912896,
+      "bytes": 262144,
+      "end_exclusive": 9175040,
+      "path": "<private-session>/post-bench/subread-08-2-attempt-1.bin",
+      "sha256": "0537d951a7d4e835ab03920eefe762a322411916107e3701c249d23047044c55",
+      "step": "subread-08-2-attempt-1",
+      "started_at": "2026-09-09T17:56:48.345362+00:00",
+      "completed_at": "2026-09-09T17:56:49.959975+00:00"
+    },
+    {
+      "offset": 9175040,
+      "bytes": 262144,
+      "end_exclusive": 9437184,
+      "path": "<private-session>/post-bench/subread-08-3-attempt-1.bin",
+      "sha256": "3364c8de1a0d32419620040fe7576221a22955229ed633f332e44c81222670d7",
+      "step": "subread-08-3-attempt-1",
+      "started_at": "2026-09-09T17:56:49.960275+00:00",
+      "completed_at": "2026-09-09T17:56:51.573383+00:00"
+    },
+    {
+      "offset": 9437184,
+      "bytes": 262144,
+      "end_exclusive": 9699328,
+      "path": "<private-session>/post-bench/subread-09-0-attempt-1.bin",
+      "sha256": "751d20b89b34394f2062e3f1eb367ba206171b06ca57cbd393f01e83c4955480",
+      "step": "subread-09-0-attempt-1",
+      "started_at": "2026-09-09T17:56:51.574569+00:00",
+      "completed_at": "2026-09-09T17:56:53.182070+00:00"
+    },
+    {
+      "offset": 9699328,
+      "bytes": 262144,
+      "end_exclusive": 9961472,
+      "path": "<private-session>/post-bench/subread-09-1-attempt-1.bin",
+      "sha256": "a2d6c33c3b76c373303af014a2e7c6bdb971b75d9cbb946acab1db75db778231",
+      "step": "subread-09-1-attempt-1",
+      "started_at": "2026-09-09T17:56:53.182459+00:00",
+      "completed_at": "2026-09-09T17:56:54.790444+00:00"
+    },
+    {
+      "offset": 9961472,
+      "bytes": 262144,
+      "end_exclusive": 10223616,
+      "path": "<private-session>/post-bench/subread-09-2-attempt-1.bin",
+      "sha256": "3d59dedbcc452215900dd9756c1bee0b9140f7885dc46e5f5984c2272f094524",
+      "step": "subread-09-2-attempt-1",
+      "started_at": "2026-09-09T17:56:54.790767+00:00",
+      "completed_at": "2026-09-09T17:56:56.407984+00:00"
+    },
+    {
+      "offset": 10223616,
+      "bytes": 262144,
+      "end_exclusive": 10485760,
+      "path": "<private-session>/post-bench/subread-09-3-attempt-1.bin",
+      "sha256": "c957cffaa2d43c71ec797bab5bbf538b1fb6a34fb2f55dbb77550b60739d3514",
+      "step": "subread-09-3-attempt-1",
+      "started_at": "2026-09-09T17:56:56.408331+00:00",
+      "completed_at": "2026-09-09T17:56:58.016911+00:00"
+    },
+    {
+      "offset": 10485760,
+      "bytes": 262144,
+      "end_exclusive": 10747904,
+      "path": "<private-session>/post-bench/subread-10-0-attempt-1.bin",
+      "sha256": "5650ba885652665766b2b37f57afcf3944f39d9902283c6f3c614bc93f2dd28a",
+      "step": "subread-10-0-attempt-1",
+      "started_at": "2026-09-09T17:56:58.017655+00:00",
+      "completed_at": "2026-09-09T17:56:59.632244+00:00"
+    },
+    {
+      "offset": 10747904,
+      "bytes": 262144,
+      "end_exclusive": 11010048,
+      "path": "<private-session>/post-bench/subread-10-1-attempt-1.bin",
+      "sha256": "c2c3dab9c4df9e1cbcca7c7b5660e8e72a87c2fd89dbe9db8d6dbd3534922dbf",
+      "step": "subread-10-1-attempt-1",
+      "started_at": "2026-09-09T17:56:59.632598+00:00",
+      "completed_at": "2026-09-09T17:57:01.228358+00:00"
+    },
+    {
+      "offset": 11010048,
+      "bytes": 262144,
+      "end_exclusive": 11272192,
+      "path": "<private-session>/post-bench/subread-10-2-attempt-1.bin",
+      "sha256": "ca245b5f7cf2b0c164ee1104e40756f83c805b192b836539ae4117fd360ec182",
+      "step": "subread-10-2-attempt-1",
+      "started_at": "2026-09-09T17:57:01.228659+00:00",
+      "completed_at": "2026-09-09T17:57:02.909351+00:00"
+    },
+    {
+      "offset": 11272192,
+      "bytes": 262144,
+      "end_exclusive": 11534336,
+      "path": "<private-session>/post-bench/subread-10-3-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-10-3-attempt-1",
+      "started_at": "2026-09-09T17:57:02.909742+00:00",
+      "completed_at": "2026-09-09T17:57:04.608452+00:00"
+    },
+    {
+      "offset": 11534336,
+      "bytes": 262144,
+      "end_exclusive": 11796480,
+      "path": "<private-session>/post-bench/subread-11-0-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-11-0-attempt-1",
+      "started_at": "2026-09-09T17:57:04.609761+00:00",
+      "completed_at": "2026-09-09T17:57:06.316536+00:00"
+    },
+    {
+      "offset": 11796480,
+      "bytes": 262144,
+      "end_exclusive": 12058624,
+      "path": "<private-session>/post-bench/subread-11-1-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-11-1-attempt-1",
+      "started_at": "2026-09-09T17:57:06.316852+00:00",
+      "completed_at": "2026-09-09T17:57:08.023083+00:00"
+    },
+    {
+      "offset": 12058624,
+      "bytes": 262144,
+      "end_exclusive": 12320768,
+      "path": "<private-session>/post-bench/subread-11-2-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-11-2-attempt-1",
+      "started_at": "2026-09-09T17:57:08.023479+00:00",
+      "completed_at": "2026-09-09T17:57:09.714260+00:00"
+    },
+    {
+      "offset": 12320768,
+      "bytes": 262144,
+      "end_exclusive": 12582912,
+      "path": "<private-session>/post-bench/subread-11-3-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-11-3-attempt-1",
+      "started_at": "2026-09-09T17:57:09.714653+00:00",
+      "completed_at": "2026-09-09T17:57:11.415023+00:00"
+    },
+    {
+      "offset": 12582912,
+      "bytes": 262144,
+      "end_exclusive": 12845056,
+      "path": "<private-session>/post-bench/subread-12-0-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-12-0-attempt-1",
+      "started_at": "2026-09-09T17:57:11.415955+00:00",
+      "completed_at": "2026-09-09T17:57:13.121204+00:00"
+    },
+    {
+      "offset": 12845056,
+      "bytes": 262144,
+      "end_exclusive": 13107200,
+      "path": "<private-session>/post-bench/subread-12-1-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-12-1-attempt-1",
+      "started_at": "2026-09-09T17:57:13.121553+00:00",
+      "completed_at": "2026-09-09T17:57:14.827135+00:00"
+    },
+    {
+      "offset": 13107200,
+      "bytes": 262144,
+      "end_exclusive": 13369344,
+      "path": "<private-session>/post-bench/subread-12-2-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-12-2-attempt-1",
+      "started_at": "2026-09-09T17:57:14.827443+00:00",
+      "completed_at": "2026-09-09T17:57:16.527584+00:00"
+    },
+    {
+      "offset": 13369344,
+      "bytes": 262144,
+      "end_exclusive": 13631488,
+      "path": "<private-session>/post-bench/subread-12-3-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-12-3-attempt-1",
+      "started_at": "2026-09-09T17:57:16.527898+00:00",
+      "completed_at": "2026-09-09T17:57:18.231038+00:00"
+    },
+    {
+      "offset": 13631488,
+      "bytes": 262144,
+      "end_exclusive": 13893632,
+      "path": "<private-session>/post-bench/subread-13-0-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-13-0-attempt-1",
+      "started_at": "2026-09-09T17:57:18.232308+00:00",
+      "completed_at": "2026-09-09T17:57:19.939185+00:00"
+    },
+    {
+      "offset": 13893632,
+      "bytes": 262144,
+      "end_exclusive": 14155776,
+      "path": "<private-session>/post-bench/subread-13-1-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-13-1-attempt-1",
+      "started_at": "2026-09-09T17:57:19.939721+00:00",
+      "completed_at": "2026-09-09T17:57:21.645884+00:00"
+    },
+    {
+      "offset": 14155776,
+      "bytes": 262144,
+      "end_exclusive": 14417920,
+      "path": "<private-session>/post-bench/subread-13-2-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-13-2-attempt-1",
+      "started_at": "2026-09-09T17:57:21.646226+00:00",
+      "completed_at": "2026-09-09T17:57:23.349439+00:00"
+    },
+    {
+      "offset": 14417920,
+      "bytes": 262144,
+      "end_exclusive": 14680064,
+      "path": "<private-session>/post-bench/subread-13-3-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-13-3-attempt-1",
+      "started_at": "2026-09-09T17:57:23.349856+00:00",
+      "completed_at": "2026-09-09T17:57:25.050573+00:00"
+    },
+    {
+      "offset": 14680064,
+      "bytes": 262144,
+      "end_exclusive": 14942208,
+      "path": "<private-session>/post-bench/subread-14-0-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-14-0-attempt-1",
+      "started_at": "2026-09-09T17:57:25.051457+00:00",
+      "completed_at": "2026-09-09T17:57:26.801589+00:00"
+    },
+    {
+      "offset": 14942208,
+      "bytes": 262144,
+      "end_exclusive": 15204352,
+      "path": "<private-session>/post-bench/subread-14-1-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-14-1-attempt-1",
+      "started_at": "2026-09-09T17:57:26.802009+00:00",
+      "completed_at": "2026-09-09T17:57:28.507957+00:00"
+    },
+    {
+      "offset": 15204352,
+      "bytes": 262144,
+      "end_exclusive": 15466496,
+      "path": "<private-session>/post-bench/subread-14-2-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-14-2-attempt-1",
+      "started_at": "2026-09-09T17:57:28.508511+00:00",
+      "completed_at": "2026-09-09T17:57:30.213620+00:00"
+    },
+    {
+      "offset": 15466496,
+      "bytes": 262144,
+      "end_exclusive": 15728640,
+      "path": "<private-session>/post-bench/subread-14-3-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-14-3-attempt-1",
+      "started_at": "2026-09-09T17:57:30.214029+00:00",
+      "completed_at": "2026-09-09T17:57:31.919211+00:00"
+    },
+    {
+      "offset": 15728640,
+      "bytes": 262144,
+      "end_exclusive": 15990784,
+      "path": "<private-session>/post-bench/subread-15-0-attempt-1.bin",
+      "sha256": "ee3eba6db59fe2cb29755391097c1826289970f3d58f87c3798e2dc17ae8f4ff",
+      "step": "subread-15-0-attempt-1",
+      "started_at": "2026-09-09T17:57:31.920831+00:00",
+      "completed_at": "2026-09-09T17:57:33.619900+00:00"
+    },
+    {
+      "offset": 15990784,
+      "bytes": 262144,
+      "end_exclusive": 16252928,
+      "path": "<private-session>/post-bench/subread-15-1-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-15-1-attempt-1",
+      "started_at": "2026-09-09T17:57:33.620282+00:00",
+      "completed_at": "2026-09-09T17:57:35.320939+00:00"
+    },
+    {
+      "offset": 16252928,
+      "bytes": 262144,
+      "end_exclusive": 16515072,
+      "path": "<private-session>/post-bench/subread-15-2-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-15-2-attempt-1",
+      "started_at": "2026-09-09T17:57:35.321336+00:00",
+      "completed_at": "2026-09-09T17:57:37.024764+00:00"
+    },
+    {
+      "offset": 16515072,
+      "bytes": 262144,
+      "end_exclusive": 16777216,
+      "path": "<private-session>/post-bench/subread-15-3-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-15-3-attempt-1",
+      "started_at": "2026-09-09T17:57:37.025121+00:00",
+      "completed_at": "2026-09-09T17:57:38.730666+00:00"
+    }
+  ],
+  "assembled_sha256": "e9bbafae5dccbe1ee0da65033c46469946c5f69a2e1c14b542aa5ab18399b44b"
+}

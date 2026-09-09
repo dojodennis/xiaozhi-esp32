@@ -1,0 +1,9 @@
+{
+  "reported_at": "2026-09-09T18:05:08.411Z",
+  "source_coordinator": "01a0761d-ea55-7871-ae33-4c07929b9bb7",
+  "verbatim": "It says I'm here, what do you need? It's still not loud enough.",
+  "heard_reply": "I'm here, what do you need?",
+  "normal_voice_intelligibility_passed": true,
+  "physical_volume_sufficient": false,
+  "additional_device_action_requested": false
+}

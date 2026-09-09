@@ -1,0 +1,8 @@
+{
+  "phase": "post-bench",
+  "full_backup_bytes": 16777216,
+  "sha256": "e9bbafae5dccbe1ee0da65033c46469946c5f69a2e1c14b542aa5ab18399b44b",
+  "full_device_verification_passed": true,
+  "snapshot_policy": "Same stopped phase: earlier complete MiB chunks plus four complete 256 KiB reads per remaining MiB; bounded no-reset identity-checked retries; whole file independently device-verified",
+  "completed_at": "2026-09-09T17:58:06.089254+00:00"
+}

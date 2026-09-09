@@ -1,0 +1,17 @@
+{
+  "decision": "GO",
+  "reviewer_task": "01a0709d-0b27-7a73-b135-8502288e632f",
+  "received_at": "2026-09-09T17:52:53.595315+00:00",
+  "verified": [
+    "58 complete successful reads exactly cover16MiB; hashes and slices and same-stub/no-reset logs independently checked",
+    "Whole backup device verify matched SHA017c6360634660d5ac2489ddb5afac1cc1ecfdc144420b54ab0c97fa323999be",
+    "Current a84/bootloader/table/partitionMD5/VALIDota0seq1CRC4743989a matched",
+    "Independent official NVS parser rerun passed;17records120slots1empty page",
+    "Independent frozen decode356B7f64... accepted Rice pending and5due",
+    "Exact candidateff8a...3084288B; expected full imagee9bb... changes only0x020000\u20130x311000",
+    "Every outside-span byte and preserved-region hash matches fresh backup"
+  ],
+  "approved_sequence": "Exact no-reset app-only write, no-reset whole expected-image verify requiring digest/MAC/stub; only then explicit no-reset/hard-reset read-mac boot boundary and exclusive passive reader",
+  "prohibited": "No seed, yellow, blue, acknowledgement, other write or intermediate reset",
+  "device_access_by_reviewer": false
+}

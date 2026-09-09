@@ -1,0 +1,15 @@
+{
+  "reviewer_task": "01a0709d-0b27-7a73-b135-8502288e632f",
+  "received_at": "2026-09-09T17:46:59.439519+00:00",
+  "decision": "Conditional GO for bounded 256 KiB same-phase backup reads",
+  "conditions": [
+    "Retain complete initial chunks00/01; no reset occurred",
+    "Four successful uniquely named 256 KiB subreads per remaining MiB",
+    "Exact sizes, offsets and hashes; nonoverlapping contiguous coverage",
+    "No-reset identity/stub check on every interrupted read; retry only incomplete part",
+    "Retain failed logs and exclude partial output",
+    "Stop for review if 256 KiB cannot complete reliably",
+    "Whole 16 MiB independent device verification before use"
+  ],
+  "no_write_authorization_from_this_review": true
+}

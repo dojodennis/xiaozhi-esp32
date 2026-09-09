@@ -1,0 +1,591 @@
+{
+  "exact_contiguous_coverage": [
+    0,
+    16777216
+  ],
+  "same_stopped_phase": true,
+  "all_successful_reads_identity_stub_and_no_reset_verified": true,
+  "successful_reads": [
+    {
+      "offset": 0,
+      "bytes": 1048576,
+      "end_exclusive": 1048576,
+      "path": "<private-session>/pre-install/chunk-00.bin",
+      "sha256": "ff3e5ebb1027dfd5e7bb07beed078ccb5f3b14f03b666fb47622e6be38bd9e98",
+      "step": "read-00",
+      "started_at": "2026-09-09T17:41:26.716344+00:00",
+      "completed_at": "2026-09-09T17:41:32.581523+00:00"
+    },
+    {
+      "offset": 1048576,
+      "bytes": 1048576,
+      "end_exclusive": 2097152,
+      "path": "<private-session>/pre-install/chunk-01.bin",
+      "sha256": "ea8d14d1cae7a6d82a87640a37d0c1e1765ad67f26fb62e30c46f458ed3123e5",
+      "step": "read-01",
+      "started_at": "2026-09-09T17:41:32.581806+00:00",
+      "completed_at": "2026-09-09T17:41:38.413424+00:00"
+    },
+    {
+      "offset": 2097152,
+      "bytes": 262144,
+      "end_exclusive": 2359296,
+      "path": "<private-session>/pre-install/subread-02-0-attempt-1.bin",
+      "sha256": "f72f1f510172192d442cb1cef51d7a3488ac0d1f69e0dd335bb1d57b2f825ad3",
+      "step": "subread-02-0-attempt-1",
+      "started_at": "2026-09-09T17:45:24.320666+00:00",
+      "completed_at": "2026-09-09T17:45:25.940669+00:00"
+    },
+    {
+      "offset": 2359296,
+      "bytes": 262144,
+      "end_exclusive": 2621440,
+      "path": "<private-session>/pre-install/subread-02-1-attempt-1.bin",
+      "sha256": "5db0d9659ebe6aa44dc1e989b5565c6517f4e67b08276890ee8774cf9a63ecb9",
+      "step": "subread-02-1-attempt-1",
+      "started_at": "2026-09-09T17:45:25.941118+00:00",
+      "completed_at": "2026-09-09T17:45:27.544552+00:00"
+    },
+    {
+      "offset": 2621440,
+      "bytes": 262144,
+      "end_exclusive": 2883584,
+      "path": "<private-session>/pre-install/subread-02-2-attempt-1.bin",
+      "sha256": "85de902d1e01a2e10d0d3160b1fed226dd1e24a721a951d5fbce9ba6e51d2587",
+      "step": "subread-02-2-attempt-1",
+      "started_at": "2026-09-09T17:45:27.544747+00:00",
+      "completed_at": "2026-09-09T17:45:29.143852+00:00"
+    },
+    {
+      "offset": 2883584,
+      "bytes": 262144,
+      "end_exclusive": 3145728,
+      "path": "<private-session>/pre-install/subread-02-3-attempt-1.bin",
+      "sha256": "e60d03397a74bfbc7586779bb1bca39ef00792871a18465652717558f04e0a3f",
+      "step": "subread-02-3-attempt-1",
+      "started_at": "2026-09-09T17:45:29.144070+00:00",
+      "completed_at": "2026-09-09T17:45:30.758264+00:00"
+    },
+    {
+      "offset": 3145728,
+      "bytes": 262144,
+      "end_exclusive": 3407872,
+      "path": "<private-session>/pre-install/subread-03-0-attempt-1.bin",
+      "sha256": "a585ee3a34118aeff6101bf1959b5e7acfda652791a89867b9cbca353ec7a30c",
+      "step": "subread-03-0-attempt-1",
+      "started_at": "2026-09-09T17:45:30.759185+00:00",
+      "completed_at": "2026-09-09T17:45:32.431275+00:00"
+    },
+    {
+      "offset": 3407872,
+      "bytes": 262144,
+      "end_exclusive": 3670016,
+      "path": "<private-session>/pre-install/subread-03-1-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-03-1-attempt-1",
+      "started_at": "2026-09-09T17:45:32.431548+00:00",
+      "completed_at": "2026-09-09T17:45:34.130284+00:00"
+    },
+    {
+      "offset": 3670016,
+      "bytes": 262144,
+      "end_exclusive": 3932160,
+      "path": "<private-session>/pre-install/subread-03-2-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-03-2-attempt-1",
+      "started_at": "2026-09-09T17:45:34.130516+00:00",
+      "completed_at": "2026-09-09T17:45:35.825790+00:00"
+    },
+    {
+      "offset": 3932160,
+      "bytes": 262144,
+      "end_exclusive": 4194304,
+      "path": "<private-session>/pre-install/subread-03-3-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-03-3-attempt-1",
+      "started_at": "2026-09-09T17:45:35.826029+00:00",
+      "completed_at": "2026-09-09T17:45:37.520698+00:00"
+    },
+    {
+      "offset": 4194304,
+      "bytes": 262144,
+      "end_exclusive": 4456448,
+      "path": "<private-session>/pre-install/subread-04-0-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-04-0-attempt-1",
+      "started_at": "2026-09-09T17:45:37.522033+00:00",
+      "completed_at": "2026-09-09T17:45:39.203755+00:00"
+    },
+    {
+      "offset": 4456448,
+      "bytes": 262144,
+      "end_exclusive": 4718592,
+      "path": "<private-session>/pre-install/subread-04-1-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-04-1-attempt-1",
+      "started_at": "2026-09-09T17:45:39.204045+00:00",
+      "completed_at": "2026-09-09T17:45:40.893074+00:00"
+    },
+    {
+      "offset": 4718592,
+      "bytes": 262144,
+      "end_exclusive": 4980736,
+      "path": "<private-session>/pre-install/subread-04-2-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-04-2-attempt-1",
+      "started_at": "2026-09-09T17:45:40.893347+00:00",
+      "completed_at": "2026-09-09T17:45:42.583152+00:00"
+    },
+    {
+      "offset": 4980736,
+      "bytes": 262144,
+      "end_exclusive": 5242880,
+      "path": "<private-session>/pre-install/subread-04-3-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-04-3-attempt-1",
+      "started_at": "2026-09-09T17:45:42.583421+00:00",
+      "completed_at": "2026-09-09T17:45:44.271851+00:00"
+    },
+    {
+      "offset": 5242880,
+      "bytes": 262144,
+      "end_exclusive": 5505024,
+      "path": "<private-session>/pre-install/subread-05-0-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-05-0-attempt-1",
+      "started_at": "2026-09-09T17:45:44.272553+00:00",
+      "completed_at": "2026-09-09T17:45:45.966122+00:00"
+    },
+    {
+      "offset": 5505024,
+      "bytes": 262144,
+      "end_exclusive": 5767168,
+      "path": "<private-session>/pre-install/subread-05-1-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-05-1-attempt-1",
+      "started_at": "2026-09-09T17:45:45.966409+00:00",
+      "completed_at": "2026-09-09T17:45:47.661429+00:00"
+    },
+    {
+      "offset": 5767168,
+      "bytes": 262144,
+      "end_exclusive": 6029312,
+      "path": "<private-session>/pre-install/subread-05-2-attempt-2.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-05-2-attempt-2",
+      "started_at": "2026-09-09T17:45:52.445155+00:00",
+      "completed_at": "2026-09-09T17:45:54.138169+00:00"
+    },
+    {
+      "offset": 6029312,
+      "bytes": 262144,
+      "end_exclusive": 6291456,
+      "path": "<private-session>/pre-install/subread-05-3-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-05-3-attempt-1",
+      "started_at": "2026-09-09T17:45:54.138586+00:00",
+      "completed_at": "2026-09-09T17:45:55.842436+00:00"
+    },
+    {
+      "offset": 6291456,
+      "bytes": 262144,
+      "end_exclusive": 6553600,
+      "path": "<private-session>/pre-install/subread-06-0-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-06-0-attempt-1",
+      "started_at": "2026-09-09T17:45:55.844318+00:00",
+      "completed_at": "2026-09-09T17:45:57.560416+00:00"
+    },
+    {
+      "offset": 6553600,
+      "bytes": 262144,
+      "end_exclusive": 6815744,
+      "path": "<private-session>/pre-install/subread-06-1-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-06-1-attempt-1",
+      "started_at": "2026-09-09T17:45:57.560753+00:00",
+      "completed_at": "2026-09-09T17:45:59.255326+00:00"
+    },
+    {
+      "offset": 6815744,
+      "bytes": 262144,
+      "end_exclusive": 7077888,
+      "path": "<private-session>/pre-install/subread-06-2-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-06-2-attempt-1",
+      "started_at": "2026-09-09T17:45:59.255648+00:00",
+      "completed_at": "2026-09-09T17:46:00.951061+00:00"
+    },
+    {
+      "offset": 7077888,
+      "bytes": 262144,
+      "end_exclusive": 7340032,
+      "path": "<private-session>/pre-install/subread-06-3-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-06-3-attempt-1",
+      "started_at": "2026-09-09T17:46:00.951425+00:00",
+      "completed_at": "2026-09-09T17:46:02.648179+00:00"
+    },
+    {
+      "offset": 7340032,
+      "bytes": 262144,
+      "end_exclusive": 7602176,
+      "path": "<private-session>/pre-install/subread-07-0-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-07-0-attempt-1",
+      "started_at": "2026-09-09T17:46:02.649446+00:00",
+      "completed_at": "2026-09-09T17:46:04.344310+00:00"
+    },
+    {
+      "offset": 7602176,
+      "bytes": 262144,
+      "end_exclusive": 7864320,
+      "path": "<private-session>/pre-install/subread-07-1-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-07-1-attempt-1",
+      "started_at": "2026-09-09T17:46:04.344995+00:00",
+      "completed_at": "2026-09-09T17:46:06.040355+00:00"
+    },
+    {
+      "offset": 7864320,
+      "bytes": 262144,
+      "end_exclusive": 8126464,
+      "path": "<private-session>/pre-install/subread-07-2-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-07-2-attempt-1",
+      "started_at": "2026-09-09T17:46:06.040620+00:00",
+      "completed_at": "2026-09-09T17:46:07.738316+00:00"
+    },
+    {
+      "offset": 8126464,
+      "bytes": 262144,
+      "end_exclusive": 8388608,
+      "path": "<private-session>/pre-install/subread-07-3-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-07-3-attempt-1",
+      "started_at": "2026-09-09T17:46:07.738584+00:00",
+      "completed_at": "2026-09-09T17:46:09.427063+00:00"
+    },
+    {
+      "offset": 8388608,
+      "bytes": 262144,
+      "end_exclusive": 8650752,
+      "path": "<private-session>/pre-install/subread-08-0-attempt-1.bin",
+      "sha256": "ccfce284d467fb3270d769b7526fec614a76d8662ae48e997ea1be3dc727c27e",
+      "step": "subread-08-0-attempt-1",
+      "started_at": "2026-09-09T17:46:09.428241+00:00",
+      "completed_at": "2026-09-09T17:46:11.035368+00:00"
+    },
+    {
+      "offset": 8650752,
+      "bytes": 262144,
+      "end_exclusive": 8912896,
+      "path": "<private-session>/pre-install/subread-08-1-attempt-1.bin",
+      "sha256": "670cbc28757ecab7c0f9f733db874c017672559bdc0653debd8e2dbc367f3907",
+      "step": "subread-08-1-attempt-1",
+      "started_at": "2026-09-09T17:46:11.035852+00:00",
+      "completed_at": "2026-09-09T17:46:12.648431+00:00"
+    },
+    {
+      "offset": 8912896,
+      "bytes": 262144,
+      "end_exclusive": 9175040,
+      "path": "<private-session>/pre-install/subread-08-2-attempt-1.bin",
+      "sha256": "0537d951a7d4e835ab03920eefe762a322411916107e3701c249d23047044c55",
+      "step": "subread-08-2-attempt-1",
+      "started_at": "2026-09-09T17:46:12.648748+00:00",
+      "completed_at": "2026-09-09T17:46:14.254806+00:00"
+    },
+    {
+      "offset": 9175040,
+      "bytes": 262144,
+      "end_exclusive": 9437184,
+      "path": "<private-session>/pre-install/subread-08-3-attempt-1.bin",
+      "sha256": "3364c8de1a0d32419620040fe7576221a22955229ed633f332e44c81222670d7",
+      "step": "subread-08-3-attempt-1",
+      "started_at": "2026-09-09T17:46:14.255106+00:00",
+      "completed_at": "2026-09-09T17:46:15.867560+00:00"
+    },
+    {
+      "offset": 9437184,
+      "bytes": 262144,
+      "end_exclusive": 9699328,
+      "path": "<private-session>/pre-install/subread-09-0-attempt-1.bin",
+      "sha256": "751d20b89b34394f2062e3f1eb367ba206171b06ca57cbd393f01e83c4955480",
+      "step": "subread-09-0-attempt-1",
+      "started_at": "2026-09-09T17:46:15.868648+00:00",
+      "completed_at": "2026-09-09T17:46:17.479350+00:00"
+    },
+    {
+      "offset": 9699328,
+      "bytes": 262144,
+      "end_exclusive": 9961472,
+      "path": "<private-session>/pre-install/subread-09-1-attempt-1.bin",
+      "sha256": "a2d6c33c3b76c373303af014a2e7c6bdb971b75d9cbb946acab1db75db778231",
+      "step": "subread-09-1-attempt-1",
+      "started_at": "2026-09-09T17:46:17.479744+00:00",
+      "completed_at": "2026-09-09T17:46:19.095819+00:00"
+    },
+    {
+      "offset": 9961472,
+      "bytes": 262144,
+      "end_exclusive": 10223616,
+      "path": "<private-session>/pre-install/subread-09-2-attempt-1.bin",
+      "sha256": "3d59dedbcc452215900dd9756c1bee0b9140f7885dc46e5f5984c2272f094524",
+      "step": "subread-09-2-attempt-1",
+      "started_at": "2026-09-09T17:46:19.096205+00:00",
+      "completed_at": "2026-09-09T17:46:20.702070+00:00"
+    },
+    {
+      "offset": 10223616,
+      "bytes": 262144,
+      "end_exclusive": 10485760,
+      "path": "<private-session>/pre-install/subread-09-3-attempt-1.bin",
+      "sha256": "c957cffaa2d43c71ec797bab5bbf538b1fb6a34fb2f55dbb77550b60739d3514",
+      "step": "subread-09-3-attempt-1",
+      "started_at": "2026-09-09T17:46:20.702748+00:00",
+      "completed_at": "2026-09-09T17:46:22.308696+00:00"
+    },
+    {
+      "offset": 10485760,
+      "bytes": 262144,
+      "end_exclusive": 10747904,
+      "path": "<private-session>/pre-install/subread-10-0-attempt-1.bin",
+      "sha256": "5650ba885652665766b2b37f57afcf3944f39d9902283c6f3c614bc93f2dd28a",
+      "step": "subread-10-0-attempt-1",
+      "started_at": "2026-09-09T17:46:22.309570+00:00",
+      "completed_at": "2026-09-09T17:46:23.923409+00:00"
+    },
+    {
+      "offset": 10747904,
+      "bytes": 262144,
+      "end_exclusive": 11010048,
+      "path": "<private-session>/pre-install/subread-10-1-attempt-1.bin",
+      "sha256": "c2c3dab9c4df9e1cbcca7c7b5660e8e72a87c2fd89dbe9db8d6dbd3534922dbf",
+      "step": "subread-10-1-attempt-1",
+      "started_at": "2026-09-09T17:46:23.923750+00:00",
+      "completed_at": "2026-09-09T17:46:25.525511+00:00"
+    },
+    {
+      "offset": 11010048,
+      "bytes": 262144,
+      "end_exclusive": 11272192,
+      "path": "<private-session>/pre-install/subread-10-2-attempt-1.bin",
+      "sha256": "ca245b5f7cf2b0c164ee1104e40756f83c805b192b836539ae4117fd360ec182",
+      "step": "subread-10-2-attempt-1",
+      "started_at": "2026-09-09T17:46:25.525822+00:00",
+      "completed_at": "2026-09-09T17:46:27.201299+00:00"
+    },
+    {
+      "offset": 11272192,
+      "bytes": 262144,
+      "end_exclusive": 11534336,
+      "path": "<private-session>/pre-install/subread-10-3-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-10-3-attempt-1",
+      "started_at": "2026-09-09T17:46:27.201646+00:00",
+      "completed_at": "2026-09-09T17:46:28.904541+00:00"
+    },
+    {
+      "offset": 11534336,
+      "bytes": 262144,
+      "end_exclusive": 11796480,
+      "path": "<private-session>/pre-install/subread-11-0-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-11-0-attempt-1",
+      "started_at": "2026-09-09T17:46:28.905436+00:00",
+      "completed_at": "2026-09-09T17:46:30.598290+00:00"
+    },
+    {
+      "offset": 11796480,
+      "bytes": 262144,
+      "end_exclusive": 12058624,
+      "path": "<private-session>/pre-install/subread-11-1-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-11-1-attempt-1",
+      "started_at": "2026-09-09T17:46:30.598670+00:00",
+      "completed_at": "2026-09-09T17:46:32.300562+00:00"
+    },
+    {
+      "offset": 12058624,
+      "bytes": 262144,
+      "end_exclusive": 12320768,
+      "path": "<private-session>/pre-install/subread-11-2-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-11-2-attempt-1",
+      "started_at": "2026-09-09T17:46:32.300986+00:00",
+      "completed_at": "2026-09-09T17:46:34.007863+00:00"
+    },
+    {
+      "offset": 12320768,
+      "bytes": 262144,
+      "end_exclusive": 12582912,
+      "path": "<private-session>/pre-install/subread-11-3-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-11-3-attempt-1",
+      "started_at": "2026-09-09T17:46:34.008271+00:00",
+      "completed_at": "2026-09-09T17:46:35.707074+00:00"
+    },
+    {
+      "offset": 12582912,
+      "bytes": 262144,
+      "end_exclusive": 12845056,
+      "path": "<private-session>/pre-install/subread-12-0-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-12-0-attempt-1",
+      "started_at": "2026-09-09T17:46:35.707990+00:00",
+      "completed_at": "2026-09-09T17:46:37.402692+00:00"
+    },
+    {
+      "offset": 12845056,
+      "bytes": 262144,
+      "end_exclusive": 13107200,
+      "path": "<private-session>/pre-install/subread-12-1-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-12-1-attempt-1",
+      "started_at": "2026-09-09T17:46:37.403092+00:00",
+      "completed_at": "2026-09-09T17:46:39.092679+00:00"
+    },
+    {
+      "offset": 13107200,
+      "bytes": 262144,
+      "end_exclusive": 13369344,
+      "path": "<private-session>/pre-install/subread-12-2-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-12-2-attempt-1",
+      "started_at": "2026-09-09T17:46:39.093385+00:00",
+      "completed_at": "2026-09-09T17:46:40.797669+00:00"
+    },
+    {
+      "offset": 13369344,
+      "bytes": 262144,
+      "end_exclusive": 13631488,
+      "path": "<private-session>/pre-install/subread-12-3-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-12-3-attempt-1",
+      "started_at": "2026-09-09T17:46:40.798008+00:00",
+      "completed_at": "2026-09-09T17:46:42.491199+00:00"
+    },
+    {
+      "offset": 13631488,
+      "bytes": 262144,
+      "end_exclusive": 13893632,
+      "path": "<private-session>/pre-install/subread-13-0-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-13-0-attempt-1",
+      "started_at": "2026-09-09T17:46:42.492241+00:00",
+      "completed_at": "2026-09-09T17:46:44.188570+00:00"
+    },
+    {
+      "offset": 13893632,
+      "bytes": 262144,
+      "end_exclusive": 14155776,
+      "path": "<private-session>/pre-install/subread-13-1-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-13-1-attempt-1",
+      "started_at": "2026-09-09T17:46:44.188923+00:00",
+      "completed_at": "2026-09-09T17:46:45.889561+00:00"
+    },
+    {
+      "offset": 14155776,
+      "bytes": 262144,
+      "end_exclusive": 14417920,
+      "path": "<private-session>/pre-install/subread-13-2-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-13-2-attempt-1",
+      "started_at": "2026-09-09T17:46:45.889949+00:00",
+      "completed_at": "2026-09-09T17:46:47.594162+00:00"
+    },
+    {
+      "offset": 14417920,
+      "bytes": 262144,
+      "end_exclusive": 14680064,
+      "path": "<private-session>/pre-install/subread-13-3-attempt-2.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-13-3-attempt-2",
+      "started_at": "2026-09-09T17:46:52.468825+00:00",
+      "completed_at": "2026-09-09T17:46:54.166074+00:00"
+    },
+    {
+      "offset": 14680064,
+      "bytes": 262144,
+      "end_exclusive": 14942208,
+      "path": "<private-session>/pre-install/subread-14-0-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-14-0-attempt-1",
+      "started_at": "2026-09-09T17:46:54.167531+00:00",
+      "completed_at": "2026-09-09T17:46:55.873502+00:00"
+    },
+    {
+      "offset": 14942208,
+      "bytes": 262144,
+      "end_exclusive": 15204352,
+      "path": "<private-session>/pre-install/subread-14-1-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-14-1-attempt-1",
+      "started_at": "2026-09-09T17:46:55.873896+00:00",
+      "completed_at": "2026-09-09T17:46:57.587684+00:00"
+    },
+    {
+      "offset": 15204352,
+      "bytes": 262144,
+      "end_exclusive": 15466496,
+      "path": "<private-session>/pre-install/subread-14-2-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-14-2-attempt-1",
+      "started_at": "2026-09-09T17:46:57.588043+00:00",
+      "completed_at": "2026-09-09T17:46:59.295161+00:00"
+    },
+    {
+      "offset": 15466496,
+      "bytes": 262144,
+      "end_exclusive": 15728640,
+      "path": "<private-session>/pre-install/subread-14-3-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-14-3-attempt-1",
+      "started_at": "2026-09-09T17:46:59.295621+00:00",
+      "completed_at": "2026-09-09T17:47:00.993336+00:00"
+    },
+    {
+      "offset": 15728640,
+      "bytes": 262144,
+      "end_exclusive": 15990784,
+      "path": "<private-session>/pre-install/subread-15-0-attempt-1.bin",
+      "sha256": "ee3eba6db59fe2cb29755391097c1826289970f3d58f87c3798e2dc17ae8f4ff",
+      "step": "subread-15-0-attempt-1",
+      "started_at": "2026-09-09T17:47:00.994490+00:00",
+      "completed_at": "2026-09-09T17:47:02.705849+00:00"
+    },
+    {
+      "offset": 15990784,
+      "bytes": 262144,
+      "end_exclusive": 16252928,
+      "path": "<private-session>/pre-install/subread-15-1-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-15-1-attempt-1",
+      "started_at": "2026-09-09T17:47:02.706198+00:00",
+      "completed_at": "2026-09-09T17:47:04.413105+00:00"
+    },
+    {
+      "offset": 16252928,
+      "bytes": 262144,
+      "end_exclusive": 16515072,
+      "path": "<private-session>/pre-install/subread-15-2-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-15-2-attempt-1",
+      "started_at": "2026-09-09T17:47:04.413452+00:00",
+      "completed_at": "2026-09-09T17:47:06.116916+00:00"
+    },
+    {
+      "offset": 16515072,
+      "bytes": 262144,
+      "end_exclusive": 16777216,
+      "path": "<private-session>/pre-install/subread-15-3-attempt-1.bin",
+      "sha256": "3b874d3ba46c638fc3094f8e92fb744ca974893873f8885f54e23760f9b6311b",
+      "step": "subread-15-3-attempt-1",
+      "started_at": "2026-09-09T17:47:06.117344+00:00",
+      "completed_at": "2026-09-09T17:47:07.824683+00:00"
+    }
+  ],
+  "assembled_sha256": "017c6360634660d5ac2489ddb5afac1cc1ecfdc144420b54ab0c97fa323999be"
+}

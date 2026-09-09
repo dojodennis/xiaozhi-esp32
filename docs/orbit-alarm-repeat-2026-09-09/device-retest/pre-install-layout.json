@@ -1,0 +1,67 @@
+{
+  "partitions": [
+    {
+      "type": 1,
+      "subtype": 2,
+      "offset": "0x9000",
+      "size": "0x4000",
+      "label": "nvs",
+      "flags": 0
+    },
+    {
+      "type": 1,
+      "subtype": 0,
+      "offset": "0xd000",
+      "size": "0x2000",
+      "label": "otadata",
+      "flags": 0
+    },
+    {
+      "type": 1,
+      "subtype": 1,
+      "offset": "0xf000",
+      "size": "0x1000",
+      "label": "phy_init",
+      "flags": 0
+    },
+    {
+      "type": 1,
+      "subtype": 4,
+      "offset": "0x10000",
+      "size": "0x1000",
+      "label": "nvs_keys",
+      "flags": 1
+    },
+    {
+      "type": 0,
+      "subtype": 16,
+      "offset": "0x20000",
+      "size": "0x3f0000",
+      "label": "ota_0",
+      "flags": 0
+    },
+    {
+      "type": 0,
+      "subtype": 17,
+      "offset": "0x410000",
+      "size": "0x3f0000",
+      "label": "ota_1",
+      "flags": 0
+    },
+    {
+      "type": 1,
+      "subtype": 130,
+      "offset": "0x800000",
+      "size": "0x800000",
+      "label": "assets",
+      "flags": 0
+    }
+  ],
+  "partition_md5_valid": true,
+  "selected_slot": "ota_0",
+  "selected_state": "VALID",
+  "sequence": 1,
+  "selector_crc": "0x4743989a",
+  "second_selector_sector_erased": true,
+  "current_application_sha256": "32473218a5c311c164815cc1ad0535eff0e182f178f0b7af59d657da13418f7a"
+}
