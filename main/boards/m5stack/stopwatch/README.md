@@ -53,6 +53,36 @@ mode and wait for the green indication; bench commands deliberately use
 The resulting credential and Wi-Fi password are physically extractable. This is
 controlled demo hardware only: never a customer/yacht device or commercial pilot.
 
+### Key-less bench variant (show ring only)
+
+Nobody currently holds the ring's approved RSA-3072 signing key, and the
+`bench_profile.json` app above cannot boot unsigned. For the show ring build the
+same variant with `--unsigned-bench`:
+
+```sh
+python3 scripts/build.py m5stack/stopwatch \
+  --config bench_profile.json \
+  --name provisions-kitchen-helper-stopwatch \
+  --language en-US \
+  --wake-word disabled \
+  --unsigned-bench
+```
+
+The OTA-reported name stays `provisions-kitchen-helper-stopwatch` (the CMake
+board guard pins `BOARD_NAME` to the Kconfig profile, and the gateway keys on
+it). The sdkconfig fragment is identical to the signed bench build (same board
+identity, `partitions/provisions/16m.csv`, `PROVISIONS_GATEWAY_REQUIRED`, local
+capture, en-US, wake word disabled, rollback on, image-validation skips off)
+except that `CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=n`, so
+`CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT` is off and no signature scheme
+is selected. **This is a security downgrade**: the running app carries no
+signature requirement and an OTA image is installed without verification.
+`build/xiaozhi.bin` flashes and boots as-is; there is nothing to sign. The build
+prints `[WARNING] unsigned bench variant: OTA signature verification disabled`
+in the configuration summary and again after packaging. Bench / show ring only,
+never the pilot: the flag refuses `pilot_profile.json` (hardware Secure Boot)
+and any variant that does not verify signatures in the first place.
+
 -----------
 ## hardware
 

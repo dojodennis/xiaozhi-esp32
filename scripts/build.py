@@ -451,6 +451,73 @@ def _external_signing_notice(sdkconfig_append: list[str]) -> Optional[str]:
     )
 
 
+_APP_SIGNATURE_SCHEME_SYMBOLS = (
+    "CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME",
+    "CONFIG_SECURE_SIGNED_APPS_ECDSA_V2_SCHEME",
+    "CONFIG_SECURE_SIGNED_APPS_ECDSA_SCHEME",
+)
+
+
+def _unsigned_bench_sdkconfig(sdkconfig_append: list[str]) -> list[str]:
+    """Drop the signed-apps requirement from a signed-on-update profile.
+
+    The variant keeps its OTA-reported name, board identity, partition table
+    and every other option byte for byte; only app-signature verification goes:
+    CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=n, and with it
+    CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT (which depends on it) and the
+    signature-scheme choice (which Kconfig only offers under it). Refuses a
+    profile that does not verify signatures (nothing to remove) or one with
+    hardware Secure Boot (the bootloader, not this symbol, rejects the app).
+    """
+    assignments = _sdkconfig_assignments(sdkconfig_append)
+    if assignments.get("CONFIG_SECURE_BOOT") == "y":
+        raise ValueError(
+            "--unsigned-bench cannot be applied to a hardware Secure Boot profile "
+            "(CONFIG_SECURE_BOOT=y): the bootloader rejects unsigned apps regardless"
+        )
+    if assignments.get("CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT") != "y":
+        raise ValueError(
+            "--unsigned-bench needs a variant with "
+            "CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=y; this one has nothing to remove"
+        )
+    result: list[str] = []
+    for item in sdkconfig_append:
+        key = item.strip().partition("=")[0]
+        if key == "CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT":
+            result.append("CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=n")
+            result.append("CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT=n")
+        elif key in _APP_SIGNATURE_SCHEME_SYMBOLS:
+            continue
+        elif key == "CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT":
+            continue
+        else:
+            result.append(item)
+    return result
+
+
+def _unsigned_bench_warning(sdkconfig_append: list[str]) -> Optional[str]:
+    """Warn when a variant deliberately switches app-signature verification off.
+
+    A profile that sets CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=n explicitly
+    (rather than leaving the Kconfig default alone) is a key-less bench
+    variant: the running app carries no signature requirement and an OTA image
+    is installed without verification. That is a security downgrade meant for
+    the show ring only, so shout about it in the build output.
+    """
+    assignments = _sdkconfig_assignments(sdkconfig_append)
+    if assignments.get("CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT") != "n":
+        return None
+    if assignments.get("CONFIG_SECURE_BOOT") == "y":
+        return None
+    return (
+        "!" * 80 + "\n"
+        "[WARNING] unsigned bench variant: OTA signature verification disabled\n"
+        "(CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=n). The app boots and updates without\n"
+        "any signature check. Bench / show ring only: never flash this on the pilot.\n"
+        + "!" * 80
+    )
+
+
 def _kconfig_choice(
     name: str,
     kconfig_path: Path = Path("main/Kconfig.projbuild"),
@@ -1454,6 +1521,7 @@ def build_board(
     wake_word: Optional[str] = None,
     build_options: Optional[dict[str, object]] = None,
     idf_version: tuple[int, int, int] = (6, 0, 0),
+    unsigned_bench: bool = False,
 ) -> None:
     """Compile one specified variant of the specified board type.
 
@@ -1465,6 +1533,7 @@ def build_board(
         language: optional locale such as en-US
         wake_word: optional ESP-SR model name or "disabled"
         build_options: optional semantic, board-validated option values
+        unsigned_bench: strip the signed-apps requirement (bench / show ring only)
     """
     cfg_path = _BOARDS_DIR / Path(board_type) / config_filename
     if not cfg_path.exists():
@@ -1572,6 +1641,8 @@ def build_board(
             user_options,
         )
         sdkconfig_append = _apply_auto_selects(sdkconfig_append)
+        if unsigned_bench:
+            sdkconfig_append = _unsigned_bench_sdkconfig(sdkconfig_append)
 
         print("-" * 80)
         print(f"name: {final_name}")
@@ -1590,8 +1661,13 @@ def build_board(
                 "build_options: "
                 + json.dumps(selected_build_options, ensure_ascii=False, sort_keys=True)
             )
+        if unsigned_bench:
+            print("unsigned_bench: true")
         for item in sdkconfig_append:
             print(f"sdkconfig_append: {item}")
+        warning = _unsigned_bench_warning(sdkconfig_append)
+        if warning:
+            print(warning)
 
         _emit_build_stage("dependencies_resolving")
         os.environ.pop("IDF_TARGET", None)
@@ -1617,6 +1693,8 @@ def build_board(
         notice = _external_signing_notice(sdkconfig_append)
         if notice:
             print(notice)
+        if warning:
+            print(warning)
 
         if create_zip:
             zip_bin(final_name, project_version)
@@ -1722,6 +1800,16 @@ def main(argv: Optional[list[str]] = None) -> None:
         help="Also recreate releases/v<version>_<name>.zip",
     )
     parser.add_argument(
+        "--unsigned-bench",
+        action="store_true",
+        help=(
+            "Key-less bench variant: build the selected signed-on-update variant "
+            "with CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=n so the app boots and "
+            "updates without any signature check. SECURITY DOWNGRADE: bench / "
+            "show ring only, never the pilot."
+        ),
+    )
+    parser.add_argument(
         "--select-changed",
         action="store_true",
         help="Read changed paths from stdin and output the affected variants as JSON",
@@ -1744,6 +1832,7 @@ def main(argv: Optional[list[str]] = None) -> None:
             or args.wake_word
             or args.build_options_json
             or args.zip
+            or args.unsigned_bench
             or args.json
         ):
             parser.error("--select-changed cannot be combined with build or list options")
@@ -1763,6 +1852,7 @@ def main(argv: Optional[list[str]] = None) -> None:
             or args.wake_word
             or args.build_options_json
             or args.zip
+            or args.unsigned_bench
         ):
             parser.error(
                 "--list-languages cannot be combined with build or other "
@@ -1784,6 +1874,7 @@ def main(argv: Optional[list[str]] = None) -> None:
             or args.wake_word
             or args.build_options_json
             or args.zip
+            or args.unsigned_bench
         ):
             parser.error(
                 "--list-wake-words cannot be combined with build or other "
@@ -1807,6 +1898,7 @@ def main(argv: Optional[list[str]] = None) -> None:
             args.list_languages
             or args.list_wake_words
             or args.zip
+            or args.unsigned_bench
             or args.name
             or args.language
             or args.wake_word
@@ -1891,6 +1983,7 @@ def main(argv: Optional[list[str]] = None) -> None:
             wake_word=args.wake_word,
             build_options=parsed_build_options,
             idf_version=idf_version,
+            unsigned_bench=args.unsigned_bench,
         )
 
 
