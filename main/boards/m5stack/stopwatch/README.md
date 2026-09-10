@@ -39,7 +39,11 @@ This preserves the exact StopWatch board identity, yellow KEYA/GPIO2 manual Talk
 control, gateway-only connection and 16 MB Provisions layout while deliberately
 disabling Secure Boot, flash encryption, NVS encryption and eFuse anti-rollback.
 The app must still be externally signed for OTA verification and image-validation
-skip options are disabled. Prepare its registered schema-v2 `device.json` with
+skip options are disabled. Sign `build/xiaozhi.bin` before flashing it: with this
+profile ESP-IDF's `esp_secure_boot_init_checks()` refuses to run an unsigned app
+(`abort()` during efuse init, before `app_main()`, so the ring crash-loops after
+`spi_flash: flash io: qio`). The build prints this reminder after packaging.
+Prepare its registered schema-v2 `device.json` with
 `scripts/prepare_provisions_reversible_bench.py`; see the CoreS3 Provisions README
 for its mandatory external full-16-MB recovery-image arguments, private bundle
 contract and mandatory revocation/full-flash wipe. Manually enter ROM download
