@@ -6,6 +6,7 @@
 #include <psa/crypto.h>
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include "esp_audio_enc.h"
 #include "esp_opus_enc.h"
@@ -13,6 +14,13 @@
 namespace provisions {
 namespace {
 constexpr size_t kContextBytes = 40;
+// Orbit Lite "uploaded, awaiting server receipt" marker: one NVS blob per slot,
+// {journal sequence u64 LE, uploaded unix ms u64 LE}. A stale marker (sequence
+// no longer in the slot) is ignored, so a reused slot can never inherit it.
+constexpr size_t kAwaitingReceiptBytes = 16;
+void AwaitingReceiptKey(size_t slot, char (&key)[16]) {
+    std::snprintf(key, sizeof(key), "lite_up_%u", static_cast<unsigned>(slot));
+}
 constexpr int64_t kRetryDelayUs = 30LL * 1000 * 1000;
 // The packaged ESP Opus encoder reports 104 samples of lookahead at 16 kHz.
 // Budget 20 ms of zero padding after microphone closure so the final samples
@@ -137,6 +145,7 @@ bool VoiceRecorder::ActivateContext(const VoiceContext& context) {
             return false;
         context_ = context;
         has_context_.store(true);
+        lite_active_.store(false);  // A negotiated full-gateway context replaces the lite tag.
         if (!requested_commit_) {
             requested_commit_ = true;
             context_dirty_ = true;
@@ -149,12 +158,44 @@ bool VoiceRecorder::ActivateContext(const VoiceContext& context) {
 bool VoiceRecorder::UpdateContext(const VoiceContext& context) {
     return PrepareContext(context) && ActivateContext(context);
 }
+bool VoiceRecorder::UseLiteContext(const VoiceContext& context) {
+    // Deliberately no PrepareContext/SaveContext: context_ and NVS "context_v1"
+    // keep the last negotiated full-gateway identity so every retained
+    // recording stays replayable once that gateway returns.
+    if (!VoiceRecording::ValidContext(context) || !recording_)
+        return false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (dictation_replacing_.load())
+            return false;
+        lite_context_ = context;
+        lite_active_.store(true);
+        refresh_requested_ = true;
+    }
+    Wake();
+    return true;
+}
+bool VoiceRecorder::MarkUploadedAwaitingReceipt(const VoiceReplay& replay,
+                                                uint64_t uploaded_unix_ms) {
+    if (replay.capture.IsDictation())
+        return false;  // Dictation is never uploaded on lite; never marked.
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (upload_mark_count_ == upload_marks_.size())
+            return false;
+        upload_marks_[upload_mark_count_++] = {replay.capture, replay.bytes, replay.digest,
+                                               uploaded_unix_ms};
+    }
+    Wake();
+    return true;
+}
 
 bool VoiceRecorder::Begin(uint32_t press, uint64_t captured_unix_ms) {
-    if (!recording_ || !storage_ready_.load() || !has_context_.load())
+    if (!recording_ || !storage_ready_.load() || !HasContext())
         return false;
     std::lock_guard<std::mutex> lock(mutex_);
-    return !dictation_replacing_.load() && recording_->Begin(press, context_, captured_unix_ms);
+    return !dictation_replacing_.load() &&
+           recording_->Begin(press, ActiveContextLocked(), captured_unix_ms);
 }
 bool VoiceRecorder::Append(uint32_t press, const int16_t* pcm, size_t frames, size_t channels) {
     const bool appended = recording_ && recording_->Append(press, pcm, frames, channels);
@@ -198,7 +239,7 @@ bool VoiceRecorder::RequestRetry() {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         repair_requested_ = true;
-        repair_conversation_id_ = context_.conversation_id;
+        repair_conversation_id_ = ActiveContextLocked().conversation_id;
     }
     Wake();
     return true;
@@ -316,7 +357,7 @@ void VoiceRecorder::Save(const VoiceRecording::Work& work) {
     bool ok = empty_dictation ||
               (manifest && storage_ready_.load() && Encode(work, capture, bytes) &&
                (capture.IsDictation() || outbox_.NewRequestId(capture.request_id)) &&
-               outbox_.journal()->Save(capture, {frames_, bytes}, saved) == VoiceStoreResult::Ok);
+               Store(capture, {frames_, bytes}, saved));
     if (!ok && work.capture.IsDictation()) {
         // Preserve the Processing PCM and its durable ordinal for a later write.
         // A pending Stop counts this reservation even before the raw part syncs.
@@ -338,6 +379,10 @@ void VoiceRecorder::Save(const VoiceRecording::Work& work) {
         offered_[saved.slot] = false;
         retry_tokens_[saved.slot] = {};
         retry_used_[saved.slot] = retry_pending_[saved.slot] = false;
+        // A fresh journal sequence in this slot invalidates any older marker.
+        awaiting_receipt_[saved.slot] = false;
+        awaiting_receipt_unix_ms_[saved.slot] = 0;
+        awaiting_receipt_mono_us_[saved.slot] = 0;
     }
     RefreshCount();
     if (work.capture.IsDictation()) {
@@ -360,12 +405,13 @@ void VoiceRecorder::Save(const VoiceRecording::Work& work) {
 void VoiceRecorder::RefreshCount() {
     unsigned count = 0;
     unsigned retry_count = 0;
+    unsigned awaiting = 0;
     bool can_retry = false;
     bool attention = context_write_failed_;
     VoiceContext context;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        context = context_;
+        context = ActiveContextLocked();
     }
     if (outbox_.journal()) {
         for (size_t slot = 0; slot < VoiceOutbox::kSlots; ++slot) {
@@ -373,6 +419,8 @@ void VoiceRecorder::RefreshCount() {
             const auto result = outbox_.journal()->Read(slot, saved);
             if (result != VoiceStoreResult::Empty)
                 ++count;
+            if (result == VoiceStoreResult::Ok && awaiting_receipt_[slot])
+                ++awaiting;
             if (result != VoiceStoreResult::Ok && result != VoiceStoreResult::Empty)
                 attention = true;
             attention = attention || attention_[slot];
@@ -386,17 +434,18 @@ void VoiceRecorder::RefreshCount() {
         }
     }
     pending_count_.store(count);
+    awaiting_receipt_count_.store(awaiting);
     needs_attention_.store(attention);
     can_retry_.store(can_retry);
     retry_pending_count_.store(retry_count);
 }
 bool VoiceRecorder::PrepareRetry(const VoiceId& conversation_id) {
-    if (!outbox_.journal() || !has_context_.load())
+    if (!outbox_.journal() || !HasContext())
         return false;
     VoiceContext context;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        context = context_;
+        context = ActiveContextLocked();
     }
     if (context.conversation_id != conversation_id)
         return false;
@@ -421,17 +470,18 @@ bool VoiceRecorder::PrepareRetry(const VoiceId& conversation_id) {
     return true;
 }
 void VoiceRecorder::PrepareReplay() {
-    if (!outbox_.journal() || replay_.use_count() != 1 || !has_context_.load())
+    if (!outbox_.journal() || replay_.use_count() != 1 || !HasContext())
         return;
     VoiceContext context;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        context = context_;
+        context = ActiveContextLocked();
     }
     size_t selected = VoiceOutbox::kSlots;
     uint64_t oldest = UINT64_MAX;
     for (size_t slot = 0; slot < VoiceOutbox::kSlots; ++slot) {
-        if ((attention_[slot] && !retry_pending_[slot]) ||
+        // An "uploaded, awaiting receipt" lite capture is kept but not re-offered.
+        if (awaiting_receipt_[slot] || (attention_[slot] && !retry_pending_[slot]) ||
             retry_after_[slot] > esp_timer_get_time())
             continue;
         SavedVoiceCapture saved;
@@ -489,6 +539,12 @@ void VoiceRecorder::ApplyReceipt(const VoiceCaptureReceipt& receipt) {
                 attention_[slot] = false;
                 retry_tokens_[slot] = {};
                 retry_used_[slot] = retry_pending_[slot] = false;
+                if (awaiting_receipt_[slot]) {
+                    awaiting_receipt_[slot] = false;
+                    awaiting_receipt_unix_ms_[slot] = 0;
+                    awaiting_receipt_mono_us_[slot] = 0;
+                    ForgetAwaitingReceipt(slot);
+                }
                 RefreshCount();
                 if (saved.capture.IsDictation())
                     PublishDictation();
@@ -516,6 +572,127 @@ void VoiceRecorder::ApplyReceipt(const VoiceCaptureReceipt& receipt) {
         return;
     }
 }
+bool VoiceRecorder::LoadAwaitingReceipt(size_t slot, uint64_t sequence,
+                                        uint64_t& uploaded_unix_ms) {
+    nvs_handle_t handle = 0;
+    if (nvs_open("orbit_audio", NVS_READONLY, &handle) != ESP_OK)
+        return false;
+    char key[16];
+    AwaitingReceiptKey(slot, key);
+    std::array<uint8_t, kAwaitingReceiptBytes> data{};
+    size_t bytes = data.size();
+    const auto result = nvs_get_blob(handle, key, data.data(), &bytes);
+    nvs_close(handle);
+    if (result != ESP_OK || bytes != data.size())
+        return false;
+    uint64_t stored = 0, ms = 0;
+    for (size_t i = 0; i < 8; ++i) {
+        stored |= static_cast<uint64_t>(data[i]) << (8 * i);
+        ms |= static_cast<uint64_t>(data[8 + i]) << (8 * i);
+    }
+    if (stored == 0 || stored != sequence)
+        return false;
+    uploaded_unix_ms = ms;
+    return true;
+}
+bool VoiceRecorder::SaveAwaitingReceipt(size_t slot, uint64_t sequence, uint64_t uploaded_unix_ms) {
+    std::array<uint8_t, kAwaitingReceiptBytes> data{};
+    for (size_t i = 0; i < 8; ++i) {
+        data[i] = (sequence >> (8 * i)) & 255;
+        data[8 + i] = (uploaded_unix_ms >> (8 * i)) & 255;
+    }
+    nvs_handle_t handle = 0;
+    if (nvs_open("orbit_audio", NVS_READWRITE, &handle) != ESP_OK)
+        return false;
+    char key[16];
+    AwaitingReceiptKey(slot, key);
+    auto result = nvs_set_blob(handle, key, data.data(), data.size());
+    if (result == ESP_OK)
+        result = nvs_commit(handle);
+    nvs_close(handle);
+    return result == ESP_OK;
+}
+void VoiceRecorder::ForgetAwaitingReceipt(size_t slot) {
+    SaveAwaitingReceipt(slot, 0, 0);  // Sequence 0 never matches a journal entry.
+}
+// Worker only. Marks the exact uploaded capture (metadata, size and digest must
+// match) as "uploaded, awaiting server receipt". Nothing is erased here.
+void VoiceRecorder::ApplyUploadMark(const UploadMark& mark) {
+    if (!outbox_.journal())
+        return;
+    for (size_t slot = 0; slot < VoiceOutbox::kSlots; ++slot) {
+        SavedVoiceCapture saved;
+        if (outbox_.journal()->Read(slot, saved) != VoiceStoreResult::Ok ||
+            !SameCapture(saved.capture, mark.capture) || saved.frames.size != mark.bytes)
+            continue;
+        std::array<uint8_t, 32> digest{};
+        if (!Digest(saved.frames, digest) || digest != mark.digest || saved.capture.IsDictation())
+            return;
+        awaiting_receipt_[slot] = true;
+        awaiting_receipt_unix_ms_[slot] = mark.uploaded_unix_ms;
+        // Zero means "unknown" (after a reboot); a mark taken at boot time 0 is not.
+        awaiting_receipt_mono_us_[slot] = std::max<int64_t>(1, esp_timer_get_time());
+        // Best effort: a failed NVS write still suppresses re-offers this boot.
+        SaveAwaitingReceipt(slot, saved.sequence, mark.uploaded_unix_ms);
+        RefreshCount();
+        notify_(Result::Uploaded, presses_[slot]);
+        return;
+    }
+}
+// Worker only; the accepted show-time trade-off (docs/orbit-lite-mode.md). With
+// every slot occupied and a new press to journal, erase exactly one entry: the
+// OLDEST command capture that is "uploaded, awaiting receipt" and has been so
+// for at least kAwaitingReceiptEvictionUs. Never a dictation segment, never an
+// entry that was not uploaded, never one younger than the bound.
+bool VoiceRecorder::EvictForNewCapture(uint64_t now_unix_ms) {
+    if (!outbox_.journal())
+        return false;
+    size_t selected = VoiceOutbox::kSlots;
+    uint64_t oldest = UINT64_MAX;
+    VoiceId request_id{}, conversation_id{};
+    const int64_t now_us = esp_timer_get_time();
+    for (size_t slot = 0; slot < VoiceOutbox::kSlots; ++slot) {
+        if (!awaiting_receipt_[slot])
+            continue;
+        SavedVoiceCapture saved;
+        if (outbox_.journal()->Read(slot, saved) != VoiceStoreResult::Ok ||
+            saved.capture.IsDictation())
+            continue;
+        const uint64_t uploaded_ms = awaiting_receipt_unix_ms_[slot];
+        const int64_t marked_us = awaiting_receipt_mono_us_[slot];
+        const bool aged =
+            (now_unix_ms != 0 && uploaded_ms != 0 &&
+             now_unix_ms >= uploaded_ms + static_cast<uint64_t>(kAwaitingReceiptEvictionUs / 1000)) ||
+            (marked_us != 0 && now_us - marked_us >= kAwaitingReceiptEvictionUs);
+        if (!aged || saved.sequence >= oldest)
+            continue;
+        selected = slot;
+        oldest = saved.sequence;
+        request_id = saved.capture.request_id;
+        conversation_id = saved.capture.conversation_id;
+    }
+    if (selected == VoiceOutbox::kSlots ||
+        outbox_.journal()->RemoveAfterReceipt(selected, request_id, conversation_id) !=
+            VoiceStoreResult::Ok)
+        return false;
+    const uint32_t press = presses_[selected];
+    attention_[selected] = false;
+    offered_[selected] = false;
+    retry_tokens_[selected] = {};
+    retry_used_[selected] = retry_pending_[selected] = false;
+    awaiting_receipt_[selected] = false;
+    awaiting_receipt_unix_ms_[selected] = 0;
+    awaiting_receipt_mono_us_[selected] = 0;
+    ForgetAwaitingReceipt(selected);
+    notify_(Result::Evicted, press);
+    return true;
+}
+bool VoiceRecorder::Store(const VoiceCapture& capture, VoiceBytes frames, SavedVoiceCapture& saved) {
+    auto result = outbox_.journal()->Save(capture, frames, saved);
+    if (result == VoiceStoreResult::Full && EvictForNewCapture(capture.captured_unix_ms))
+        result = outbox_.journal()->Save(capture, frames, saved);
+    return result == VoiceStoreResult::Ok;
+}
 void VoiceRecorder::Run() {
     VoiceContext cached;
     if (LoadContext(cached)) {
@@ -536,9 +713,17 @@ void VoiceRecorder::Run() {
     if (outbox_.journal()) {
         for (size_t slot = 0; slot < VoiceOutbox::kSlots; ++slot) {
             SavedVoiceCapture saved;
-            if (outbox_.journal()->Read(slot, saved) != VoiceStoreResult::Ok ||
-                !saved.capture.IsDictation())
+            if (outbox_.journal()->Read(slot, saved) != VoiceStoreResult::Ok)
                 continue;
+            if (!saved.capture.IsDictation()) {
+                uint64_t uploaded_unix_ms = 0;
+                if (LoadAwaitingReceipt(slot, saved.sequence, uploaded_unix_ms)) {
+                    awaiting_receipt_[slot] = true;
+                    awaiting_receipt_unix_ms_[slot] = uploaded_unix_ms;
+                    awaiting_receipt_mono_us_[slot] = 0;  // Unknown after a reboot.
+                }
+                continue;
+            }
             const auto& record = dictation_journal_.Get();
             if (saved.capture.dictation_session_id != record.id ||
                 saved.capture.chunk_sequence >= record.count ||
@@ -569,8 +754,16 @@ void VoiceRecorder::Run() {
              commit_context = false, repair = false;
         std::array<VoiceCaptureReceipt, VoiceOutbox::kSlots> receipts;
         size_t count = 0;
+        std::array<UploadMark, VoiceOutbox::kSlots> marks;
+        size_t mark_count = 0;
+        bool refresh = false;
         {
             std::lock_guard<std::mutex> lock(mutex_);
+            mark_count = upload_mark_count_;
+            std::copy_n(upload_marks_.begin(), mark_count, marks.begin());
+            upload_mark_count_ = 0;
+            refresh = refresh_requested_;
+            refresh_requested_ = false;
             context = requested_context_;
             commit_context = requested_commit_;
             dirty = context_dirty_;
@@ -624,6 +817,10 @@ void VoiceRecorder::Run() {
         ServiceDictation();
         for (size_t i = 0; i < count; ++i)
             ApplyReceipt(receipts[i]);
+        for (size_t i = 0; i < mark_count; ++i)
+            ApplyUploadMark(marks[i]);
+        if (refresh)
+            RefreshCount();
         if (repair) {
             const bool queued = PrepareRetry(repair_conversation);
             notify_(queued ? Result::RetryQueued : Result::RetryUnavailable, 0);

@@ -5,8 +5,10 @@ selected by the server hello and lives for the life of that socket; the device
 hello is unchanged, so the same firmware talks to the full gateway.
 
 Source: `main/protocols/provisions_lite_hello.h`, `main/provisions_lite_jitter.h`,
-`main/provisions_lite_face.h`, the `Orbit Lite` section of `main/application.cc`.
-Host tests: `scripts/tests/test_provisions_lite_mode.py`.
+`main/provisions_lite_face.h`, the `Orbit Lite` section of `main/application.cc`,
+the lite paths of `main/provisions_voice_recorder.cc`.
+Host tests: `scripts/tests/test_provisions_lite_mode.py`,
+`scripts/tests/test_provisions_lite_preservation.py`.
 
 ## Contract
 
@@ -44,18 +46,65 @@ upload task sends the fork's existing wire sequence on the open socket:
 3. `{"session_id":…,"type":"listen","state":"stop","turn_id":N}`
 
 The lite gateway must treat 1 as `listen start` and ignore the extra keys. Two
-lite-only rules make the recorder work without a full gateway:
+lite-only rules make the recorder work without a full gateway, and both are
+written to preserve recordings (Codex review of 10 September 2026, correction
+items 2 and 3):
 
-- The lite hello installs a fixed capture context (`provisions::lite::kConversationId`)
-  because the recorder journals every press under the live context and only
-  offers captures whose conversation matches it. Captures made under a full
-  gateway keep their own conversation and are never offered to a lite gateway.
-- Lite sends no `capture_receipt`. A successful upload is acknowledged locally
-  as a durable receipt (`AcknowledgeLiteUpload`), which retires the journal slot
-  instead of re-offering it every 30 s. A deferred capture (one that missed its
-  own press: reboot, re-offer after a failed upload, superseded press) is
-  retired without upload — lite has no durable intake and speaking a stale
-  request back out of context would be wrong.
+- **Capture identity.** The lite hello carries a fixed capture context
+  (`provisions::lite::kConversationId`). Connecting hands it to
+  `VoiceRecorder::UseLiteContext()`, a RAM-only tag for the life of that
+  socket: new presses are journalled under it and only matching captures are
+  offered (the replay filter itself is unchanged). The stored NVS context
+  (`context_v1`), every retained full-gateway recording and the dictation
+  journal are left exactly as they were, so they replay again when the full
+  gateway returns and re-activates its negotiated context. A factory-fresh ring
+  that has never held a full-gateway context cannot journal on lite (the
+  journal key is only created under an authenticated negotiated context);
+  that is reported as "Capture unavailable", not worked around.
+- **Uploads are never receipts.** Lite sends no `capture_receipt`. After a
+  successful upload (`listen stop` sent) the entry is kept in flash and marked
+  "uploaded, awaiting server receipt" (`MarkLiteUploaded` →
+  `VoiceRecorder::MarkUploadedAwaitingReceipt`). The mark is persisted in NVS
+  bound to the entry's journal sequence, so it survives a reboot and can never
+  attach to a reused slot. Marked entries are not re-offered every 30 s; they
+  are removed only by a correlated durable `capture_receipt` (full gateway) or
+  by the bounded eviction below. No `durable` receipt is constructed locally
+  and the recorder's erase path is never reached from the lite upload. Deferred
+  captures (reboot, re-offer, superseded press) are uploaded like any other and
+  are never retired without an upload. Dictation segments are never uploaded
+  on lite (explicitly refused, kept for the full gateway) and never marked.
+
+### Accepted show-time trade-off: bounded slot reuse
+
+The journal has four slots. Because lite never confirms a save, marked entries
+would otherwise accumulate until the ring can no longer record at a show. The
+accepted rule, implemented in `VoiceRecorder::EvictForNewCapture()` and only
+reached when a new press finds every slot occupied:
+
+- evict exactly one entry: the **oldest** (lowest journal sequence) command
+  capture that is in "uploaded, awaiting receipt" state **and** has been so for
+  at least **30 minutes** (`kAwaitingReceiptEvictionUs`);
+- age is measured against the trusted clock when both the upload mark and the
+  new press carry one, otherwise against the monotonic clock since the mark;
+  after a reboot without a trusted clock the age is unknown and the entry is
+  **not** evictable;
+- never a dictation (ORBAUD03) segment, never an entry that was not uploaded,
+  never anything younger than the bound; if no entry qualifies the new press
+  fails with "Couldn't save" exactly as a full store did before;
+- every eviction is logged (`Orbit Lite: evicted the oldest
+  uploaded-awaiting-receipt capture …`).
+
+This is a deliberate, bounded loss: a note that the lite gateway received at
+least 30 minutes earlier may be erased to make room for a new one. It is the
+only path on which lite removes a recording.
+
+### Dictation on lite
+
+Dictation keeps the negotiated full-gateway route (`BeginDictation()` is
+unchanged). Lite never negotiates it, so on lite the dictation screen reads
+"Dictation needs the full gateway" and the hold does nothing instead of failing
+silently. The RAM dictation assignment proof is neither confirmed nor cleared
+by a lite socket; it stays for the next full-gateway session.
 
 ## Playback
 

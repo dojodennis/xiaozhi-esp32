@@ -1905,21 +1905,24 @@ void Application::RenderLiteFace(provisions::lite::Face face, const std::string&
 
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
 // The lite gateway keeps no intake and sends no capture_receipt. The upload's
-// own `listen stop` (or the decision not to upload a deferred capture) is the
-// receipt: retire the journal slot exactly as a durable receipt would.
-void Application::AcknowledgeLiteUpload(
-    const std::shared_ptr<const provisions::VoiceReplay>& replay) {
+// own `listen stop` proves only that the bytes left the device, never that a
+// server committed them, so it is not a receipt: the journal entry is kept in
+// flash and marked "uploaded, awaiting server receipt" so it stops being
+// re-offered every 30 s. Only a correlated durable capture_receipt (full
+// gateway) or the bounded show-time eviction in the recorder removes it.
+void Application::MarkLiteUploaded(const std::shared_ptr<const provisions::VoiceReplay>& replay) {
     auto recorder = std::atomic_load(&provisions_recorder_);
     if (!recorder || !replay) {
         return;
     }
-    provisions::VoiceCaptureReceipt receipt;
-    receipt.capture = replay->capture;
-    receipt.bytes = replay->bytes;
-    receipt.digest = replay->digest;
-    receipt.durable = true;
-    if (!recorder->Acknowledge(receipt)) {
-        ESP_LOGW(TAG, "Orbit Lite: receipt queue full; the capture stays journalled");
+    uint64_t uploaded_unix_ms = 0;
+    if (has_server_time_) {
+        timeval now{};
+        if (gettimeofday(&now, nullptr) == 0 && now.tv_sec > 0)
+            uploaded_unix_ms = static_cast<uint64_t>(now.tv_sec) * 1000 + now.tv_usec / 1000;
+    }
+    if (!recorder->MarkUploadedAwaitingReceipt(*replay, uploaded_unix_ms)) {
+        ESP_LOGW(TAG, "Orbit Lite: upload mark not queued; the capture stays journalled");
     }
 }
 #endif
@@ -2001,6 +2004,16 @@ void Application::HandleVoiceRecordingResult(provisions::VoiceRecorder::Result r
         std::lock_guard<std::mutex> lock(provisions_recording_control_mutex_);
         if (provisions_physical_press_.IsCurrent(press) && !manual_listening_requested_.load())
             audio_service_.PlayLocalFeedback(provisions::feedback::kFailed);
+    } else if (result == Result::Uploaded) {
+        // Orbit Lite: sent, still on the ring, unconfirmed by any server receipt.
+        if (!manual_listening_requested_.load() && GetDeviceState() == kDeviceStateIdle)
+            Board::GetInstance().GetDisplay()->SetChatMessage(
+                "system", "Sent. Kept on Orbit until confirmed.");
+    } else if (result == Result::Evicted) {
+        ESP_LOGW(TAG,
+                 "Orbit Lite: evicted the oldest uploaded-awaiting-receipt capture (press %u) "
+                 "older than 30 min to journal a new press",
+                 static_cast<unsigned>(press));
     } else if (result == Result::NeedsAttention && !manual_listening_requested_.load()) {
         Board::GetInstance().GetDisplay()->SetChatMessage(
             "system", recorder && recorder->CanRetry() ? "Recording kept. Hold blue to retry."
@@ -2028,15 +2041,15 @@ void Application::SendVoiceRecording(std::shared_ptr<const provisions::VoiceRepl
     const uint32_t physical = provisions_physical_press_.id();
     const bool deferred =
         replay->capture.IsDictation() || replay->press == 0 || replay->press != physical;
-    if (protocol->IsLiteMode() && deferred) {
-        // Orbit Lite has no durable intake: a capture that missed its own press
-        // (reboot, re-offer, superseded press) would be spoken back out of
-        // context. Retire it locally so it cannot fill the four journal slots.
-        ESP_LOGW(TAG, "Orbit Lite: retiring a deferred capture without upload");
-        AcknowledgeLiteUpload(replay);
+    if (protocol->IsLiteMode() && replay->capture.IsDictation()) {
+        // Explicitly unsupported on lite: dictation is never negotiated there.
+        // The segment stays journalled for the full gateway; nothing is retired.
+        ESP_LOGD(TAG, "Orbit Lite: dictation segment kept; it needs the full gateway");
         provisions_network_busy_.store(false);
         return;
     }
+    // Orbit Lite deferred captures (reboot, re-offer, superseded press) are
+    // uploaded like any other; a capture is never retired without an upload.
     if (!deferred) {
         provisions_capture_press_.store(physical);
         SetProvisionsResponsePending(true);
@@ -2068,11 +2081,11 @@ void Application::SendVoiceRecording(std::shared_ptr<const provisions::VoiceRepl
                     app->provisions_network_busy_.store(false);
                     if (app->GetProtocol() != protocol)
                         return;
-                    // Orbit Lite sends no capture receipt: the upload's own
-                    // `listen stop` is the receipt, so the journal slot is
-                    // retired here instead of re-offered every 30 s.
+                    // Orbit Lite sends no capture receipt: keep the journal
+                    // slot, mark it uploaded-awaiting-receipt so it is not
+                    // re-offered every 30 s. Nothing is erased here.
                     if (sent && protocol->IsLiteMode())
-                        app->AcknowledgeLiteUpload(replay);
+                        app->MarkLiteUploaded(replay);
                     if (!sent && app->provisions_physical_press_.id() == physical)
                         app->SetProvisionsResponsePending(false);
                     if (app->GetDeviceState() == kDeviceStateIdle)

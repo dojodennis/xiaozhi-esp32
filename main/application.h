@@ -232,7 +232,9 @@ private:
     void HandleLiteGatewayFrame(const cJSON* root, const char* type);
     void RenderLiteFace(provisions::lite::Face face, const std::string& text);
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
-    void AcknowledgeLiteUpload(const std::shared_ptr<const provisions::VoiceReplay>& replay);
+    // Orbit Lite sends no capture_receipt: mark the exact uploaded capture
+    // "uploaded, awaiting server receipt". The journal slot is kept.
+    void MarkLiteUploaded(const std::shared_ptr<const provisions::VoiceReplay>& replay);
 #endif
 #endif
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE

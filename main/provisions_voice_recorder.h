@@ -50,8 +50,16 @@ public:
         DictationChanged,
         DictationReady,
         DictationAuthorized,
-        DictationRecorded
+        DictationRecorded,
+        // Orbit Lite: the capture left the device on a transport that issues no
+        // durable receipt. It stays in flash and is no longer re-offered.
+        Uploaded,
+        // Orbit Lite show-time trade-off: an uploaded-awaiting-receipt command
+        // capture older than kAwaitingReceiptEvictionUs was erased to journal a
+        // new press on a full store. Never dictation, never an un-uploaded slot.
+        Evicted
     };
+    static constexpr int64_t kAwaitingReceiptEvictionUs = 30LL * 60 * 1000 * 1000;
     using Notify = std::function<void(Result, uint32_t)>;
     using ReplayReady = std::function<void(std::shared_ptr<const VoiceReplay>)>;
     VoiceRecorder() = default;
@@ -62,6 +70,17 @@ public:
     bool PrepareContext(const VoiceContext& context);
     bool ActivateContext(const VoiceContext& context);
     bool UpdateContext(const VoiceContext& context);
+    // Orbit Lite capture identity for the life of that socket. New captures are
+    // journalled under it and only matching captures are offered, exactly as the
+    // replay filter already works; the stored (NVS) context, every retained
+    // recording and the dictation journal are left untouched. RAM only: a
+    // reboot or the next full-gateway ActivateContext() drops it.
+    bool UseLiteContext(const VoiceContext& context);
+    // Orbit Lite sends no capture_receipt. Record that this exact capture was
+    // uploaded: the slot is kept, marked "uploaded, awaiting server receipt"
+    // (persisted with the entry's sequence), and not re-offered every 30 s.
+    // Never removes anything. Dictation segments are never marked.
+    bool MarkUploadedAwaitingReceipt(const VoiceReplay& replay, uint64_t uploaded_unix_ms);
     bool Begin(uint32_t press, uint64_t captured_unix_ms);
     bool BeginDictation(uint32_t press, uint64_t captured_unix_ms);
     bool CanDictate(uint32_t press, const VoiceId& conversation, int64_t now_ms) const;
@@ -87,7 +106,8 @@ public:
     void RequestReplay();
     bool RequestRetry();
     bool Acknowledge(const VoiceCaptureReceipt& receipt);
-    bool HasContext() const { return has_context_.load(); }
+    bool HasContext() const { return has_context_.load() || lite_active_.load(); }
+    unsigned AwaitingReceiptCount() const { return awaiting_receipt_count_.load(); }
     bool IsReady() const { return storage_ready_.load(); }
     unsigned PendingCount() const { return pending_count_.load(); }
     bool NeedsAttention() const { return needs_attention_.load(); }
@@ -134,6 +154,30 @@ private:
     std::array<VoiceId, VoiceOutbox::kSlots> retry_tokens_{};
     std::array<bool, VoiceOutbox::kSlots> retry_used_{};
     std::array<bool, VoiceOutbox::kSlots> retry_pending_{};
+    // Orbit Lite state. lite_context_ never reaches NVS; awaiting_receipt_ is
+    // mirrored to NVS keyed by slot and bound to the entry's journal sequence.
+    std::atomic<bool> lite_active_{false};
+    VoiceContext lite_context_{};
+    std::atomic<unsigned> awaiting_receipt_count_{0};
+    std::array<bool, VoiceOutbox::kSlots> awaiting_receipt_{};
+    std::array<uint64_t, VoiceOutbox::kSlots> awaiting_receipt_unix_ms_{};
+    std::array<int64_t, VoiceOutbox::kSlots> awaiting_receipt_mono_us_{};
+    struct UploadMark {
+        VoiceCapture capture{};
+        size_t bytes = 0;
+        std::array<uint8_t, 32> digest{};
+        uint64_t uploaded_unix_ms = 0;
+    };
+    std::array<UploadMark, VoiceOutbox::kSlots> upload_marks_{};
+    size_t upload_mark_count_ = 0;
+    bool refresh_requested_ = false;
+    VoiceContext ActiveContextLocked() const { return lite_active_.load() ? lite_context_ : context_; }
+    bool LoadAwaitingReceipt(size_t slot, uint64_t sequence, uint64_t& uploaded_unix_ms);
+    bool SaveAwaitingReceipt(size_t slot, uint64_t sequence, uint64_t uploaded_unix_ms);
+    void ForgetAwaitingReceipt(size_t slot);
+    void ApplyUploadMark(const UploadMark& mark);
+    bool EvictForNewCapture(uint64_t now_unix_ms);
+    bool Store(const VoiceCapture& capture, VoiceBytes frames, SavedVoiceCapture& saved);
     dictation::NvsStore dictation_store_;
     dictation::Journal dictation_journal_{dictation_store_};
     dictation::Record dictation_snapshot_{};
