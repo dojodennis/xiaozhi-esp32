@@ -11,7 +11,9 @@
 #include "text_glyph_payload.h"
 #include "websocket_protocol.h"
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+#include <esp_random.h>
 #include "provisions_endpoint_policy.h"
+#include "provisions_reconnect_policy.h"
 #include "provisions_tts_text.h"
 #endif
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
@@ -1786,8 +1788,10 @@ void Application::ReconnectVoiceGateway() {
                                  }
                              } else {
                                  protocol->CloseAudioChannel();
-                                 const int attempt = app->provisions_reconnect_attempts_++;
-                                 app->provisions_reconnect_wait_ticks_ = 1 << std::min(attempt, 4);
+                                 const auto retry = provisions::reconnect::AfterGatewayFailure(
+                                     app->provisions_reconnect_attempts_, esp_random());
+                                 app->provisions_reconnect_attempts_ = retry.attempts;
+                                 app->provisions_reconnect_wait_ticks_ = retry.wait_ticks;
                              }
                              if (app->GetDeviceState() == kDeviceStateIdle)
                                  Board::GetInstance().GetDisplay()->SetStatus(
@@ -1799,7 +1803,10 @@ void Application::ReconnectVoiceGateway() {
                      "orbit_connect", 8192, work, 3, nullptr) != pdPASS) {
         delete work;
         provisions_network_busy_.store(false);
-        provisions_reconnect_wait_ticks_ = 1;
+        // Worker admission failures are not gateway-health evidence. Back off at
+        // the cap without advancing the pending-image rollback counter.
+        provisions_reconnect_wait_ticks_ =
+            provisions::reconnect::WorkerFailureDelayTicks(esp_random());
     }
 }
 #endif
@@ -1903,8 +1910,10 @@ void Application::HandleProvisionsGatewayMaintenance() {
         if (ota_ && ota_->IsCurrentVersionPendingVerification()) {
             ESP_LOGE(TAG, "Pending firmware failed gateway health; rebooting for rollback");
             esp_restart();
+            return;
         }
-        return;
+        // A confirmed image keeps recovering; the same counter remains the
+        // pending-image health threshold above.
     }
     if (provisions_reconnect_wait_ticks_ > 0) {
         provisions_reconnect_wait_ticks_--;
@@ -1929,8 +1938,10 @@ void Application::HandleProvisionsGatewayMaintenance() {
         return;
     }
 
-    const int attempt = provisions_reconnect_attempts_++;
-    provisions_reconnect_wait_ticks_ = 1 << attempt;
+    const auto retry =
+        provisions::reconnect::AfterGatewayFailure(provisions_reconnect_attempts_, esp_random());
+    provisions_reconnect_attempts_ = retry.attempts;
+    provisions_reconnect_wait_ticks_ = retry.wait_ticks;
     display->SetStatus("Unavailable");
 }
 #endif
