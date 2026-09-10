@@ -39,6 +39,7 @@ struct ProvisionsWebSocket::State {
     std::atomic<bool> cancelled{false};
     std::atomic<bool> connected{false};
     std::atomic<int> error{0};
+    std::atomic<int> upgrade_status{0};
     std::mutex mutex;
     std::condition_variable changed;
     bool started = false;
@@ -144,9 +145,12 @@ struct ProvisionsWebSocket::State {
         config.propagate_control_frames = true;
         if (esp_transport_ws_set_config(websocket, &config) != ESP_OK)
             return false;
-        // The same absolute deadline also bounds a slow-drip HTTP upgrade.
-        return esp_transport_connect(websocket, host.c_str(), 443, 8000) == 0 &&
-               esp_transport_ws_get_upgrade_request_status(websocket) == 101 && Remaining();
+        // The same absolute deadline also bounds a slow-drip HTTP upgrade. The
+        // status is kept even when the upgrade is refused so the caller can
+        // tell a 401/429 from a dead link.
+        const int connected = esp_transport_connect(websocket, host.c_str(), 443, 8000);
+        upgrade_status.store(esp_transport_ws_get_upgrade_request_status(websocket));
+        return connected == 0 && upgrade_status.load() == 101 && Remaining();
     }
     bool SendFrame(std::vector<char>& bytes, int opcode, int64_t deadline) {
         io_deadline = deadline;
@@ -284,6 +288,7 @@ bool ProvisionsWebSocket::IsConnected() const {
     return state_->connected.load() && !state_->cancelled.load();
 }
 int ProvisionsWebSocket::GetLastError() const { return state_->error.load(); }
+int ProvisionsWebSocket::GetLastUpgradeStatus() const { return state_->upgrade_status.load(); }
 void ProvisionsWebSocket::SetHeader(const char* key, const char* value) {
     std::lock_guard<std::mutex> lock(state_->mutex);
     if (state_->started || !key || !value || std::strlen(key) > 64 || std::strlen(value) > 512 ||
