@@ -59,6 +59,11 @@ public:
 
     inline int server_sample_rate() const { return server_sample_rate_; }
     inline int server_frame_duration() const { return server_frame_duration_; }
+    // True after a server hello carrying provisions.mode == "lite" (the thin
+    // Orbit Lite gateway). Lives until the next OpenAudioChannel(): no fence,
+    // receipt, grant or timer negotiation, no session/turn correlation, and
+    // playback goes through the jitter-buffered lite path in Application.
+    inline bool IsLiteMode() const { return lite_mode_.load(std::memory_order_acquire); }
     inline std::string session_id() const {
         std::lock_guard<std::mutex> lock(session_mutex_);
         return session_id_;
@@ -99,6 +104,7 @@ protected:
 
     int server_sample_rate_ = 24000;
     int server_frame_duration_ = 60;
+    std::atomic<bool> lite_mode_{false};
     std::atomic<bool> error_occurred_{false};
     mutable std::mutex session_mutex_;
     std::string session_id_;
