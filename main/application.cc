@@ -42,6 +42,13 @@ constexpr int kProvisionsHeartbeatIntervalSeconds = 15;
 constexpr int kProvisionsResponseTimeoutSeconds = 30;
 constexpr int64_t kProvisionsTtsTimeoutUs = 35LL * 1000 * 1000;
 constexpr int kProvisionsMaximumReconnectAttempts = 5;
+// Orbit Lite reply watchdog: seconds from the upload's `listen stop` with no
+// tts/face frame before the turn is given up with the failed face. The lite
+// gateway keeps no receipts, so nothing is lost by giving up early.
+constexpr int kProvisionsLiteReplyTimeoutSeconds = 12;
+// Orbit Lite playback pump period: serves the 400 ms start delay and refills
+// the decode queue (20 frames) faster than it drains (one 60 ms frame each).
+constexpr uint64_t kProvisionsLitePumpPeriodUs = 100 * 1000;
 // One short buzz when the gateway is lost; long enough to feel through a
 // jacket, short enough never to be mistaken for a timer alarm.
 constexpr uint32_t kProvisionsOfflineBuzzMs = 120;
@@ -116,6 +123,18 @@ Application::Application() : notify_player_(audio_service_) {
                                                 .name = "clock_timer",
                                                 .skip_unhandled_events = true};
     esp_timer_create(&clock_timer_args, &clock_timer_handle_);
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    lite_playback_sink_ = [this](std::unique_ptr<AudioStreamPacket>& packet) {
+        return PushLitePlayback(packet);
+    };
+    esp_timer_create_args_t lite_pump_args = {
+        .callback = [](void* arg) { static_cast<Application*>(arg)->PumpLitePlayback(); },
+        .arg = this,
+        .dispatch_method = ESP_TIMER_TASK,
+        .name = "lite_pump",
+        .skip_unhandled_events = true};
+    esp_timer_create(&lite_pump_args, &lite_pump_timer_);
+#endif
 }
 
 Application::~Application() {
@@ -124,6 +143,12 @@ Application::~Application() {
         esp_timer_stop(clock_timer_handle_);
         esp_timer_delete(clock_timer_handle_);
     }
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    if (lite_pump_timer_ != nullptr) {
+        esp_timer_stop(lite_pump_timer_);
+        esp_timer_delete(lite_pump_timer_);
+    }
+#endif
     vEventGroupDelete(event_group_);
 }
 
@@ -371,6 +396,19 @@ void Application::Run() {
             if (audio_service_.IsPlaybackIdle()) {
                 notify_player_.OnPlaybackDrained();
             }
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+            // Orbit Lite: the decode queue ran dry. After `tts stop` that ends
+            // the turn; mid-stream it is an underrun and the jitter buffer
+            // waits for two frames before feeding again.
+            if (IsLiteMode() && GetDeviceState() == kDeviceStateSpeaking &&
+                audio_service_.IsPlaybackIdle()) {
+                if (lite_playback_.OnSinkDrained()) {
+                    FinishLiteTurn();
+                } else {
+                    PumpLitePlayback();
+                }
+            }
+#endif
             // Deferred listening start (auto mode): the playback queue has
             // drained, so it is now safe to enable voice processing.
             if (pending_listening_start_ && GetDeviceState() == kDeviceStateListening &&
@@ -902,6 +940,26 @@ void Application::InitializeProtocol() {
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
         if (packet->source_session_id != protocol->session_id())
             return;
+#endif
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        if (protocol->IsLiteMode()) {
+            // Orbit Lite: buffer, never drop for state. Frames racing ahead of
+            // `tts start` wait in the jitter buffer until the speaking
+            // transition enables it. Only a held Talk press (abort sent)
+            // discards them.
+            if (manual_listening_requested_.load(std::memory_order_acquire))
+                return;
+            const auto result = lite_playback_.Push(
+                std::move(packet), static_cast<uint64_t>(esp_timer_get_time() / 1000),
+                lite_playback_sink_);
+            if (result.dropped != 0) {
+                ESP_LOGW(TAG, "Orbit Lite jitter buffer full (%u frames); dropped the oldest",
+                         static_cast<unsigned>(LitePlaybackBuffer::kCapacity));
+            }
+            return;
+        }
+#endif
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
         if (timer_player_.OnAudio(packet->payload, packet->source_session_id))
             return;
 #endif
@@ -924,6 +982,8 @@ void Application::InitializeProtocol() {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
         protocol->InvalidateVoiceReply();
         InvalidateProvisionsTtsTurn();
+        ResetLitePlayback();
+        lite_idle_status_.store(nullptr);
 #endif
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
         provisions::VoiceContext context;
@@ -961,6 +1021,8 @@ void Application::InitializeProtocol() {
                 return;
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
             NoteProvisionsOffline();
+            ResetLitePlayback();
+            lite_idle_status_.store(nullptr);
             SetProvisionsResponsePending(false);
             provisions_heartbeat_ticks_ = 0;
             if (provisions_reconnect_wait_ticks_ == 0) {
@@ -991,6 +1053,13 @@ void Application::InitializeProtocol() {
             return;
         }
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        if (protocol->IsLiteMode()) {
+            // Orbit Lite frames carry no session_id, turn_id or receipts and
+            // never close the channel; the strict gateway checks below do not
+            // apply. Unknown types are ignored.
+            HandleLiteGatewayFrame(root, type->valuestring);
+            return;
+        }
         auto reject_gateway_frame = [this, source]() {
             if (source.lock() != GetProtocol())
                 return;
@@ -1607,6 +1676,12 @@ const char* Application::GetProvisionsIdleStatus() const {
     if (!GetProtocol() || !GetProtocol()->IsAudioChannelOpened()) {
         return "Unavailable";
     }
+    // Orbit Lite: a status face named by the gateway survives the 1 s tick
+    // until the next press, tts start, turn end or face.
+    if (const char* face = lite_idle_status_.load();
+        face != nullptr && !provisions_response_pending_.load()) {
+        return face;
+    }
     return provisions_response_pending_.load() ? "Working" : "Ready";
 }
 
@@ -1638,6 +1713,216 @@ void Application::InvalidateProvisionsTtsTurn() {
     provisions_tts_deadline_us_.store(0);
     provisions_tts_turn_.Invalidate();
 }
+
+// ---- Orbit Lite ------------------------------------------------------------
+// Thin gateway (provisions.mode == "lite"): stock xiaozhi tts/stt frames plus
+// {"type":"provisions","state":"face",...}. No session/turn correlation, no
+// fence, receipt, grant or timer authority. Playback is jitter-buffered; the
+// Talk press aborts and records on the same hold. See docs/orbit-lite-mode.md.
+
+bool Application::PushLitePlayback(std::unique_ptr<AudioStreamPacket>& packet) {
+    // Called under the jitter buffer lock from the socket or pump-timer task.
+    // Refusing leaves the frame at the head of the buffer for the next pump.
+    if (GetDeviceState() != kDeviceStateSpeaking || !audio_service_.HasDecodeQueueRoom()) {
+        return false;
+    }
+    if (!audio_service_.PushPacketToDecodeQueue(std::move(packet), false)) {
+        // Refused after the room check (a decoder reset slipped in between).
+        // The move already consumed the frame; count it as delivered.
+        ESP_LOGW(TAG, "Orbit Lite frame lost at the decode queue");
+    }
+    return true;
+}
+
+void Application::PumpLitePlayback() {
+    lite_playback_.Pump(static_cast<uint64_t>(esp_timer_get_time() / 1000), lite_playback_sink_);
+}
+
+void Application::StartLitePump() {
+    if (lite_pump_timer_ == nullptr || lite_pump_running_.exchange(true)) {
+        return;
+    }
+    if (esp_timer_start_periodic(lite_pump_timer_, kProvisionsLitePumpPeriodUs) != ESP_OK) {
+        lite_pump_running_.store(false);
+        ESP_LOGE(TAG, "Orbit Lite playback pump could not start");
+    }
+}
+
+void Application::StopLitePump() {
+    if (lite_pump_timer_ != nullptr && lite_pump_running_.exchange(false)) {
+        esp_timer_stop(lite_pump_timer_);
+    }
+}
+
+void Application::ResetLitePlayback() {
+    StopLitePump();
+    lite_playback_.Reset();
+}
+
+// Main task. The reply is over (drained, aborted by the gateway, or timed
+// out): back to Ready. The face override clears with the turn.
+void Application::FinishLiteTurn() {
+    ResetLitePlayback();
+    provisions_tts_deadline_us_.store(0);
+    lite_idle_status_.store(nullptr);
+    SetProvisionsResponsePending(false);
+    Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+    if (GetDeviceState() == kDeviceStateSpeaking) {
+        SetDeviceState(kDeviceStateIdle);
+    }
+}
+
+// Socket task. Parses here, renders on the main task.
+void Application::HandleLiteGatewayFrame(const cJSON* root, const char* type) {
+    auto display = Board::GetInstance().GetDisplay();
+    if (strcmp(type, "tts") == 0) {
+        auto state = cJSON_GetObjectItem(root, "state");
+        if (!cJSON_IsString(state)) {
+            ESP_LOGW(TAG, "Orbit Lite tts frame without a state");
+            return;
+        }
+        if (strcmp(state->valuestring, "start") == 0) {
+            if (manual_listening_requested_.load(std::memory_order_acquire)) {
+                return;  // Talk is held: the abort went out, this reply is stale.
+            }
+            provisions_tts_deadline_us_.store(esp_timer_get_time() + kProvisionsTtsTimeoutUs);
+            Schedule([this]() {
+                if (!IsLiteMode() || manual_listening_requested_.load()) {
+                    return;
+                }
+                lite_idle_status_.store(nullptr);
+                SetProvisionsResponsePending(false);
+                aborted_ = false;
+                Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+                // Speaking resets the decoder and then enables the jitter
+                // buffer (HandleStateChangedEvent), so frames that arrived
+                // before this start are played, not dropped.
+                if (GetDeviceState() == kDeviceStateIdle) {
+                    SetDeviceState(kDeviceStateSpeaking);
+                }
+            });
+        } else if (strcmp(state->valuestring, "stop") == 0) {
+            Schedule([this]() {
+                if (!IsLiteMode()) {
+                    return;
+                }
+                if (GetDeviceState() != kDeviceStateSpeaking) {
+                    // A stop without a start we accepted: nothing can play.
+                    ResetLitePlayback();
+                    provisions_tts_deadline_us_.store(0);
+                    SetProvisionsResponsePending(false);
+                    return;
+                }
+                // Drain: release what is held regardless of the start rule,
+                // then finish when the decode queue runs dry.
+                const bool nothing_held = lite_playback_.Stop();
+                PumpLitePlayback();
+                if (nothing_held && audio_service_.IsPlaybackIdle()) {
+                    FinishLiteTurn();
+                }
+                // Otherwise MAIN_EVENT_PLAYBACK_DRAINED finishes the turn.
+            });
+        } else if (strcmp(state->valuestring, "sentence_start") == 0) {
+            auto text = cJSON_GetObjectItem(root, "text");
+            if (!cJSON_IsString(text) || !ProvisionsTtsText::IsValid(text->valuestring)) {
+                return;
+            }
+            // Not logged: the line can carry private galley data.
+            Schedule([this, display, message = std::string(text->valuestring)]() {
+                if (!IsLiteMode() || manual_listening_requested_.load()) {
+                    return;
+                }
+                display->SetChatMessage("assistant", message.c_str());
+            });
+        } else {
+            ESP_LOGD(TAG, "Ignoring Orbit Lite tts state %s", state->valuestring);
+        }
+        return;
+    }
+    if (strcmp(type, "stt") == 0) {
+        auto text = cJSON_GetObjectItem(root, "text");
+        if (cJSON_IsString(text) && ProvisionsTtsText::IsValid(text->valuestring)) {
+            Schedule([display, message = std::string(text->valuestring)]() {
+                display->SetChatMessage("user", message.c_str());
+            });
+        }
+        return;
+    }
+    if (strcmp(type, "provisions") == 0) {
+        auto state = cJSON_GetObjectItem(root, "state");
+        if (!cJSON_IsString(state) || strcmp(state->valuestring, "face") != 0) {
+            ESP_LOGD(TAG, "Ignoring Orbit Lite provisions frame");
+            return;
+        }
+        auto name = cJSON_GetObjectItem(root, "face");
+        provisions::lite::Face face;
+        if (!cJSON_IsString(name) || !provisions::lite::ParseFace(name->valuestring, face)) {
+            ESP_LOGW(TAG, "Ignoring unknown Orbit Lite face");
+            return;
+        }
+        auto text = cJSON_GetObjectItem(root, "text");
+        std::string line = cJSON_IsString(text) ? provisions::lite::FaceText(text->valuestring)
+                                                : std::string();
+        Schedule([this, face, line = std::move(line)]() {
+            if (IsLiteMode()) {
+                RenderLiteFace(face, line);
+            }
+        });
+        return;
+    }
+    // Fence, receipt, grant, timer authority, heartbeat: not part of lite.
+    ESP_LOGD(TAG, "Ignoring %s frame in Orbit Lite mode", type);
+}
+
+// Main task. Mapping table: provisions_lite_face.h.
+void Application::RenderLiteFace(provisions::lite::Face face, const std::string& text) {
+    using provisions::lite::Face;
+    if (manual_listening_requested_.load()) {
+        return;  // Talk is held: the LISTENING screen wins.
+    }
+    auto display = Board::GetInstance().GetDisplay();
+    const auto render = provisions::lite::RenderFor(face);
+    lite_idle_status_.store(render.idle_status);
+    if (provisions::lite::EndsTurn(face)) {
+        provisions_tts_deadline_us_.store(0);
+        if (GetDeviceState() == kDeviceStateSpeaking) {
+            ResetLitePlayback();
+            audio_service_.ResetDecoder();
+            SetDeviceState(kDeviceStateIdle);
+        }
+        SetProvisionsResponsePending(false);
+    }
+    if (render.status != nullptr && GetDeviceState() == kDeviceStateIdle) {
+        display->SetStatus(face == Face::kReady ? GetProvisionsIdleStatus() : render.status);
+    }
+    if (render.notification != nullptr) {
+        display->ShowNotification(render.notification);
+    }
+    if (!text.empty()) {
+        display->SetChatMessage("assistant", text.c_str());
+    }
+}
+
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+// The lite gateway keeps no intake and sends no capture_receipt. The upload's
+// own `listen stop` (or the decision not to upload a deferred capture) is the
+// receipt: retire the journal slot exactly as a durable receipt would.
+void Application::AcknowledgeLiteUpload(
+    const std::shared_ptr<const provisions::VoiceReplay>& replay) {
+    auto recorder = std::atomic_load(&provisions_recorder_);
+    if (!recorder || !replay) {
+        return;
+    }
+    provisions::VoiceCaptureReceipt receipt;
+    receipt.capture = replay->capture;
+    receipt.bytes = replay->bytes;
+    receipt.digest = replay->digest;
+    receipt.durable = true;
+    if (!recorder->Acknowledge(receipt)) {
+        ESP_LOGW(TAG, "Orbit Lite: receipt queue full; the capture stays journalled");
+    }
+}
+#endif
 
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
 void Application::HandleVoiceRecordingResult(provisions::VoiceRecorder::Result result,
@@ -1743,6 +2028,15 @@ void Application::SendVoiceRecording(std::shared_ptr<const provisions::VoiceRepl
     const uint32_t physical = provisions_physical_press_.id();
     const bool deferred =
         replay->capture.IsDictation() || replay->press == 0 || replay->press != physical;
+    if (protocol->IsLiteMode() && deferred) {
+        // Orbit Lite has no durable intake: a capture that missed its own press
+        // (reboot, re-offer, superseded press) would be spoken back out of
+        // context. Retire it locally so it cannot fill the four journal slots.
+        ESP_LOGW(TAG, "Orbit Lite: retiring a deferred capture without upload");
+        AcknowledgeLiteUpload(replay);
+        provisions_network_busy_.store(false);
+        return;
+    }
     if (!deferred) {
         provisions_capture_press_.store(physical);
         SetProvisionsResponsePending(true);
@@ -1769,10 +2063,16 @@ void Application::SendVoiceRecording(std::shared_ptr<const provisions::VoiceRepl
                                        app->provisions_physical_press_.id() == physical &&
                                        app->GetProtocol() == protocol;
                             });
-                app->Schedule([app, protocol = work->protocol, physical = work->physical, sent]() {
+                app->Schedule([app, protocol = work->protocol, physical = work->physical, sent,
+                               replay = std::move(work->replay)]() {
                     app->provisions_network_busy_.store(false);
                     if (app->GetProtocol() != protocol)
                         return;
+                    // Orbit Lite sends no capture receipt: the upload's own
+                    // `listen stop` is the receipt, so the journal slot is
+                    // retired here instead of re-offered every 30 s.
+                    if (sent && protocol->IsLiteMode())
+                        app->AcknowledgeLiteUpload(replay);
                     if (!sent && app->provisions_physical_press_.id() == physical)
                         app->SetProvisionsResponsePending(false);
                     if (app->GetDeviceState() == kDeviceStateIdle)
@@ -1869,6 +2169,15 @@ void Application::HandleProvisionsGatewayMaintenance() {
         return;
 #endif
     const int64_t tts_deadline = provisions_tts_deadline_us_.load();
+    if (tts_deadline > 0 && esp_timer_get_time() >= tts_deadline && IsLiteMode()) {
+        // Orbit Lite: the gateway never sent `tts stop`. Give the turn up on
+        // the face, keep the socket (the gateway may simply be slow).
+        ESP_LOGW(TAG, "Orbit Lite TTS turn timed out; back to Ready");
+        FinishLiteTurn();
+        audio_service_.ResetDecoder();
+        RenderLiteFace(provisions::lite::Face::kFailed, {});
+        return;
+    }
     if (tts_deadline > 0 && esp_timer_get_time() >= tts_deadline) {
         ESP_LOGE(TAG, "Provisions TTS turn timed out");
         InvalidateProvisionsTtsTurn();
@@ -1897,7 +2206,17 @@ void Application::HandleProvisionsGatewayMaintenance() {
     auto websocket = static_cast<WebsocketProtocol*>(GetProtocol().get());
     auto display = Board::GetInstance().GetDisplay();
 
-    if (provisions_response_pending_.load()) {
+    if (provisions_response_pending_.load() && IsLiteMode()) {
+        // Orbit Lite reply watchdog: no tts/face after `listen stop` for 12 s
+        // is a failed turn, not a dead socket. Ready with the failed face.
+        provisions_response_ticks_++;
+        if (provisions_response_ticks_ >= kProvisionsLiteReplyTimeoutSeconds) {
+            ESP_LOGW(TAG, "Orbit Lite gateway gave no reply within %d s",
+                     kProvisionsLiteReplyTimeoutSeconds);
+            SetProvisionsResponsePending(false);
+            RenderLiteFace(provisions::lite::Face::kFailed, {});
+        }
+    } else if (provisions_response_pending_.load()) {
         provisions_response_ticks_++;
         if (provisions_response_ticks_ >= kProvisionsResponseTimeoutSeconds) {
             ESP_LOGE(TAG, "Provisions gateway response timed out");
@@ -2518,6 +2837,16 @@ void Application::HandleStateChangedEvent() {
                 audio_service_.EnableWakeWordDetection(audio_service_.IsAfeWakeWord());
             }
             audio_service_.ResetDecoder();
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+            if (IsLiteMode()) {
+                // Orbit Lite: frames that raced ahead of `tts start` were held;
+                // now that the decoder is clean they may flow. The pump timer
+                // serves the 400 ms start rule and refills the decode queue.
+                lite_playback_.Enable();
+                PumpLitePlayback();
+                StartLitePump();
+            }
+#endif
             break;
         case kDeviceStateNotifying:
             display->SetStatus(Lang::Strings::SPEAKING);
@@ -2688,6 +3017,11 @@ void Application::AbortSpeaking(AbortReason reason) {
     Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
     Board::GetInstance().GetDisplay()->SetStatus("Listening");
     audio_service_.ResetDecoder();
+    // Orbit Lite: the press cuts playback now and flushes the jitter buffer;
+    // the abort frame below is the fork's existing shape
+    // {"session_id":"<hello session_id or empty>","type":"abort"}.
+    ResetLitePlayback();
+    lite_idle_status_.store(nullptr);
 #endif
     aborted_ = true;
     if (auto protocol = GetProtocol()) {

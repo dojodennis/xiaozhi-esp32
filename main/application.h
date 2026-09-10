@@ -22,6 +22,8 @@
 #include "ota.h"
 #include "protocol.h"
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+#include "provisions_lite_face.h"
+#include "provisions_lite_jitter.h"
 #include "provisions_offline_signal.h"
 #include "provisions_timer_snapshot.h"
 #include "provisions_tts_turn.h"
@@ -207,6 +209,31 @@ private:
     int provisions_reconnect_attempts_ = 0;
     int provisions_gateway_rejections_ = 0;
     provisions::OfflineSignal provisions_offline_signal_;
+    // Orbit Lite (thin gateway, provisions.mode == "lite" in the server hello):
+    // jitter-buffered playback fed from the socket task and pumped by a
+    // periodic timer, plus the face messages that override the idle status.
+    // See docs/orbit-lite-mode.md.
+    using LitePlaybackBuffer = provisions::lite::JitterBuffer<std::unique_ptr<AudioStreamPacket>>;
+    LitePlaybackBuffer lite_playback_;
+    LitePlaybackBuffer::Sink lite_playback_sink_;
+    esp_timer_handle_t lite_pump_timer_ = nullptr;
+    std::atomic<bool> lite_pump_running_{false};
+    std::atomic<const char*> lite_idle_status_{nullptr};
+    bool IsLiteMode() const {
+        const auto protocol = GetProtocol();
+        return protocol && protocol->IsLiteMode();
+    }
+    bool PushLitePlayback(std::unique_ptr<AudioStreamPacket>& packet);
+    void PumpLitePlayback();
+    void StartLitePump();
+    void StopLitePump();
+    void ResetLitePlayback();
+    void FinishLiteTurn();
+    void HandleLiteGatewayFrame(const cJSON* root, const char* type);
+    void RenderLiteFace(provisions::lite::Face face, const std::string& text);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    void AcknowledgeLiteUpload(const std::shared_ptr<const provisions::VoiceReplay>& replay);
+#endif
 #endif
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
     provisions::timers::NvsStore timer_store_;
