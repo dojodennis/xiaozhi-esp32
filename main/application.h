@@ -29,6 +29,7 @@
 #include "provisions_tts_turn.h"
 #endif
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
+#include "provisions_timer_dial_link.h"
 #include "provisions_timer_player.h"
 #include "provisions_voice_recorder.h"
 #endif
@@ -240,6 +241,7 @@ private:
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
     provisions::timers::NvsStore timer_store_;
     provisions::timers::Player timer_player_{timer_store_};
+    provisions::timers::DialLink timer_dial_link_;  // Main task only.
     void InitializeTimers();
     void ServiceTimers();
     void HandleTimerOutputEnded();
