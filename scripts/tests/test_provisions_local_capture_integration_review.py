@@ -47,6 +47,8 @@ class LocalCaptureIntegrationReview(unittest.TestCase):
 #define MAIN_EVENT_START_LISTENING 1
 #define MAIN_EVENT_STOP_LISTENING 2
 constexpr int kDeviceStateIdle=0;
+static constexpr const char* TAG="review";
+#define ESP_LOGW(...) ((void)0)
 void xEventGroupSetBits(int,int){}
 namespace Lang {namespace Sounds {constexpr std::string_view OGG_SUCCESS="success tone";}}
 namespace provisions {
@@ -61,7 +63,7 @@ struct VoiceRecorder {
     bool BeginDictation(uint32_t,uint64_t){return false;}
     bool DictationPreparing(uint32_t)const{return false;}
 
-    enum class Result {Saved,Failed,NeedsAttention,Synced,ContextReady,RetryQueued,RetryUnavailable,DictationReady,DictationChanged,DictationAuthorized,DictationRecorded};
+    enum class Result {Saved,Failed,NeedsAttention,Synced,ContextReady,RetryQueued,RetryUnavailable,DictationReady,DictationChanged,DictationAuthorized,DictationRecorded,Uploaded,Evicted};
     bool allow_begin=true;unsigned begun=0,released=0,replays=0;
     bool CanRetry() const {return false;}
     std::function<void()> before_begin;
@@ -106,7 +108,7 @@ struct AudioService {
 };
 struct Application {
     bool provisions_recording_was_dictation_=false;
-    std::atomic<bool> dictation_screen_{false};std::atomic<uint32_t> dictation_closed_press_{0};
+    std::atomic<bool> dictation_screen_{false};std::atomic<uint32_t> dictation_closed_press_{0};bool IsLiteMode()const{return false;}
     uint32_t dictation_authorization_seen_=0;bool dictation_has_assignment_proof_=false;std::string dictation_assignment_proof_;
     void FenceDictationThrough(uint32_t press){dictation_closed_press_=press;}
     void ServiceDictation(){} void HandleStartListeningEvent(){}
@@ -456,7 +458,7 @@ struct WebsocketProtocol {
 };
 struct Application {
     bool provisions_recording_was_dictation_=false;
-    std::atomic<bool> dictation_screen_{false};std::atomic<uint32_t> dictation_closed_press_{0};
+    std::atomic<bool> dictation_screen_{false};std::atomic<uint32_t> dictation_closed_press_{0};bool IsLiteMode()const{return false;}
     uint32_t dictation_authorization_seen_=0;bool dictation_has_assignment_proof_=false;std::string dictation_assignment_proof_;
     void FenceDictationThrough(uint32_t press){dictation_closed_press_=press;}
     void ServiceDictation(){} void HandleStartListeningEvent(){}
@@ -693,7 +695,7 @@ struct Ota {bool HasServerTime(){return true;}void MarkCurrentVersionValid(){}};
 struct Audio {int sounds=0;void PlaySound(std::string_view){++sounds;}};
 struct Application {
     bool provisions_recording_was_dictation_=false;
-    std::atomic<bool> dictation_screen_{false};std::atomic<uint32_t> dictation_closed_press_{0};
+    std::atomic<bool> dictation_screen_{false};std::atomic<uint32_t> dictation_closed_press_{0};bool IsLiteMode()const{return false;}
     uint32_t dictation_authorization_seen_=0;bool dictation_has_assignment_proof_=false;std::string dictation_assignment_proof_;
     void FenceDictationThrough(uint32_t press){dictation_closed_press_=press;}
     void ServiceDictation(){} void HandleStartListeningEvent(){}
@@ -759,7 +761,7 @@ bool IsCanonicalUuid(const std::string& text){return text=="11111111-2222-4333-8
 }
 namespace provisions {VoiceReplay::~VoiceReplay()=default;}
 struct WebsocketProtocol {
-    std::atomic<bool> gateway_authenticated_{false},gateway_hello_pending_{true},capture_enabled_{false},timers_enabled_{false},dictation_enabled_{false};
+    std::atomic<bool> gateway_authenticated_{false},gateway_hello_pending_{true},capture_enabled_{false},timers_enabled_{false},dictation_enabled_{false},last_open_rejected_{false};
     std::atomic<int64_t> last_gateway_activity_us_{0};
     std::mutex capture_context_mutex_;provisions::VoiceContext capture_context_;
     int server_sample_rate_=0,server_frame_duration_=0,event_group_handle_=0,rejected=0;
@@ -767,6 +769,7 @@ struct WebsocketProtocol {
     void SetSessionId(std::string text){session=text;} std::string session_id(){return session;}
     void SetError(const char*){++rejected;}
     void ParseServerHello(const cJSON*);void RejectServerHello(const char*);
+    bool ParseLiteServerHello(const cJSON*){return false;}  // The full negotiation under review.
     bool IsAudioChannelOpened(){return true;}
 };
 struct Recorder {
@@ -777,12 +780,13 @@ struct Recorder {
 };
 struct Application {
     bool provisions_recording_was_dictation_=false;
-    std::atomic<bool> dictation_screen_{false};std::atomic<uint32_t> dictation_closed_press_{0};
+    std::atomic<bool> dictation_screen_{false};std::atomic<uint32_t> dictation_closed_press_{0};bool IsLiteMode()const{return false;}
     uint32_t dictation_authorization_seen_=0;bool dictation_has_assignment_proof_=false;std::string dictation_assignment_proof_;
     void FenceDictationThrough(uint32_t press){dictation_closed_press_=press;}
     void ServiceDictation(){} void HandleStartListeningEvent(){}
 
     std::atomic<bool> provisions_recording_failed_{false},provisions_recording_saving_{false},provisions_response_pending_{false};
+    std::atomic<const char*> lite_idle_status_{nullptr};
     std::shared_ptr<Recorder> provisions_recorder_=std::make_shared<Recorder>();
     std::shared_ptr<WebsocketProtocol> protocol=std::make_shared<WebsocketProtocol>();
     std::shared_ptr<WebsocketProtocol> GetProtocol() const{return protocol;}

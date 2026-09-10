@@ -536,8 +536,8 @@ constexpr int kDeviceStateIdle=0,kDeviceStateListening=1;
 std::atomic<unsigned> app_events{0};
 void xEventGroupSetBits(int,unsigned bits){app_events.fetch_or(bits);}void xEventGroupClearBits(int,unsigned bits){app_events.fetch_and(~bits);}
 struct WebsocketProtocol {
- bool opened=true,negotiated=true;VoiceContext capture=context();std::vector<std::string> controls;
- void InterruptStoredRecording(){}bool IsAudioChannelOpened(){return opened;}bool DictationNegotiated(){return opened&&negotiated;}
+ bool opened=true,negotiated=true,lite=false;VoiceContext capture=context();std::vector<std::string> controls;
+ void InterruptStoredRecording(){}bool IsAudioChannelOpened(){return opened;}bool DictationNegotiated(){return opened&&negotiated;}bool IsLiteMode(){return lite;}
  bool GetCaptureContext(VoiceContext& out){out=capture;return opened&&negotiated;}
  std::string session_id(){return "00000000-0000-0000-0000-000000000001";}
  bool SendDictationControl(const std::string& text){controls.push_back(text);return true;}
@@ -565,6 +565,7 @@ struct Application {
  int64_t dictation_next_receipt_us_=0,dictation_last_send_us_=0;std::string dictation_sent_control_;
  struct TimerPlayer{bool fenced=false;bool Fenced(){return fenced;}}timer_player_;
  std::shared_ptr<WebsocketProtocol> GetProtocol(){return protocol;}int GetDeviceState(){return state;}void SetDeviceState(int value){state=value;}
+ bool IsLiteMode()const{return protocol&&protocol->IsLiteMode();}
  void Schedule(std::function<void()> fn){fn();}void HandleVoiceRecordingResult(VoiceRecorder::Result,uint32_t){assert(false);}
  void StartListening();void StopListening();bool BeginLocalRecordingOnMain();void EndLocalRecordingOnMain();void ToggleDictationScreen();void DictationButton();void CloseDictationInputOnMain();void ServiceDictation();void HandleDictationControlOnMain();
  __FENCE__

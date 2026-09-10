@@ -1564,9 +1564,13 @@ class ExternalSigningNoticeTests(unittest.TestCase):
 
     def test_build_board_prints_the_notice_after_packaging(self):
         output = io.StringIO()
+        # _configure_build is mocked, so no sdkconfig exists for the language/
+        # wake-word symbol validation to read; mock that too so the test does not
+        # depend on a leftover build/sdkconfig from an earlier target build.
         with (
             mock.patch.object(build, "_prepare_target"),
             mock.patch.object(build, "_configure_build"),
+            mock.patch.object(build, "_validate_configured_symbols"),
             mock.patch.object(build, "_run_idf"),
             mock.patch.object(build, "merge_bin"),
             contextlib.redirect_stdout(output),

@@ -69,6 +69,7 @@ struct Application {
 
     std::atomic<bool> manual_listening_requested_{false},provisions_network_busy_{false},provisions_response_pending_{false};
     std::atomic<bool> provisions_recording_failed_{false},provisions_recording_saving_{false};
+    std::atomic<const char*> lite_idle_status_{nullptr};  // Orbit Lite face; null on the full gateway.
     std::shared_ptr<Recorder> provisions_recorder_=std::make_shared<Recorder>();
     std::shared_ptr<Protocol> protocol=std::make_shared<Protocol>();
     std::deque<std::function<void()>> scheduled;int state=0,reconnect=0,provisions_reconnect_attempts_=4,provisions_reconnect_wait_ticks_=8;
