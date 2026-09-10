@@ -409,6 +409,48 @@ def _sdkconfig_assignments(options: list[str]) -> dict[str, str]:
     return assignments
 
 
+def _external_signing_notice(sdkconfig_append: list[str]) -> Optional[str]:
+    """Explain when build/xiaozhi.bin must be signed outside the build to boot.
+
+    With CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT and signature verification on
+    update (CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT, the Kconfig default)
+    ESP-IDF's esp_secure_boot_init_checks() refuses to run an app that carries
+    no signature block: it logs "This app is not signed ..." and abort()s during
+    efuse init, before global constructors or app_main(). Hardware Secure Boot
+    rejects an unsigned app in the bootloader. When the build does not sign
+    (CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES off: the key stays outside the
+    build), the raw output only boots after external signing, so say so.
+    """
+    assignments = _sdkconfig_assignments(sdkconfig_append)
+    if assignments.get("CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES") == "y":
+        return None
+    secure_boot = assignments.get("CONFIG_SECURE_BOOT") == "y"
+    signed_apps = (
+        assignments.get("CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT") == "y"
+        and assignments.get("CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT", "y") == "y"
+    )
+    if not secure_boot and not signed_apps:
+        return None
+    reason = (
+        "hardware Secure Boot (CONFIG_SECURE_BOOT) is enabled: the bootloader rejects it"
+        if secure_boot
+        else "CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT verifies signatures on update:\n"
+        "ESP-IDF's esp_secure_boot_init_checks() abort()s an unsigned running app during\n"
+        "efuse init, before app_main(), so the device crash-loops"
+    )
+    return (
+        "=" * 80 + "\n"
+        "[NOTICE] build/xiaozhi.bin is UNSIGNED "
+        "(CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES is off) and\n"
+        f"{reason}.\n"
+        "Sign it outside the build before flashing (merged-binary.bin carries the same\n"
+        "unsigned app):\n"
+        "  espsecure sign-data --version 2 --keyfile <private key kept outside the repo> \\\n"
+        "    --output xiaozhi-signed.bin build/xiaozhi.bin\n"
+        + "=" * 80
+    )
+
+
 def _kconfig_choice(
     name: str,
     kconfig_path: Path = Path("main/Kconfig.projbuild"),
@@ -1571,6 +1613,10 @@ def build_board(
         # merge-bin
         _emit_build_stage("packaging")
         merge_bin(preview)
+
+        notice = _external_signing_notice(sdkconfig_append)
+        if notice:
+            print(notice)
 
         if create_zip:
             zip_bin(final_name, project_version)
