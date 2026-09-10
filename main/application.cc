@@ -1122,6 +1122,15 @@ void Application::InitializeProtocol() {
                     reject_gateway_frame();
                     return;
                 }
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                // Two sources must not fight over the dial: while ring timers are
+                // negotiated the player-derived update (ServiceTimers) wins and a
+                // phone-style snapshot is accepted by the gate but not painted.
+                if (static_cast<WebsocketProtocol*>(protocol_.get())->TimersNegotiated()) {
+                    ESP_LOGW(TAG, "Ignoring phone timer snapshot while ring timers own the dial");
+                    return;
+                }
+#endif
                 Schedule([this, update = std::move(update)]() {
                     ProvisionsTimerSnapshotCallback callback;
                     {
@@ -2940,10 +2949,25 @@ void Application::ServiceTimers() {
     if (has_server_time_.load())
         gettimeofday(&now, nullptr);
     const auto snapshot = timer_player_.GetSnapshot();
+    const int64_t trusted_now_ms = static_cast<int64_t>(now.tv_sec) * 1000 + now.tv_usec / 1000;
     Board::GetInstance().GetDisplay()->SetTimerText(
         negotiated && snapshot.session_id == session
-            ? provisions::timers::DisplayText(
-                  snapshot, static_cast<int64_t>(now.tv_sec) * 1000 + now.tv_usec / 1000)
+            ? provisions::timers::DisplayText(snapshot, trusted_now_ms)
             : "");
+    // The crest dial listens to the same consumer as the phone-style
+    // timer_snapshot frame. While timers are negotiated the player-derived
+    // update is the dial's only source (see the timer_snapshot gate); the link
+    // repaints only when the timer set actually changed.
+    ProvisionsTimerSnapshot::Update update;
+    if (timer_dial_link_.Reconcile(snapshot, session, negotiated, trusted_now_ms, update))
+        Schedule([this, update = std::move(update)]() {
+            ProvisionsTimerSnapshotCallback callback;
+            {
+                std::lock_guard<std::mutex> lock(provisions_timer_snapshot_callback_mutex_);
+                callback = provisions_timer_snapshot_callback_;
+            }
+            if (callback)
+                callback(update);
+        });
 }
 #endif
