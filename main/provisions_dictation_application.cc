@@ -96,7 +96,11 @@ void Application::ServiceDictation() {
     const bool connected = websocket && websocket->IsAudioChannelOpened();
     const bool negotiated =
         connected && websocket->DictationNegotiated() && websocket->GetCaptureContext(context);
-    if (connected) {
+    // Orbit Lite negotiates no dictation and carries no assignment: it neither
+    // confirms nor revokes the RAM assignment proof, which stays for the next
+    // full-gateway session.
+    const bool lite = connected && websocket->IsLiteMode();
+    if (connected && !lite) {
         if (!negotiated || (dictation_has_assignment_proof_ &&
                             dictation_assignment_proof_ != context.conversation_id)) {
             dictation_has_assignment_proof_ = false;
@@ -166,6 +170,8 @@ void Application::ServiceDictation() {
                                : "Previous assignment needs recovery";
     else if (recorder->DictationFaulted())
         status = "Segment pending - needs recovery";
+    else if (lite)
+        status = "Dictation needs the full gateway";
     else if (r.pending != Action::None)
         status = "Control pending";
     else if (r.state == State::Empty)
