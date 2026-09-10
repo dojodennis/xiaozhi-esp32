@@ -109,6 +109,7 @@ private:
 
     void ParseServerHello(const cJSON* root);
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    bool ParseLiteServerHello(const cJSON* root);
     void RejectServerHello(const char* message);
 #endif
     bool SendText(const std::string& text) override;

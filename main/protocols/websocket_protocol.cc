@@ -9,6 +9,7 @@
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
 #include "provisions_endpoint_policy.h"
 #include "provisions_json_guard.h"
+#include "provisions_lite_hello.h"
 #endif
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
 #include "provisions_timers.h"
@@ -236,6 +237,11 @@ bool WebsocketProtocol::SendGatewayHeartbeat() {
     if (IsTransportBusy())
         return true;
 #endif
+    if (IsLiteMode()) {
+        // Orbit Lite speaks stock xiaozhi: no ping/pong. Liveness is the
+        // socket itself (OnDisconnected) plus the per-turn reply watchdog.
+        return IsAudioChannelOpened();
+    }
     if (!IsAudioChannelOpened() || this->session_id().empty()) {
         return false;
     }
@@ -245,6 +251,8 @@ bool WebsocketProtocol::SendGatewayHeartbeat() {
 bool WebsocketProtocol::IsGatewayHeartbeatExpired() const {
     constexpr int64_t kHeartbeatTimeoutUs = 45 * 1000 * 1000;
     const int64_t last_activity_us = last_gateway_activity_us_.load();
+    if (IsLiteMode())
+        return false;
     return gateway_authenticated_.load() &&
            (last_activity_us <= 0 || esp_timer_get_time() - last_activity_us > kHeartbeatTimeoutUs);
 }
@@ -285,6 +293,7 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
     std::string token = provisions_settings.GetString("device_token");
     version_ = 1;
     gateway_authenticated_.store(false);
+    lite_mode_.store(false);
     last_open_rejected_.store(false);
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
     timers_enabled_.store(false);
@@ -502,6 +511,13 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
                     RejectServerHello("Expected authenticated gateway hello");
                     cJSON_Delete(root);
                     return;
+                } else if (IsLiteMode()) {
+                    // Orbit Lite frames carry no session_id or turn_id. The
+                    // Application's lite handler ignores types it does not
+                    // know (fence, receipt, grant, timer authority).
+                    if (on_incoming_json_ != nullptr) {
+                        on_incoming_json_(root);
+                    }
                 } else {
                     auto message_session = cJSON_GetObjectItem(root, "session_id");
                     if (!cJSON_IsString(message_session) ||
@@ -720,6 +736,9 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
     }
 
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    if (ParseLiteServerHello(root)) {
+        return;
+    }
     auto version = cJSON_GetObjectItem(root, "version");
     auto provisions = cJSON_GetObjectItem(root, "provisions");
     auto authenticated =
@@ -851,6 +870,51 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
 }
 
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+// Orbit Lite: `provisions.mode == "lite"` selects nothing. No timers_v1 /
+// timer_claim_recovery_v1 / dictation / audio_capture requirement, no output
+// fence, receipt or grant arming, no session-UUID policy. Audio parameters
+// are taken exactly as stock xiaozhi does. Returns true when the hello was a
+// lite hello (accepted or rejected); false hands over to the full negotiation.
+bool WebsocketProtocol::ParseLiteServerHello(const cJSON* root) {
+    provisions::lite::HelloParams params;
+    const auto result = provisions::lite::ParseLiteHello(root, params);
+    if (result == provisions::lite::HelloResult::kNotLite) {
+        return false;
+    }
+    if (result != provisions::lite::HelloResult::kAccepted) {
+        ESP_LOGE(TAG, "Orbit Lite hello has unsupported parameters (%d)", static_cast<int>(result));
+        RejectServerHello("Invalid lite gateway audio parameters");
+        return true;
+    }
+    SetSessionId(params.session_id);
+    server_sample_rate_ = params.sample_rate;
+    server_frame_duration_ = params.frame_duration;
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    timers_enabled_.store(false);
+    dictation_enabled_.store(false);
+    {
+        // The recorder journals every press under the live capture context and
+        // the upload path requires one. Lite has no conversation model, so all
+        // lite sessions share one fixed identity (see provisions_lite_hello.h).
+        std::lock_guard<std::mutex> lock(capture_context_mutex_);
+        capture_context_ = {};
+        capture_context_.conversation_id = provisions::lite::kConversationId;
+        capture_enabled_.store(true);
+    }
+#endif
+#if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
+    output_fence_selected_.store(false);
+#endif
+    lite_mode_.store(true, std::memory_order_release);
+    gateway_authenticated_.store(true);
+    gateway_hello_pending_.store(false);
+    last_gateway_activity_us_.store(esp_timer_get_time());
+    ESP_LOGI(TAG, "Orbit Lite gateway session: %d Hz, %d ms frames", server_sample_rate_,
+             server_frame_duration_);
+    xEventGroupSetBits(event_group_handle_, WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT);
+    return true;
+}
+
 void WebsocketProtocol::RejectServerHello(const char* message) {
     gateway_authenticated_.store(false);
     last_open_rejected_.store(true);
