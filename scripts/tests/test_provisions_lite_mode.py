@@ -467,21 +467,35 @@ class LiteWiringReview(unittest.TestCase):
         self.assertEqual(APPLICATION.count("kProvisionsOfflineBuzzMs"), 2)
         self.assertIn("Board::GetInstance().PulseHaptic(kProvisionsOfflineBuzzMs)", APPLICATION)
 
-    def test_actual_lite_upload_retires_the_journal_slot_locally(self) -> None:
+    def test_actual_lite_upload_keeps_the_journal_slot_and_marks_it_awaiting_receipt(self) -> None:
+        # Codex correction item 2: a local upload is never a receipt. The lite
+        # path must not construct a durable receipt, must not reach the
+        # recorder's erase path, and must not retire deferred captures.
         send = method(APPLICATION, "void Application::SendVoiceRecording(")
-        self.assertIn("if (protocol->IsLiteMode() && deferred) {", send)
+        self.assertNotIn("AcknowledgeLiteUpload", send)
+        self.assertNotIn("retiring a deferred capture", send)
+        self.assertNotIn("IsLiteMode() && deferred", send)
         self.assertIn("if (sent && protocol->IsLiteMode())", send)
-        self.assertEqual(send.count("AcknowledgeLiteUpload("), 2)
-        ack = method(APPLICATION, "void Application::AcknowledgeLiteUpload(")
-        for field in ("receipt.capture = replay->capture;", "receipt.bytes = replay->bytes;",
-                      "receipt.digest = replay->digest;", "receipt.durable = true;"):
-            self.assertIn(field, ack)
-        self.assertIn("recorder->Acknowledge(receipt)", ack)
+        self.assertIn("app->MarkLiteUploaded(replay);", send)
+        # Dictation on lite is refused explicitly and kept, never retired.
+        self.assertIn("if (protocol->IsLiteMode() && replay->capture.IsDictation()) {", send)
+        refusal = send[send.index("IsLiteMode() && replay->capture.IsDictation()"):]
+        refusal = refusal[:refusal.index("if (!deferred) {")]
+        self.assertNotIn("Acknowledge", refusal)
+        self.assertNotIn("MarkLiteUploaded", refusal)
+        mark = method(APPLICATION, "void Application::MarkLiteUploaded(")
+        self.assertNotIn("durable", mark)
+        self.assertNotIn("VoiceCaptureReceipt", mark)
+        self.assertNotIn("Acknowledge(", mark)
+        self.assertNotIn("RemoveAfterReceipt", mark)
+        self.assertIn("recorder->MarkUploadedAwaitingReceipt(*replay, uploaded_unix_ms)", mark)
+        self.assertNotIn("AcknowledgeLiteUpload", APPLICATION)
+        self.assertNotIn("AcknowledgeLiteUpload", HEADER)
         # Header declarations exist for every lite member the source uses.
         for name in ("lite_playback_", "lite_playback_sink_", "lite_pump_timer_", "lite_pump_running_",
                      "lite_idle_status_", "PushLitePlayback", "PumpLitePlayback", "StartLitePump",
                      "StopLitePump", "ResetLitePlayback", "FinishLiteTurn", "HandleLiteGatewayFrame",
-                     "RenderLiteFace", "AcknowledgeLiteUpload", "IsLiteMode"):
+                     "RenderLiteFace", "MarkLiteUploaded", "IsLiteMode"):
             self.assertIn(name, HEADER, name)
         self.assertIn('#include "provisions_lite_face.h"', HEADER)
         self.assertIn('#include "provisions_lite_jitter.h"', HEADER)
