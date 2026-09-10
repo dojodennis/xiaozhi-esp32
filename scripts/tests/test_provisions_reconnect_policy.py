@@ -204,11 +204,15 @@ int main() {
 #define ESP_LOGW(...) ((void)0)
 constexpr int kProvisionsHeartbeatIntervalSeconds = 15;
 constexpr int kProvisionsResponseTimeoutSeconds = 30;
+constexpr int kProvisionsLiteReplyTimeoutSeconds = 12;
 constexpr int kProvisionsMaximumReconnectAttempts = 5;
 constexpr int kDeviceStateIdle = 0;
 constexpr int kDeviceStateSpeaking = 2;
 enum class PowerSaveLevel { LOW_POWER };
 namespace Lang { namespace Sounds { constexpr std::string_view OGG_EXCLAMATION = "error"; } }
+// Orbit Lite hooks the maintenance tick calls; this harness runs the full
+// gateway, so lite is never selected and the lite branches stay cold.
+namespace provisions::lite { enum class Face { kFailed }; }
 
 uint32_t entropy_value = 0;
 int restarts = 0;
@@ -286,6 +290,9 @@ struct Application {
     void NoteProvisionsOnline() { ++online_notes; }
     const char* GetProvisionsIdleStatus() const { return "Ready"; }
     void Alert(const char*, const char*, const char*, std::string_view) {}
+    bool IsLiteMode() const { return false; }
+    void FinishLiteTurn() {}
+    void RenderLiteFace(provisions::lite::Face, const std::string&) {}
     void HandleProvisionsGatewayMaintenance();
 };
 
