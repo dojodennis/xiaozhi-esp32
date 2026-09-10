@@ -1399,6 +1399,13 @@ private:
     esp_timer_handle_t display_idle_timer_ = nullptr;
     std::atomic<int64_t> display_idle_deadline_us_{0};
     bool display_dimmed_ = false;
+    // The motor on M5IOE1_G9 has two owners: the timer alarm (level, held
+    // for the whole alarm) and the OFFLINE pulse (one-shot). The alarm wins;
+    // a pulse never starts over an alarm and never releases the pin while
+    // an alarm is active. Pin writes stay on the main task.
+    esp_timer_handle_t haptic_timer_ = nullptr;
+    std::atomic<bool> motor_alarm_active_{false};
+    std::atomic<bool> haptic_pulse_active_{false};
 #endif
 
     void InitializeI2c() {
@@ -1566,6 +1573,31 @@ private:
     }
 
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    void InitializeHapticTimer() {
+        esp_timer_create_args_t timer_args = {
+            .callback =
+                [](void* arg) {
+                    auto* self = static_cast<M5StackStopwatchBoard*>(arg);
+                    Application::GetInstance().Schedule([self]() { self->EndHapticPulse(); });
+                },
+            .arg = this,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "orbit_haptic",
+            .skip_unhandled_events = true,
+        };
+        ESP_ERROR_CHECK(esp_timer_create(&timer_args, &haptic_timer_));
+    }
+
+    void EndHapticPulse() {
+        if (!haptic_pulse_active_.exchange(false)) {
+            return;
+        }
+        if (motor_alarm_active_.load()) {
+            return;  // the alarm took the motor while the pulse was running
+        }
+        ioe_.digitalWrite(IOE_PIN_MOTOR, LOW);
+    }
+
     void InitializeDisplayIdleTimer() {
         esp_timer_create_args_t timer_args = {
             .callback = [](void* arg) {
@@ -1650,7 +1682,9 @@ public:
         InitializeDisplay();
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
         InitializeDisplayIdleTimer();
+        InitializeHapticTimer();
         display_->SetTimerAlarmOutputCallback([this](bool active) {
+            motor_alarm_active_.store(active);
             ioe_.digitalWrite(IOE_PIN_MOTOR, active ? HIGH : LOW);
             if (active) {
                 ResetDisplayIdleTimer();
@@ -1739,6 +1773,30 @@ public:
     void SetPowerSaveLevel(PowerSaveLevel level) override {
         ResetDisplayIdleTimer();
         WifiBoard::SetPowerSaveLevel(level);
+    }
+
+    // Main task only (Application calls it from its own handlers). Returns
+    // true when the motor is driven or already busy, false when there is no
+    // usable haptic so the caller can fall back to the face alone.
+    bool PulseHaptic(uint32_t duration_ms) override {
+        if (haptic_timer_ == nullptr || duration_ms == 0) {
+            return false;
+        }
+        if (motor_alarm_active_.load()) {
+            return true;  // the alarm is already driving the motor
+        }
+        if (haptic_pulse_active_.exchange(true)) {
+            return true;  // a pulse is already running
+        }
+        ioe_.digitalWrite(IOE_PIN_MOTOR, HIGH);
+        esp_timer_stop(haptic_timer_);
+        if (esp_timer_start_once(haptic_timer_, static_cast<uint64_t>(duration_ms) * 1000) !=
+            ESP_OK) {
+            ioe_.digitalWrite(IOE_PIN_MOTOR, LOW);
+            haptic_pulse_active_.store(false);
+            return false;
+        }
+        return true;
     }
 #endif
 };

@@ -22,6 +22,7 @@
 #include "device_state_machine.h"
 #include "notify/notify_player.h"
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+#include "provisions_offline_signal.h"
 #include "provisions_timer_snapshot.h"
 #include "provisions_tts_turn.h"
 #endif
@@ -175,6 +176,8 @@ private:
     int provisions_response_ticks_ = 0;
     int provisions_reconnect_wait_ticks_ = 0;
     int provisions_reconnect_attempts_ = 0;
+    int provisions_gateway_rejections_ = 0;
+    provisions::OfflineSignal provisions_offline_signal_;
 #endif
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;
@@ -192,6 +195,10 @@ private:
     void ContinueOpenAudioChannel(ListeningMode mode);
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     void HandleProvisionsGatewayMaintenance();
+    // Edge notes for the OFFLINE cue: Offline buzzes once per transition,
+    // Online re-arms it. Both are main-task only.
+    void NoteProvisionsOffline();
+    void NoteProvisionsOnline();
     void SetProvisionsResponsePending(bool pending);
     const char* GetProvisionsIdleStatus() const;
     void InvalidateProvisionsTtsTurn();

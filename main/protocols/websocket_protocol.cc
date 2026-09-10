@@ -285,6 +285,7 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
     std::string token = provisions_settings.GetString("device_token");
     version_ = 1;
     gateway_authenticated_.store(false);
+    last_open_rejected_.store(false);
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
     timers_enabled_.store(false);
     dictation_enabled_.store(false);
@@ -593,6 +594,13 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
     if (!websocket->Connect(url.c_str())) {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
         gateway_hello_pending_.store(false);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        const int upgrade_status = websocket->GetLastUpgradeStatus();
+        if (upgrade_status == 401 || upgrade_status == 403 || upgrade_status == 429) {
+            ESP_LOGE(TAG, "Provisions gateway refused the upgrade with HTTP %d", upgrade_status);
+            last_open_rejected_.store(true);
+        }
+#endif
 #endif
         ESP_LOGE(TAG, "Failed to connect to websocket server, code=%d", websocket->GetLastError());
         SetError(Lang::Strings::SERVER_NOT_CONNECTED);
@@ -845,6 +853,7 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
 void WebsocketProtocol::RejectServerHello(const char* message) {
     gateway_authenticated_.store(false);
+    last_open_rejected_.store(true);
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
     timers_enabled_.store(false);
     dictation_enabled_.store(false);

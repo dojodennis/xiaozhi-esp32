@@ -5,6 +5,7 @@
 #include <web_socket.h>
 #include <mqtt.h>
 #include <udp.h>
+#include <cstdint>
 #include <string>
 #include <functional>
 #include <network_interface.h>
@@ -68,6 +69,12 @@ public:
     virtual std::string GetBoardType() = 0;
     virtual std::string GetUuid() { return uuid_; }
     virtual Backlight* GetBacklight() { return nullptr; }
+    // Optional haptic capability. Boards without a motor keep the default,
+    // which does nothing and reports false; core code never assumes a motor.
+    virtual bool PulseHaptic(uint32_t duration_ms) {
+        (void)duration_ms;
+        return false;
+    }
     virtual Led* GetLed();
     virtual AudioCodec* GetAudioCodec() = 0;
     virtual bool GetTemperature(float& esp32temp);

@@ -11,7 +11,9 @@
 #include "text_glyph_payload.h"
 #include "websocket_protocol.h"
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+#include <esp_random.h>
 #include "provisions_endpoint_policy.h"
+#include "provisions_reconnect_policy.h"
 #include "provisions_tts_text.h"
 #endif
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
@@ -40,6 +42,9 @@ constexpr int kProvisionsHeartbeatIntervalSeconds = 15;
 constexpr int kProvisionsResponseTimeoutSeconds = 30;
 constexpr int64_t kProvisionsTtsTimeoutUs = 35LL * 1000 * 1000;
 constexpr int kProvisionsMaximumReconnectAttempts = 5;
+// One short buzz when the gateway is lost; long enough to feel through a
+// jacket, short enough never to be mistaken for a timer alarm.
+constexpr uint32_t kProvisionsOfflineBuzzMs = 120;
 
 bool HasExactKeys(const cJSON* object, std::initializer_list<std::string_view> expected_keys) {
     if (!cJSON_IsObject(object) ||
@@ -540,6 +545,7 @@ void Application::HandleNetworkDisconnectedEvent() {
         StopNotification();
     }
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    NoteProvisionsOffline();
     if (GetProtocol()) {
         SetProvisionsResponsePending(false);
         provisions_reconnect_attempts_ = 0;
@@ -954,6 +960,7 @@ void Application::InitializeProtocol() {
             if (source.lock() != GetProtocol())
                 return;
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+            NoteProvisionsOffline();
             SetProvisionsResponsePending(false);
             provisions_heartbeat_ticks_ = 0;
             if (provisions_reconnect_wait_ticks_ == 0) {
@@ -1603,6 +1610,22 @@ const char* Application::GetProvisionsIdleStatus() const {
     return provisions_response_pending_.load() ? "Working" : "Ready";
 }
 
+void Application::NoteProvisionsOffline() {
+    if (!provisions_offline_signal_.Offline()) {
+        return;
+    }
+    ESP_LOGW(TAG, "Provisions gateway offline");
+    if (!Board::GetInstance().PulseHaptic(kProvisionsOfflineBuzzMs)) {
+        ESP_LOGI(TAG, "No haptic on this board; OFFLINE face only");
+    }
+}
+
+void Application::NoteProvisionsOnline() {
+    if (provisions_offline_signal_.Online()) {
+        ESP_LOGI(TAG, "Provisions gateway online");
+    }
+}
+
 void Application::SetProvisionsResponsePending(bool pending) {
     provisions_response_pending_.store(pending);
     provisions_response_ticks_ = 0;
@@ -1777,8 +1800,10 @@ void Application::ReconnectVoiceGateway() {
                              if (app->GetProtocol() != protocol)
                                  return;
                              if (opened && app->network_connected_.load()) {
+                                 app->NoteProvisionsOnline();
                                  app->provisions_reconnect_attempts_ = 0;
                                  app->provisions_reconnect_wait_ticks_ = 0;
+                                 app->provisions_gateway_rejections_ = 0;
                                  if (app->ota_) {
                                      app->has_server_time_ = app->ota_->HasServerTime();
                                      app->ota_->MarkCurrentVersionValid();
@@ -1786,8 +1811,19 @@ void Application::ReconnectVoiceGateway() {
                                  }
                              } else {
                                  protocol->CloseAudioChannel();
-                                 const int attempt = app->provisions_reconnect_attempts_++;
-                                 app->provisions_reconnect_wait_ticks_ = 1 << std::min(attempt, 4);
+                                 app->NoteProvisionsOffline();
+                                 const bool rejected =
+                                     static_cast<WebsocketProtocol*>(protocol.get())
+                                         ->LastOpenRejected();
+                                 app->provisions_gateway_rejections_ =
+                                     rejected ? provisions::reconnect::SaturatingIncrement(
+                                                    app->provisions_gateway_rejections_)
+                                              : 0;
+                                 const auto retry = provisions::reconnect::AfterGatewayFailure(
+                                     app->provisions_reconnect_attempts_,
+                                     app->provisions_gateway_rejections_, esp_random());
+                                 app->provisions_reconnect_attempts_ = retry.attempts;
+                                 app->provisions_reconnect_wait_ticks_ = retry.wait_ticks;
                              }
                              if (app->GetDeviceState() == kDeviceStateIdle)
                                  Board::GetInstance().GetDisplay()->SetStatus(
@@ -1799,7 +1835,10 @@ void Application::ReconnectVoiceGateway() {
                      "orbit_connect", 8192, work, 3, nullptr) != pdPASS) {
         delete work;
         provisions_network_busy_.store(false);
-        provisions_reconnect_wait_ticks_ = 1;
+        // Worker admission failures are not gateway-health evidence. Back off at
+        // the cap without advancing the pending-image rollback counter.
+        provisions_reconnect_wait_ticks_ =
+            provisions::reconnect::WorkerFailureDelayTicks(esp_random());
     }
 }
 #endif
@@ -1828,6 +1867,7 @@ void Application::HandleProvisionsGatewayMaintenance() {
         if (GetProtocol()) {
             GetProtocol()->CloseAudioChannel();
         }
+        NoteProvisionsOffline();
         provisions_reconnect_attempts_ = 0;
         provisions_reconnect_wait_ticks_ = 1;
         Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
@@ -1853,6 +1893,7 @@ void Application::HandleProvisionsGatewayMaintenance() {
             SetProvisionsResponsePending(false);
             InvalidateProvisionsTtsTurn();
             GetProtocol()->CloseAudioChannel();
+            NoteProvisionsOffline();
             provisions_reconnect_attempts_ = 0;
             provisions_reconnect_wait_ticks_ = 1;
             Alert("Unavailable", "Request timed out", "cancel", Lang::Sounds::OGG_EXCLAMATION);
@@ -1871,6 +1912,7 @@ void Application::HandleProvisionsGatewayMaintenance() {
         SetProvisionsResponsePending(false);
         InvalidateProvisionsTtsTurn();
         GetProtocol()->CloseAudioChannel();
+        NoteProvisionsOffline();
         provisions_heartbeat_ticks_ = 0;
         provisions_reconnect_attempts_ = 0;
         provisions_reconnect_wait_ticks_ = 1;
@@ -1889,6 +1931,7 @@ void Application::HandleProvisionsGatewayMaintenance() {
                 SetProvisionsResponsePending(false);
                 InvalidateProvisionsTtsTurn();
                 GetProtocol()->CloseAudioChannel();
+                NoteProvisionsOffline();
                 provisions_reconnect_wait_ticks_ = 1;
                 display->SetStatus("Unavailable");
             }
@@ -1903,8 +1946,10 @@ void Application::HandleProvisionsGatewayMaintenance() {
         if (ota_ && ota_->IsCurrentVersionPendingVerification()) {
             ESP_LOGE(TAG, "Pending firmware failed gateway health; rebooting for rollback");
             esp_restart();
+            return;
         }
-        return;
+        // A confirmed image keeps recovering; the same counter remains the
+        // pending-image health threshold above.
     }
     if (provisions_reconnect_wait_ticks_ > 0) {
         provisions_reconnect_wait_ticks_--;
@@ -1917,8 +1962,10 @@ void Application::HandleProvisionsGatewayMaintenance() {
     return;
 #endif
     if (GetProtocol()->OpenAudioChannel()) {
+        NoteProvisionsOnline();
         provisions_reconnect_attempts_ = 0;
         provisions_reconnect_wait_ticks_ = 0;
+        provisions_gateway_rejections_ = 0;
         if (ota_) {
             has_server_time_ = ota_->HasServerTime();
             ota_->MarkCurrentVersionValid();
@@ -1929,8 +1976,15 @@ void Application::HandleProvisionsGatewayMaintenance() {
         return;
     }
 
-    const int attempt = provisions_reconnect_attempts_++;
-    provisions_reconnect_wait_ticks_ = 1 << attempt;
+    NoteProvisionsOffline();
+    provisions_gateway_rejections_ =
+        websocket->LastOpenRejected()
+            ? provisions::reconnect::SaturatingIncrement(provisions_gateway_rejections_)
+            : 0;
+    const auto retry = provisions::reconnect::AfterGatewayFailure(
+        provisions_reconnect_attempts_, provisions_gateway_rejections_, esp_random());
+    provisions_reconnect_attempts_ = retry.attempts;
+    provisions_reconnect_wait_ticks_ = retry.wait_ticks;
     display->SetStatus("Unavailable");
 }
 #endif
@@ -2150,9 +2204,15 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
         if (!GetProtocol()->OpenAudioChannel()) {
             // Return to idle so the device is not stuck in the connecting
             // state (not every failure path reports a network error)
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+            NoteProvisionsOffline();
+#endif
             SetDeviceState(kDeviceStateIdle);
             return;
         }
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        NoteProvisionsOnline();
+#endif
     }
 
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
