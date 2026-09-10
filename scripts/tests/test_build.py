@@ -1400,6 +1400,7 @@ class CliTests(unittest.TestCase):
             wake_word=None,
             build_options=None,
             idf_version=(6, 0, 2),
+            unsigned_bench=False,
         )
 
     def test_zip_flag_is_forwarded(self):
@@ -1580,6 +1581,135 @@ class ExternalSigningNoticeTests(unittest.TestCase):
                 idf_version=(6, 0, 2),
             )
         self.assertIn("[NOTICE] build/xiaozhi.bin is UNSIGNED", output.getvalue())
+
+
+class UnsignedBenchVariantTests(unittest.TestCase):
+    """--unsigned-bench drops only the signed-apps requirement.
+
+    Nobody holds the ring's RSA signing key, so the show ring runs the bench
+    variant with CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT off (and therefore no
+    verify-on-update and no signature scheme). The OTA-reported name stays
+    provisions-kitchen-helper-stopwatch because main/CMakeLists.txt pins
+    BOARD_NAME to the Kconfig board profile. It is a deliberate security
+    downgrade for bench / show hardware only and the build must say so loudly.
+    """
+
+    RING = "provisions-kitchen-helper-stopwatch"
+    WARNING_LINE = (
+        "[WARNING] unsigned bench variant: OTA signature verification disabled"
+    )
+
+    @staticmethod
+    def _variant(config: str) -> list[str]:
+        return ExternalSigningNoticeTests._variant(
+            config, "provisions-kitchen-helper-stopwatch"
+        )
+
+    def test_bench_profile_differs_only_in_app_signing(self):
+        ring = self._variant("bench_profile.json")
+        bench = build._unsigned_bench_sdkconfig(ring)
+        expected = []
+        for item in ring:
+            if item == "CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=y":
+                expected.append("CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=n")
+                expected.append("CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT=n")
+            elif item == "CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y":
+                continue
+            else:
+                expected.append(item)
+        self.assertEqual(bench, expected)
+        # Everything the ring relies on is still there, byte for byte.
+        for kept in (
+            "CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH=y",
+            'CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions/provisions/16m.csv"',
+            "CONFIG_PROVISIONS_GATEWAY_REQUIRED=y",
+            "CONFIG_WAKE_WORD_DISABLED=y",
+            "CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y",
+            "CONFIG_BOOTLOADER_SKIP_VALIDATE_ALWAYS=n",
+            "CONFIG_SECURE_BOOT=n",
+            "CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=n",
+        ):
+            self.assertIn(kept, bench)
+        self.assertNotIn("CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y", bench)
+        self.assertEqual(len(bench), len(ring))
+
+    def test_unsigned_bench_has_no_signing_notice_but_a_loud_warning(self):
+        bench = build._unsigned_bench_sdkconfig(self._variant("bench_profile.json"))
+        self.assertIsNone(build._external_signing_notice(bench))
+        warning = build._unsigned_bench_warning(bench)
+        self.assertIsNotNone(warning)
+        self.assertIn(self.WARNING_LINE, warning)
+        self.assertIn("CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=n", warning)
+        self.assertIn("never flash this on the pilot", warning)
+
+    def test_signed_variants_do_not_warn(self):
+        for config in ("bench_profile.json", "pilot_profile.json", "config.json"):
+            self.assertIsNone(
+                build._unsigned_bench_warning(self._variant(config)), config
+            )
+
+    def test_pilot_and_dev_variants_are_refused(self):
+        with self.assertRaisesRegex(ValueError, "Secure Boot"):
+            build._unsigned_bench_sdkconfig(self._variant("pilot_profile.json"))
+        with self.assertRaisesRegex(ValueError, "nothing to remove"):
+            build._unsigned_bench_sdkconfig(self._variant("config.json"))
+
+    def test_build_board_prints_the_warning_and_no_signing_notice(self):
+        output = io.StringIO()
+        with (
+            mock.patch.object(build, "_prepare_target"),
+            mock.patch.object(build, "_configure_build") as configure,
+            mock.patch.object(build, "_run_idf"),
+            mock.patch.object(build, "merge_bin"),
+            contextlib.redirect_stdout(output),
+        ):
+            build.build_board(
+                "m5stack/stopwatch",
+                "bench_profile.json",
+                name_filter=self.RING,
+                language="en-US",
+                wake_word="disabled",
+                idf_version=(6, 0, 2),
+                unsigned_bench=True,
+            )
+        text = output.getvalue()
+        # The OTA-reported name is unchanged; only the sdkconfig fragment moves.
+        self.assertIn(f"name: m5stack-{self.RING}", text)
+        self.assertIn("unsigned_bench: true", text)
+        self.assertIn(
+            "sdkconfig_append: CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=n", text
+        )
+        self.assertNotIn("CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME", text)
+        self.assertNotIn("[NOTICE] build/xiaozhi.bin is UNSIGNED", text)
+        # Once in the configuration summary, once after packaging.
+        self.assertEqual(text.count(self.WARNING_LINE), 2)
+        configured = configure.call_args.args[1]
+        self.assertIn("CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=n", configured)
+        self.assertIn("CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT=n", configured)
+        self.assertEqual(configure.call_args.args[2], self.RING)
+
+    def test_unsigned_bench_flag_is_forwarded(self):
+        variants = [{
+            "board": "m5stack/stopwatch",
+            "name": self.RING,
+            "full_name": f"m5stack-{self.RING}",
+        }]
+        with (
+            mock.patch.object(build, "_detect_idf_version", return_value=(6, 0, 2)),
+            mock.patch.object(build, "_board_type_exists", return_value=True),
+            mock.patch.object(build, "_collect_variants", return_value=variants),
+            mock.patch.object(build, "build_board") as build_board,
+        ):
+            build.main([
+                "m5stack/stopwatch",
+                "--config", "bench_profile.json",
+                "--name", self.RING,
+                "--unsigned-bench",
+            ])
+            self.assertTrue(build_board.call_args.kwargs["unsigned_bench"])
+            build_board.reset_mock()
+            build.main(["m5stack/stopwatch", "--config", "bench_profile.json", "--name", self.RING])
+            self.assertFalse(build_board.call_args.kwargs["unsigned_bench"])
 
 
 if __name__ == "__main__":
