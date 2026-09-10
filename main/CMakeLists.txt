@@ -37,7 +37,6 @@ set(SOURCES "audio/audio_codec.cc"
             "provisions_output_fence.cc"
             "provisions_output_fence_store.cc"
             "provisions_output_fence_wire.cc"
-            "provisions_output_fence_runtime.cc"
             "mcp_server.cc"
             "system_info.cc"
             "application.cc"
@@ -52,6 +51,12 @@ set(INCLUDE_DIRS "." "display" "display/lvgl_display" "display/lvgl_display/jpg"
 
 if(CONFIG_PROVISIONS_GATEWAY_REQUIRED)
     list(APPEND SOURCES "provisions_timer_snapshot.cc")
+endif()
+
+# Its WebSocket API is guarded by this same opt-in integration switch. Keep the
+# unfinished runtime out of ordinary/bench builds while the switch is disabled.
+if(CONFIG_PROVISIONS_OUTPUT_FENCE_V1)
+    list(APPEND SOURCES "provisions_output_fence_runtime.cc")
 endif()
 
 # Add board common files
