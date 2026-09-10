@@ -989,7 +989,13 @@ void Application::InitializeProtocol() {
         provisions::VoiceContext context;
         if (static_cast<WebsocketProtocol*>(protocol.get())->GetCaptureContext(context)) {
             auto recorder = std::atomic_load(&provisions_recorder_);
-            if (!recorder || !recorder->UpdateContext(context)) {
+            // Orbit Lite: a RAM-only capture tag for this socket. The stored
+            // (NVS) context and every retained full-gateway recording stay as
+            // they are, so they remain replayable when that gateway returns.
+            const bool accepted = recorder && (protocol->IsLiteMode()
+                                                   ? recorder->UseLiteContext(context)
+                                                   : recorder->UpdateContext(context));
+            if (!accepted) {
                 protocol->CloseAudioChannel();
                 return;
             }
@@ -2395,6 +2401,13 @@ bool Application::BeginLocalRecordingOnMain() {
     }
     bool began = false;
     if (dictation_screen_.load()) {
+        if (IsLiteMode()) {
+            // Dictation needs the negotiated full-gateway route; lite never
+            // negotiates it. The screen already reads "Dictation needs the
+            // full gateway". BeginDictation() is not attempted.
+            FenceDictationThrough(press);
+            return false;
+        }
         if (recorder && recorder->DictationAuthorization() != dictation_authorization_seen_) {
             dictation_authorization_seen_ = recorder->DictationAuthorization();
             FenceDictationThrough(press);
