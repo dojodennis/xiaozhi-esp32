@@ -257,6 +257,10 @@ public:
     void SetCallbacks(AudioServiceCallbacks& callbacks);
 
     bool PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait = false);
+    // True when a non-waiting PushPacketToDecodeQueue() would not be refused
+    // for lack of room. Lets a producer keep a frame it cannot hand over yet
+    // instead of losing it inside the moved-from push.
+    bool HasDecodeQueueRoom();
     std::unique_ptr<AudioStreamPacket> PopPacketFromSendQueue();
     void PlaySound(const std::string_view& sound);
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE

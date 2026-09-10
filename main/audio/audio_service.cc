@@ -983,6 +983,11 @@ void AudioService::PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t
     }
 }
 
+bool AudioService::HasDecodeQueueRoom() {
+    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+    return !service_stopped_.load() && audio_decode_queue_.size() < MAX_DECODE_PACKETS_IN_QUEUE;
+}
+
 bool AudioService::PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait) {
 #if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
     return PushFencedPacket(std::move(packet), wait, 0);
