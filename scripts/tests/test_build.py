@@ -1507,5 +1507,80 @@ class ZipTests(unittest.TestCase):
             os.chdir(previous_cwd)
 
 
+class ExternalSigningNoticeTests(unittest.TestCase):
+    """An unsigned app aborts at boot under the signed-on-update profiles.
+
+    Regression for the Orbit Lite 1802ee6 bench image: flashed unsigned, it
+    crash-looped in ESP-IDF's esp_secure_boot_init_checks() before app_main().
+    """
+
+    @staticmethod
+    def _variant(config: str, name: str) -> list[str]:
+        path = ROOT / "main/boards/m5stack/stopwatch" / config
+        with path.open(encoding="utf-8") as handle:
+            builds = json.load(handle)["builds"]
+        return next(b["sdkconfig_append"] for b in builds if b["name"] == name)
+
+    def test_bench_profile_requires_external_signing(self):
+        notice = build._external_signing_notice(
+            self._variant("bench_profile.json", "provisions-kitchen-helper-stopwatch")
+        )
+        self.assertIsNotNone(notice)
+        self.assertIn("UNSIGNED", notice)
+        self.assertIn("esp_secure_boot_init_checks", notice)
+        self.assertIn("espsecure sign-data --version 2", notice)
+
+    def test_pilot_profile_names_secure_boot(self):
+        notice = build._external_signing_notice(
+            self._variant("pilot_profile.json", "provisions-kitchen-helper-stopwatch")
+        )
+        self.assertIsNotNone(notice)
+        self.assertIn("CONFIG_SECURE_BOOT", notice)
+
+    def test_dev_variant_without_signed_apps_has_no_notice(self):
+        self.assertIsNone(
+            build._external_signing_notice(
+                self._variant("config.json", "provisions-kitchen-helper-stopwatch")
+            )
+        )
+
+    def test_signing_inside_the_build_has_no_notice(self):
+        self.assertIsNone(
+            build._external_signing_notice([
+                "CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=y",
+                "CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y",
+                "CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=y",
+            ])
+        )
+
+    def test_verify_on_update_disabled_has_no_notice(self):
+        self.assertIsNone(
+            build._external_signing_notice([
+                "CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=y",
+                "CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT=n",
+                "CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=n",
+            ])
+        )
+
+    def test_build_board_prints_the_notice_after_packaging(self):
+        output = io.StringIO()
+        with (
+            mock.patch.object(build, "_prepare_target"),
+            mock.patch.object(build, "_configure_build"),
+            mock.patch.object(build, "_run_idf"),
+            mock.patch.object(build, "merge_bin"),
+            contextlib.redirect_stdout(output),
+        ):
+            build.build_board(
+                "m5stack/stopwatch",
+                "bench_profile.json",
+                name_filter="provisions-kitchen-helper-stopwatch",
+                language="en-US",
+                wake_word="disabled",
+                idf_version=(6, 0, 2),
+            )
+        self.assertIn("[NOTICE] build/xiaozhi.bin is UNSIGNED", output.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
