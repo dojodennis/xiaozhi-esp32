@@ -17,6 +17,8 @@ public:
     bool Connect(const char* uri);
     bool IsConnected() const;
     int GetLastError() const;
+    // HTTP status of the last upgrade request (0 before any response).
+    int GetLastUpgradeStatus() const;
     bool Send(const std::string& text);
     bool Send(const void* data, size_t size, bool binary);
     bool SendAsync(const std::string& text);

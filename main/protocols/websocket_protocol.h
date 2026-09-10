@@ -42,6 +42,10 @@ public:
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     bool SendGatewayHeartbeat();
     bool IsGatewayHeartbeatExpired() const;
+    // True when the last OpenAudioChannel reached the gateway and was refused
+    // (401/403/429 on the upgrade, or a rejected hello) rather than failing
+    // on the link. Drives the rate-limit floor in the reconnect policy.
+    bool LastOpenRejected() const { return last_open_rejected_.load(); }
 #endif
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
     bool TimersNegotiated() const { return timers_enabled_.load() && IsAudioChannelOpened(); }
@@ -99,6 +103,7 @@ private:
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     std::atomic<bool> gateway_authenticated_{false};
     std::atomic<bool> gateway_hello_pending_{false};
+    std::atomic<bool> last_open_rejected_{false};
     std::atomic<int64_t> last_gateway_activity_us_{0};
 #endif
 

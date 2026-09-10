@@ -1792,6 +1792,7 @@ void Application::ReconnectVoiceGateway() {
                              if (opened && app->network_connected_.load()) {
                                  app->provisions_reconnect_attempts_ = 0;
                                  app->provisions_reconnect_wait_ticks_ = 0;
+                                 app->provisions_gateway_rejections_ = 0;
                                  if (app->ota_) {
                                      app->has_server_time_ = app->ota_->HasServerTime();
                                      app->ota_->MarkCurrentVersionValid();
@@ -1799,8 +1800,16 @@ void Application::ReconnectVoiceGateway() {
                                  }
                              } else {
                                  protocol->CloseAudioChannel();
+                                 const bool rejected =
+                                     static_cast<WebsocketProtocol*>(protocol.get())
+                                         ->LastOpenRejected();
+                                 app->provisions_gateway_rejections_ =
+                                     rejected ? provisions::reconnect::SaturatingIncrement(
+                                                    app->provisions_gateway_rejections_)
+                                              : 0;
                                  const auto retry = provisions::reconnect::AfterGatewayFailure(
-                                     app->provisions_reconnect_attempts_, esp_random());
+                                     app->provisions_reconnect_attempts_,
+                                     app->provisions_gateway_rejections_, esp_random());
                                  app->provisions_reconnect_attempts_ = retry.attempts;
                                  app->provisions_reconnect_wait_ticks_ = retry.wait_ticks;
                              }
@@ -1939,6 +1948,7 @@ void Application::HandleProvisionsGatewayMaintenance() {
     if (GetProtocol()->OpenAudioChannel()) {
         provisions_reconnect_attempts_ = 0;
         provisions_reconnect_wait_ticks_ = 0;
+        provisions_gateway_rejections_ = 0;
         if (ota_) {
             has_server_time_ = ota_->HasServerTime();
             ota_->MarkCurrentVersionValid();
@@ -1949,8 +1959,12 @@ void Application::HandleProvisionsGatewayMaintenance() {
         return;
     }
 
-    const auto retry =
-        provisions::reconnect::AfterGatewayFailure(provisions_reconnect_attempts_, esp_random());
+    provisions_gateway_rejections_ =
+        websocket->LastOpenRejected()
+            ? provisions::reconnect::SaturatingIncrement(provisions_gateway_rejections_)
+            : 0;
+    const auto retry = provisions::reconnect::AfterGatewayFailure(
+        provisions_reconnect_attempts_, provisions_gateway_rejections_, esp_random());
     provisions_reconnect_attempts_ = retry.attempts;
     provisions_reconnect_wait_ticks_ = retry.wait_ticks;
     display->SetStatus("Unavailable");

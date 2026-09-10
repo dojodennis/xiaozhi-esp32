@@ -204,6 +204,7 @@ private:
     int provisions_response_ticks_ = 0;
     int provisions_reconnect_wait_ticks_ = 0;
     int provisions_reconnect_attempts_ = 0;
+    int provisions_gateway_rejections_ = 0;
 #endif
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
     provisions::timers::NvsStore timer_store_;
