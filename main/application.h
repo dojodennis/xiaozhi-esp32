@@ -1,10 +1,10 @@
 #ifndef _APPLICATION_H_
 #define _APPLICATION_H_
 
+#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
 #include <freertos/task.h>
-#include <esp_timer.h>
 
 #include <atomic>
 #include <cstdint>
@@ -15,34 +15,43 @@
 #include <string>
 #include <vector>
 
-#include "protocol.h"
-#include "ota.h"
 #include "audio_service.h"
 #include "device_state.h"
 #include "device_state_machine.h"
 #include "notify/notify_player.h"
+#include "ota.h"
+#include "protocol.h"
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+#include "provisions_lite_face.h"
+#include "provisions_lite_jitter.h"
 #include "provisions_offline_signal.h"
 #include "provisions_timer_snapshot.h"
 #include "provisions_tts_turn.h"
 #endif
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+#include "provisions_timer_player.h"
+#include "provisions_voice_recorder.h"
+#endif
 
 // Main event bits
-#define MAIN_EVENT_SCHEDULE             (1 << 0)
-#define MAIN_EVENT_SEND_AUDIO           (1 << 1)
-#define MAIN_EVENT_WAKE_WORD_DETECTED   (1 << 2)
-#define MAIN_EVENT_VAD_CHANGE           (1 << 3)
-#define MAIN_EVENT_ERROR                (1 << 4)
-#define MAIN_EVENT_ACTIVATION_DONE      (1 << 5)
-#define MAIN_EVENT_CLOCK_TICK           (1 << 6)
-#define MAIN_EVENT_NETWORK_CONNECTED    (1 << 7)
+#define MAIN_EVENT_SCHEDULE (1 << 0)
+#define MAIN_EVENT_SEND_AUDIO (1 << 1)
+#define MAIN_EVENT_WAKE_WORD_DETECTED (1 << 2)
+#define MAIN_EVENT_VAD_CHANGE (1 << 3)
+#define MAIN_EVENT_ERROR (1 << 4)
+#define MAIN_EVENT_ACTIVATION_DONE (1 << 5)
+#define MAIN_EVENT_CLOCK_TICK (1 << 6)
+#define MAIN_EVENT_NETWORK_CONNECTED (1 << 7)
 #define MAIN_EVENT_NETWORK_DISCONNECTED (1 << 8)
-#define MAIN_EVENT_TOGGLE_CHAT          (1 << 9)
-#define MAIN_EVENT_START_LISTENING      (1 << 10)
-#define MAIN_EVENT_STOP_LISTENING       (1 << 11)
-#define MAIN_EVENT_STATE_CHANGED        (1 << 12)
-#define MAIN_EVENT_PLAYBACK_DRAINED     (1 << 13)
-
+#define MAIN_EVENT_TOGGLE_CHAT (1 << 9)
+#define MAIN_EVENT_START_LISTENING (1 << 10)
+#define MAIN_EVENT_STOP_LISTENING (1 << 11)
+#define MAIN_EVENT_STATE_CHANGED (1 << 12)
+#define MAIN_EVENT_PLAYBACK_DRAINED (1 << 13)
+#define MAIN_EVENT_TIMER (1 << 14)
+#define MAIN_EVENT_DICTATION_MODE (1 << 15)
+#define MAIN_EVENT_DICTATION_CONTROL (1 << 16)
+#define MAIN_EVENT_DICTATION_CAP (1 << 17)
 
 enum AecMode {
     kAecOff,
@@ -76,7 +85,7 @@ public:
 
     DeviceState GetDeviceState() const { return state_machine_.GetState(); }
     bool IsVoiceDetected() const { return audio_service_.IsVoiceDetected(); }
-    
+
     /**
      * Request state transition
      * Returns true if transition was successful
@@ -91,7 +100,8 @@ public:
     /**
      * Alert with status, message, emotion and optional sound
      */
-    void Alert(const char* status, const char* message, const char* emotion = "", const std::string_view& sound = "");
+    void Alert(const char* status, const char* message, const char* emotion = "",
+               const std::string_view& sound = "");
     void DismissAlert();
 
     void AbortSpeaking(AbortReason reason);
@@ -107,12 +117,20 @@ public:
      * Sends MAIN_EVENT_START_LISTENING to be handled in Run()
      */
     void StartListening();
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    void ToggleDictationScreen();
+    void DictationButton();
+    bool IsDictationScreen() const { return dictation_screen_.load(); }
+#endif
 
     /**
      * Stop listening (event-based, thread-safe)
      * Sends MAIN_EVENT_STOP_LISTENING to be handled in Run()
      */
     void StopListening();
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    void RetrySavedVoiceRecording();
+#endif
 
     void Reboot();
     void WakeWordInvoke(const std::string& wake_word);
@@ -130,7 +148,7 @@ public:
     void RegisterProvisionsTimerSnapshotCallback(ProvisionsTimerSnapshotCallback callback);
     bool HasProvisionsTimerSnapshotConsumer();
 #endif
-    
+
     /**
      * Reset protocol resources (thread-safe)
      * Can be called from any task to release resources allocated after network connected
@@ -144,7 +162,13 @@ private:
 
     std::mutex mutex_;
     std::deque<std::function<void()>> main_tasks_;
-    std::unique_ptr<Protocol> protocol_;
+    std::shared_ptr<Protocol> protocol_;
+    std::shared_ptr<Protocol> GetProtocol() const { return std::atomic_load(&protocol_); }
+    void SetProtocol(std::shared_ptr<Protocol> protocol) {
+        auto previous = std::atomic_exchange(&protocol_, std::move(protocol));
+        if (previous)
+            previous->CloseAudioChannel();
+    }
     EventGroupHandle_t event_group_ = nullptr;
     esp_timer_handle_t clock_timer_handle_ = nullptr;
     DeviceStateMachine state_machine_;
@@ -158,14 +182,21 @@ private:
 
     std::function<void(const std::string&)> mcp_broadcast_callback_;
 
-    bool has_server_time_ = false;
+    std::atomic<bool> has_server_time_{false};
     bool aborted_ = false;
     bool assets_version_checked_ = false;
-    bool play_popup_on_listening_ = false;  // Flag to play popup sound after state changes to listening
-    bool pending_listening_start_ = false;  // Waiting for playback to drain before starting listening (auto mode)
+    bool play_popup_on_listening_ =
+        false;  // Flag to play popup sound after state changes to listening
+    bool pending_listening_start_ =
+        false;  // Waiting for playback to drain before starting listening (auto mode)
     std::atomic<bool> manual_listening_requested_{false};
     std::atomic<bool> network_connected_{false};
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    ProvisionsReplyTurn provisions_physical_press_;
+    std::atomic<uint32_t> provisions_capture_press_{0};
+    bool ProvisionsReplyInterrupted() const {
+        return !provisions_physical_press_.IsCurrent(provisions_capture_press_.load());
+    }
     std::atomic<bool> provisions_response_pending_{false};
     std::atomic<int64_t> provisions_tts_deadline_us_{0};
     ProvisionsTtsTurn provisions_tts_turn_;
@@ -178,10 +209,70 @@ private:
     int provisions_reconnect_attempts_ = 0;
     int provisions_gateway_rejections_ = 0;
     provisions::OfflineSignal provisions_offline_signal_;
+    // Orbit Lite (thin gateway, provisions.mode == "lite" in the server hello):
+    // jitter-buffered playback fed from the socket task and pumped by a
+    // periodic timer, plus the face messages that override the idle status.
+    // See docs/orbit-lite-mode.md.
+    using LitePlaybackBuffer = provisions::lite::JitterBuffer<std::unique_ptr<AudioStreamPacket>>;
+    LitePlaybackBuffer lite_playback_;
+    LitePlaybackBuffer::Sink lite_playback_sink_;
+    esp_timer_handle_t lite_pump_timer_ = nullptr;
+    std::atomic<bool> lite_pump_running_{false};
+    std::atomic<const char*> lite_idle_status_{nullptr};
+    bool IsLiteMode() const {
+        const auto protocol = GetProtocol();
+        return protocol && protocol->IsLiteMode();
+    }
+    bool PushLitePlayback(std::unique_ptr<AudioStreamPacket>& packet);
+    void PumpLitePlayback();
+    void StartLitePump();
+    void StopLitePump();
+    void ResetLitePlayback();
+    void FinishLiteTurn();
+    void HandleLiteGatewayFrame(const cJSON* root, const char* type);
+    void RenderLiteFace(provisions::lite::Face face, const std::string& text);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    void AcknowledgeLiteUpload(const std::shared_ptr<const provisions::VoiceReplay>& replay);
+#endif
+#endif
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    provisions::timers::NvsStore timer_store_;
+    provisions::timers::Player timer_player_{timer_store_};
+    void InitializeTimers();
+    void ServiceTimers();
+    void HandleTimerOutputEnded();
+    std::mutex provisions_recording_control_mutex_;
+    uint32_t provisions_recording_started_press_ = 0;  // Main-task owned.
+    bool provisions_recording_was_dictation_ = false;
+    std::shared_ptr<provisions::VoiceRecorder> provisions_recorder_;
+    std::atomic<bool> provisions_recording_failed_{false};
+    std::atomic<bool> provisions_recording_saving_{false};
+    std::atomic<bool> provisions_recording_local_{false};
+    std::atomic<bool> provisions_network_busy_{false};
+    void HandleVoiceRecordingResult(provisions::VoiceRecorder::Result result, uint32_t press);
+    void SendVoiceRecording(std::shared_ptr<const provisions::VoiceReplay> replay);
+    void ReconnectVoiceGateway();
+    bool BeginLocalRecordingOnMain();
+    void EndLocalRecordingOnMain();
+    std::atomic<bool> dictation_screen_{false};
+    std::atomic<uint32_t> dictation_closed_press_{0};
+    void FenceDictationThrough(uint32_t press) {
+        uint32_t prior = dictation_closed_press_.load();
+        while (prior < press && !dictation_closed_press_.compare_exchange_weak(prior, press)) {
+        }
+    }
+    uint32_t dictation_authorization_seen_ = 0;
+    provisions::VoiceId dictation_assignment_proof_{};
+    bool dictation_has_assignment_proof_ = false;
+    std::string dictation_sent_control_;
+    int64_t dictation_last_send_us_ = 0;
+    int64_t dictation_next_receipt_us_ = 0;
+    void CloseDictationInputOnMain();
+    void HandleDictationControlOnMain();
+    void ServiceDictation();
 #endif
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;
-
 
     // Event handlers
     void HandleStateChangedEvent();
@@ -221,11 +312,10 @@ private:
     void ShowActivationCode(const std::string& code, const std::string& message);
     void SetListeningMode(ListeningMode mode);
     ListeningMode GetDefaultListeningMode() const;
-    
+
     // State change handler called by state machine
     void OnStateChanged(DeviceState old_state, DeviceState new_state);
 };
-
 
 class TaskPriorityReset {
 public:
@@ -233,12 +323,10 @@ public:
         original_priority_ = uxTaskPriorityGet(NULL);
         vTaskPrioritySet(NULL, priority);
     }
-    ~TaskPriorityReset() {
-        vTaskPrioritySet(NULL, original_priority_);
-    }
+    ~TaskPriorityReset() { vTaskPrioritySet(NULL, original_priority_); }
 
 private:
     BaseType_t original_priority_;
 };
 
-#endif // _APPLICATION_H_
+#endif  // _APPLICATION_H_
