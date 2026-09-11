@@ -316,6 +316,18 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("SetVisible(alarm_layer_, show_alarm)", reply_layout)
         self.assertNotIn("LV_ANIM_REPEAT_INFINITE", source)
 
+    def test_provisions_new_timer_brings_dial_forward_over_reply(self):
+        source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
+        apply = source.split("void ApplyTimerSnapshot", 1)[1].split("void ResetTimerSnapshot", 1)[0]
+        self.assertIn("announced_timer_ids_.push_back(timer.id)", apply)
+        self.assertIn("timer_face_until_us_.store(esp_timer_get_time() + kTimerFaceIdleUs)", apply)
+        self.assertIn("new_timer_wake_.store(true)", apply)
+        self.assertIn("visible && !TimerFaceForced()", source)
+        gate = source.split("bool ShouldShowOrbitLocked() const {", 1)[1].split("bool TimerFaceForced", 1)[0]
+        self.assertLess(gate.index("dictation_visible_"), gate.index("TimerFaceForced()"))
+        self.assertIn("if (display_->ConsumeNewTimerWake())", source)
+        self.assertIn("ResetDisplayIdleTimer();", source.split("ConsumeNewTimerWake())", 1)[1][:80])
+
     def test_provisions_blue_button_silences_alarm_or_toggles_high_and_max_volume(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
         method = re.search(

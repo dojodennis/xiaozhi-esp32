@@ -61,6 +61,7 @@ constexpr char kSignedHardwareIdentity[] = "PROVISIONS_SIGNED_HARDWARE_IDENTITY=
 constexpr int64_t kDisplayIdleTimeoutUs = 45LL * 1000 * 1000;
 // The Talk+blue timer face returns to the normal face after this long idle.
 constexpr int64_t kTimerFaceIdleUs = 30LL * 1000 * 1000;
+constexpr size_t kAnnouncedTimerIdLimit = 32;
 constexpr int kDefaultOutputVolume = 90;
 constexpr int kMaximumOutputVolume = 100;
 constexpr int kRoundTopBarWidth = 260;
@@ -294,6 +295,8 @@ private:
     };
     std::vector<DismissedTimer> dismissed_timers_;
     std::atomic<int64_t> timer_face_until_us_{0};
+    std::vector<std::string> announced_timer_ids_;
+    std::atomic<bool> new_timer_wake_{false};
     std::function<void()> timer_dismiss_callback_;
     std::function<void(bool)> timer_alarm_output_callback_;
 #if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
@@ -565,9 +568,18 @@ private:
         return timer_snapshot_.server_now_ms + elapsed_ms;
     }
 
+    // A forced face (chord, or a timer just set) comes to the front over the
+    // spoken reply and busy states, the way the dictation screen does; the
+    // resting dial for existing timers still waits for Ready.
     bool ShouldShowOrbitLocked() const {
-        return (orbit_snapshot_received_ || TimerFaceForced()) && !dictation_visible_ &&
-               !receipt_visible_.load() && resting_state_.load() == VisualState::kReady;
+        if (dictation_visible_) {
+            return false;
+        }
+        if (TimerFaceForced()) {
+            return true;
+        }
+        return orbit_snapshot_received_ && !receipt_visible_.load() &&
+               resting_state_.load() == VisualState::kReady;
     }
 
     bool TimerFaceForced() const { return timer_face_until_us_.load() > esp_timer_get_time(); }
@@ -626,7 +638,7 @@ private:
 #endif
         const bool display_awake = !power_save_active_.load();
         const bool show_alarm = display_awake && timer_alarm_active_.load();
-        const bool show_reply = display_awake && !show_alarm && visible;
+        const bool show_reply = display_awake && !show_alarm && visible && !TimerFaceForced();
         const bool show_orbit =
             display_awake && !show_alarm && !show_reply && ShouldShowOrbitLocked();
         const bool show_normal = display_awake && !show_alarm && !show_reply && !show_orbit;
@@ -1661,6 +1673,27 @@ public:
             galley_session_id_ = snapshot.session_id;
             timer_snapshot_ = snapshot;
             HideDismissedTimersLocked();
+            // Bring the dial forward when a timer id appears for the first
+            // time; a reconnect that replays known timers does not.
+            bool new_timer = false;
+            for (const auto& timer : timer_snapshot_.timers) {
+                if (timer.status != ProvisionsTimerSnapshot::TimerStatus::kActive) {
+                    continue;
+                }
+                if (std::find(announced_timer_ids_.begin(), announced_timer_ids_.end(),
+                              timer.id) == announced_timer_ids_.end()) {
+                    if (announced_timer_ids_.size() >= kAnnouncedTimerIdLimit) {
+                        announced_timer_ids_.erase(announced_timer_ids_.begin());
+                    }
+                    announced_timer_ids_.push_back(timer.id);
+                    new_timer = true;
+                }
+            }
+            if (new_timer) {
+                timer_face_until_us_.store(esp_timer_get_time() + kTimerFaceIdleUs);
+                new_timer_wake_.store(true);
+                SetReplyLayoutLocked(reply_visible_.load());
+            }
             if (same_galley_session) {
                 ProvisionsStopwatchOrbit::PreserveAttention(previous_timers,
                                                             timer_snapshot_.timers);
@@ -1764,6 +1797,9 @@ public:
     }
 
     bool HasTimerAlarm() const { return timer_alarm_active_.load(); }
+
+    // True once after a snapshot introduced a new timer (board wakes the screen).
+    bool ConsumeNewTimerWake() { return new_timer_wake_.exchange(false); }
 
     // Talk+blue chord (Application task): show the timer dial even with no
     // timers, so a spoken timer command can follow; a second chord or 30 s idle
@@ -2561,6 +2597,9 @@ public:
                     display_->ResetTimerSnapshot();
                 } else {
                     display_->ApplyTimerSnapshot(update.snapshot);
+                    if (display_->ConsumeNewTimerWake()) {
+                        ResetDisplayIdleTimer();
+                    }
                 }
             });
 #endif
