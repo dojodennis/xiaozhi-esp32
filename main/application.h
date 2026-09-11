@@ -105,6 +105,8 @@ public:
     // Blue dismissal of the timer takeover: reports each due ring timer to the
     // gateway (timers_v1 only). Main task. No-op without local capture.
     void DismissDueTimers();
+    // Physical Talk press-down (ESP_TIMER_TASK) for capture diagnostics only.
+    void NoteTalkPressDown(int64_t now_us);
 
     void AbortSpeaking(AbortReason reason);
 

@@ -82,6 +82,8 @@ public:
     }
     uint32_t DictationAuthorization() const { return dictation_authorization_.load(); }
     bool Append(uint32_t press, const int16_t* pcm, size_t frames, size_t channels);
+    // Physical Talk press-down time (esp_timer us) for the capture diagnostics.
+    void NotePhysicalPress(int64_t now_us) { physical_press_us_.store(now_us); }
     void Fail(uint32_t press);
     void Release(uint32_t press);
     void RequestReplay();
@@ -117,6 +119,9 @@ private:
     std::atomic<unsigned> pending_count_{0};
     std::atomic<bool> needs_attention_{false};
     std::atomic<bool> fault_{false};
+    std::atomic<int64_t> physical_press_us_{0};
+    std::atomic<uint32_t> timing_press_{0};
+    std::atomic<int64_t> timing_press_us_{0}, timing_first_chunk_us_{0};
     std::atomic<bool> can_retry_{false};
     std::atomic<unsigned> retry_pending_count_{0};
     mutable std::mutex mutex_;

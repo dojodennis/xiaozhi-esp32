@@ -2998,6 +2998,11 @@ void Application::ServiceTimers() {
         });
 }
 
+void Application::NoteTalkPressDown(int64_t now_us) {
+    if (auto recorder = std::atomic_load(&provisions_recorder_))
+        recorder->NotePhysicalPress(now_us);
+}
+
 void Application::DismissDueTimers() {
     // The takeover has already cleared locally; this only reports the gesture.
     // Without negotiated ring timers and a current session it does nothing.
@@ -3021,5 +3026,6 @@ void Application::DismissDueTimers() {
         ServiceTimers();
 }
 #else
+void Application::NoteTalkPressDown(int64_t) {}
 void Application::DismissDueTimers() {}
 #endif

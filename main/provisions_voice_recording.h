@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
+#include <string>
 #include "provisions_voice_outbox.h"
 
 namespace provisions {
@@ -18,6 +19,17 @@ struct VoiceContext {
                source_revision == other.source_revision;
     }
 };
+
+// Microphone level facts for one capture (16 kHz mono after resampling).
+struct CaptureLevels {
+    uint16_t peak = 0;           // Largest |sample|.
+    uint64_t sum_squares = 0;    // For RMS.
+    size_t first_nonzero = SIZE_MAX;  // Sample index of the first non-zero sample.
+};
+// One INFO line per capture, so a physical test shows what reached the upload.
+// press_to_first_chunk_ms < 0 means unknown. Pure; the caller logs it.
+std::string DescribeCapture(uint32_t press, bool saved, size_t samples, const CaptureLevels& levels,
+                            size_t opus_bytes, int64_t press_to_first_chunk_ms);
 
 // Owns no allocation or I/O. The audio task appends a bounded 10 ms microphone
 // chunk; a separate worker owns a released buffer until Finish. No socket,
@@ -35,6 +47,7 @@ public:
         const int16_t* pcm = nullptr;
         size_t samples = 0;
         bool failed = false;
+        CaptureLevels levels{};
     };
 
     VoiceRecording(int16_t* first, int16_t* second, size_t capacity);
@@ -62,6 +75,7 @@ private:
         bool failed = false;
         bool capped = false;
         uint64_t order = 0;
+        CaptureLevels levels{};
     };
     mutable std::mutex mutex_;
     std::array<Buffer, kBufferCount> buffers_{};

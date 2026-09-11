@@ -2259,6 +2259,7 @@ private:
     // Talk down: hold the start for the chord window so Talk+blue never opens
     // the microphone. Without the window timer Talk starts at once.
     void ArmTalkStart(std::function<void()> start) {
+        Application::GetInstance().NoteTalkPressDown(esp_timer_get_time());
         ProvisionsStopWatch::ButtonChord::Edge edge;
         {
             std::lock_guard<std::mutex> lock(chord_mutex_);

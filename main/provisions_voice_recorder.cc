@@ -3,6 +3,9 @@
 #include <esp_timer.h>
 #include <mbedtls/platform_util.h>
 #include <nvs.h>
+#ifdef ESP_PLATFORM
+#include <esp_log.h>
+#endif
 #include <psa/crypto.h>
 #include <algorithm>
 #include <chrono>
@@ -154,9 +157,21 @@ bool VoiceRecorder::Begin(uint32_t press, uint64_t captured_unix_ms) {
     if (!recording_ || !storage_ready_.load() || !has_context_.load())
         return false;
     std::lock_guard<std::mutex> lock(mutex_);
-    return !dictation_replacing_.load() && recording_->Begin(press, context_, captured_unix_ms);
+    const bool began =
+        !dictation_replacing_.load() && recording_->Begin(press, context_, captured_unix_ms);
+    if (began) {
+        // Diagnostics only: prefer the physical edge when it is recent.
+        const int64_t now = esp_timer_get_time();
+        const int64_t physical = physical_press_us_.load();
+        timing_press_us_.store(physical > 0 && now - physical < 2000000 ? physical : now);
+        timing_first_chunk_us_.store(0);
+        timing_press_.store(press);
+    }
+    return began;
 }
 bool VoiceRecorder::Append(uint32_t press, const int16_t* pcm, size_t frames, size_t channels) {
+    if (press == timing_press_.load() && timing_first_chunk_us_.load() == 0)
+        timing_first_chunk_us_.store(esp_timer_get_time());
     const bool appended = recording_ && recording_->Append(press, pcm, frames, channels);
     if (appended && recording_->IsCapped(press)) {
         dictation_capped_press_.store(press);
@@ -317,6 +332,21 @@ void VoiceRecorder::Save(const VoiceRecording::Work& work) {
               (manifest && storage_ready_.load() && Encode(work, capture, bytes) &&
                (capture.IsDictation() || outbox_.NewRequestId(capture.request_id)) &&
                outbox_.journal()->Save(capture, {frames_, bytes}, saved) == VoiceStoreResult::Ok);
+    if (!work.capture.IsDictation() || work.samples != 0) {
+        const int64_t first_chunk = timing_first_chunk_us_.load();
+        const int64_t pressed = timing_press_us_.load();
+        const int64_t press_to_chunk_ms =
+            work.press == timing_press_.load() && first_chunk > 0 && pressed > 0
+                ? (first_chunk - pressed) / 1000
+                : -1;
+        const auto line =
+            DescribeCapture(work.press, ok, work.samples, work.levels, bytes, press_to_chunk_ms);
+#ifdef ESP_PLATFORM
+        ESP_LOGI("VoiceRecorder", "%s", line.c_str());
+#else
+        (void)line;
+#endif
+    }
     if (!ok && work.capture.IsDictation()) {
         // Preserve the Processing PCM and its durable ordinal for a later write.
         // A pending Stop counts this reservation even before the raw part syncs.
