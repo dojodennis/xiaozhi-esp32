@@ -98,6 +98,8 @@ struct StopWatchBoard {
     Display* display_=&Board::GetInstance().display;
     static constexpr int kDefaultOutputVolume=50,kMaximumOutputVolume=100;
     void ResetDisplayIdleTimer(){++wakes;}Volume* GetAudioCodec(){return &volume;}
+    void ArmTalkStart(std::function<void()> start){start();}bool TalkReleased(){return true;}
+    void BluePressed(){}void BlueReleased(){}bool BlueGestureInChord(){return false;}
 ''' + buttons + r'''
 };
 ''' + handlers + r'''

@@ -49,6 +49,30 @@ mode and wait for the green indication; bench commands deliberately use
 The resulting credential and Wi-Fi password are physically extractable. This is
 controlled demo hardware only: never a customer/yacht device or commercial pilot.
 
+### Buttons (Provisions build)
+
+Yellow is Talk (KEYA/GPIO2), blue is the second button. The ring-local
+timer takeover owns blue while a timer is due.
+
+| Gesture | Where | Result |
+| --- | --- | --- |
+| Talk hold | any face | Records while held and sends on release. Capture starts 150 ms after press-down (the chord window). |
+| Talk tap shorter than 150 ms | any face | Nothing: the microphone never opens. |
+| Talk + blue together (within 150 ms, either order) | any face | Toggles the timer face (the orbit dial, "NO TIMERS" when empty). Neither single-button action fires; blue click/double/long from that press are swallowed. |
+| Talk + blue together again | timer face | Back to the normal face (also after 30 s idle; a Talk press on the face resets the 30 s). |
+| Talk hold | timer face | Records as normal, so "set a timer for ..." works from the dial. |
+| Blue click / double / long | ringing takeover | Silences (motor off, takeover stays). |
+| Blue click / double / long | silenced takeover | Dismisses every due timer: takeover clears, motor stays off, and each timer is reported to the gateway (`timer` / `dismiss`). |
+| Blue click | dictation screen | Dictation control. |
+| Blue click | otherwise | Volume: pilot floor <-> maximum. |
+| Blue double-click | otherwise | Opens/closes the dictation screen. |
+| Blue long-press | otherwise | Retries a saved recording the server offered a retry for. |
+
+Two-button chord: pressing Talk and blue within 150 ms of each other is one
+gesture. The Talk start is held for that window so a chord never leaves a
+stray capture; a normal Talk hold therefore begins recording 150 ms after
+the press.
+
 -----------
 ## hardware
 

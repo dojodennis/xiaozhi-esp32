@@ -12,6 +12,7 @@
 #include "crest_asset.h"
 #include "crest_audio.h"
 #include "crest_motion.h"
+#include "button_chord.h"
 #include "orbit_dial.h"
 #include "provisions_local_capture_feedback.h"
 #include "provisions_timer_snapshot.h"
@@ -33,6 +34,7 @@
 #include <cstring>
 #include <functional>
 #include <limits>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <esp_log.h>
@@ -57,6 +59,8 @@ namespace {
 
 constexpr char kSignedHardwareIdentity[] = "PROVISIONS_SIGNED_HARDWARE_IDENTITY=" BOARD_NAME;
 constexpr int64_t kDisplayIdleTimeoutUs = 45LL * 1000 * 1000;
+// The Talk+blue timer face returns to the normal face after this long idle.
+constexpr int64_t kTimerFaceIdleUs = 30LL * 1000 * 1000;
 constexpr int kDefaultOutputVolume = 90;
 constexpr int kMaximumOutputVolume = 100;
 constexpr int kRoundTopBarWidth = 260;
@@ -289,6 +293,7 @@ private:
         int64_t deadline_ms = 0;
     };
     std::vector<DismissedTimer> dismissed_timers_;
+    std::atomic<int64_t> timer_face_until_us_{0};
     std::function<void()> timer_dismiss_callback_;
     std::function<void(bool)> timer_alarm_output_callback_;
 #if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
@@ -561,9 +566,11 @@ private:
     }
 
     bool ShouldShowOrbitLocked() const {
-        return orbit_snapshot_received_ && !dictation_visible_ && !receipt_visible_.load() &&
-               resting_state_.load() == VisualState::kReady;
+        return (orbit_snapshot_received_ || TimerFaceForced()) && !dictation_visible_ &&
+               !receipt_visible_.load() && resting_state_.load() == VisualState::kReady;
     }
+
+    bool TimerFaceForced() const { return timer_face_until_us_.load() > esp_timer_get_time(); }
 
     // Banner language (Dennis 2026-08-29): short uppercase fragments a chef
     // reads in one glance, the icon carrying the meaning — not sentences.
@@ -654,7 +661,7 @@ private:
         timer_alarm_active_.store(schedule_demo_.model().alarm_active());
         return schedule_demo_.model().TakeOutputChange();
 #endif
-        if (!orbit_snapshot_received_) {
+        if (!orbit_snapshot_received_ && !TimerFaceForced()) {
             return AlarmOutputChange::kNone;
         }
 
@@ -813,6 +820,12 @@ private:
         AlarmOutputChange output_change;
         {
             DisplayLockGuard lock(this);
+            const int64_t face_until = timer_face_until_us_.load();
+            if (face_until != 0 && esp_timer_get_time() >= face_until) {
+                // Idle timeout: back to the normal face.
+                timer_face_until_us_.store(0);
+                SetReplyLayoutLocked(reply_visible_.load());
+            }
             output_change = RefreshOrbitLocked();
         }
         ApplyAlarmOutputChange(output_change);
@@ -1752,6 +1765,27 @@ public:
 
     bool HasTimerAlarm() const { return timer_alarm_active_.load(); }
 
+    // Talk+blue chord (Application task): show the timer dial even with no
+    // timers, so a spoken timer command can follow; a second chord or 30 s idle
+    // returns to the normal face. Recording is unaffected by the face.
+    void ToggleTimerFace() {
+        AlarmOutputChange output_change;
+        {
+            DisplayLockGuard lock(this);
+            const bool showing = TimerFaceForced();
+            timer_face_until_us_.store(showing ? 0 : esp_timer_get_time() + kTimerFaceIdleUs);
+            output_change = RefreshOrbitLocked();
+            SetReplyLayoutLocked(reply_visible_.load());
+        }
+        ApplyAlarmOutputChange(output_change);
+    }
+
+    // A Talk press on the timer face counts as activity for its idle timeout.
+    void KeepTimerFaceAwake() {
+        if (TimerFaceForced())
+            timer_face_until_us_.store(esp_timer_get_time() + kTimerFaceIdleUs);
+    }
+
     void SetEmotion(const char* emotion) override { (void)emotion; }
 
     void SetChatMessage(const char* role, const char* content) override {
@@ -1965,6 +1999,12 @@ private:
     M5IOE1 ioe_;
     Button button1_;
     Button button2_;
+    // Physical edges and the chord window timer all run on ESP_TIMER_TASK; the
+    // mutex only keeps the plain chord state honest if that ever changes.
+    std::mutex chord_mutex_;
+    ProvisionsStopWatch::ButtonChord chord_;
+    std::function<void()> chord_talk_start_;
+    esp_timer_handle_t chord_timer_ = nullptr;
     RoundLcdDisplay* display_;
     StopwatchBacklight* backlight_;
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
@@ -2194,6 +2234,96 @@ private:
         backlight_->RestoreBrightness();
     }
 
+    void InitializeTalkChordTimer() {
+        esp_timer_create_args_t args = {
+            .callback = [](void* arg) {
+                auto* self = static_cast<M5StackStopwatchBoard*>(arg);
+                std::function<void()> start;
+                {
+                    std::lock_guard<std::mutex> lock(self->chord_mutex_);
+                    if (self->chord_.TalkWindowElapsed())
+                        start = self->chord_talk_start_;
+                }
+                if (start)
+                    start();
+            },
+            .arg = this,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "stopwatch_talk_chord",
+            .skip_unhandled_events = true,
+        };
+        if (esp_timer_create(&args, &chord_timer_) != ESP_OK)
+            chord_timer_ = nullptr;
+    }
+
+    // Talk down: hold the start for the chord window so Talk+blue never opens
+    // the microphone. Without the window timer Talk starts at once.
+    void ArmTalkStart(std::function<void()> start) {
+        ProvisionsStopWatch::ButtonChord::Edge edge;
+        {
+            std::lock_guard<std::mutex> lock(chord_mutex_);
+            edge = chord_.TalkDown(esp_timer_get_time());
+            chord_talk_start_ = std::move(start);
+        }
+        if (edge == ProvisionsStopWatch::ButtonChord::Edge::kChord) {
+            OnButtonChord();
+            return;
+        }
+        if (edge != ProvisionsStopWatch::ButtonChord::Edge::kArmTalk)
+            return;
+        Application::GetInstance().Schedule([this]() { display_->KeepTimerFaceAwake(); });
+        if (chord_timer_ != nullptr) {
+            esp_timer_stop(chord_timer_);
+            if (esp_timer_start_once(chord_timer_, ProvisionsStopWatch::ButtonChord::kWindowUs) ==
+                ESP_OK)
+                return;
+        }
+        std::function<void()> now;
+        {
+            std::lock_guard<std::mutex> lock(chord_mutex_);
+            if (chord_.TalkWindowElapsed())
+                now = chord_talk_start_;
+        }
+        if (now)
+            now();
+    }
+
+    // True when the release must stop a Talk capture that actually started.
+    bool TalkReleased() {
+        if (chord_timer_ != nullptr)
+            esp_timer_stop(chord_timer_);
+        std::lock_guard<std::mutex> lock(chord_mutex_);
+        return chord_.TalkUp();
+    }
+
+    void BluePressed() {
+        ProvisionsStopWatch::ButtonChord::Edge edge;
+        {
+            std::lock_guard<std::mutex> lock(chord_mutex_);
+            edge = chord_.BlueDown(esp_timer_get_time());
+        }
+        if (edge == ProvisionsStopWatch::ButtonChord::Edge::kChord) {
+            if (chord_timer_ != nullptr)
+                esp_timer_stop(chord_timer_);
+            OnButtonChord();
+        }
+    }
+
+    void BlueReleased() {
+        std::lock_guard<std::mutex> lock(chord_mutex_);
+        chord_.BlueUp();
+    }
+
+    bool BlueGestureInChord() {
+        std::lock_guard<std::mutex> lock(chord_mutex_);
+        return chord_.SwallowBlueGesture();
+    }
+
+    void OnButtonChord() {
+        ResetDisplayIdleTimer();
+        Application::GetInstance().Schedule([this]() { display_->ToggleTimerFace(); });
+    }
+
     void InitializeButtons() {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
 #if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
@@ -2209,16 +2339,25 @@ private:
             Application::GetInstance().Schedule([this]() { display_->SilenceTimerAlarm(); });
         });
 #else
+        // Talk and blue together (within ButtonChord::kWindowUs, either order)
+        // toggle the timer face and fire neither single-button action.
         button1_.OnPressDown([this]() {
             ResetDisplayIdleTimer();
-            Application::GetInstance().StartListening();
+            ArmTalkStart([]() { Application::GetInstance().StartListening(); });
         });
-        button1_.OnPressUp([]() { Application::GetInstance().StopListening(); });
+        button1_.OnPressUp([this]() {
+            if (TalkReleased())
+                Application::GetInstance().StopListening();
+        });
+        button2_.OnPressDown([this]() { BluePressed(); });
+        button2_.OnPressUp([this]() { BlueReleased(); });
 
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
         // Retain capture controls when the timer surface owns the display. Check
         // alarm and dictation state on the application task, when the action runs.
         button2_.OnDoubleClick([this]() {
+            if (BlueGestureInChord())
+                return;
             ResetDisplayIdleTimer();
             Application::GetInstance().Schedule([this]() {
                 if (display_->SilenceTimerAlarm())
@@ -2227,6 +2366,8 @@ private:
             });
         });
         button2_.OnLongPress([this]() {
+            if (BlueGestureInChord())
+                return;
             ResetDisplayIdleTimer();
             Application::GetInstance().Schedule([this]() {
                 if (display_->SilenceTimerAlarm())
@@ -2241,6 +2382,8 @@ private:
         // Keep the second button useful without adding a menu or allowing an
         // accidental mute. It toggles only between the pilot floor and max.
         button2_.OnClick([this]() {
+            if (BlueGestureInChord())
+                return;
             ResetDisplayIdleTimer();
             Application::GetInstance().Schedule([this]() {
                 if (display_->SilenceTimerAlarm()) {
@@ -2399,6 +2542,7 @@ public:
 #if !CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO && !CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
         InitializeDisplayIdleTimer();
         InitializeCaptureHapticTimer();
+        InitializeTalkChordTimer();
 #endif
 #if !CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
         display_->SetTimerAlarmOutputCallback([this](bool active) {
