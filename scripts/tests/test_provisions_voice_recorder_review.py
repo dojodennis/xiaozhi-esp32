@@ -381,6 +381,30 @@ void explicit_retry_cases() {
 }
 
 
+void bounded_offer_cases() {
+    fresh();
+    {
+        VoiceRecorder recorder;initialize(recorder);authorize(recorder);record(recorder,1);
+        replay(recorder);assert(offered.size()==1&&offered[0].press==1);auto original=offered[0].receipt;
+        clock_us=30000000;replay(recorder);clock_us=60000000;replay(recorder);assert(offered.size()==3);
+        clock_us=90000000;replay(recorder);clock_us=900000000;replay(recorder);
+        assert(offered.size()==3); // Three automatic offers, then the loop stops.
+        assert(recorder.PendingCount()==1&&!recorder.NeedsAttention()&&!recorder.HasFault()); // Kept, not an error.
+        acknowledge(recorder,original);assert(recorder.PendingCount()==1); // A processing receipt never erases.
+        acknowledge(recorder,challenge(original));assert(recorder.CanRetry()&&recorder.RequestRetry());drain();
+        assert(offered.size()==4&&offered.back().retry_token[0]==91); // An explicit retry is not budgeted.
+        auto durable=original;durable.durable=true;acknowledge(recorder,durable);assert(recorder.PendingCount()==0);
+        // A needs_attention receipt retires a new recording at once: kept in flash,
+        // never re-offered, and not a fault that holds the face on an error.
+        record(recorder,2);replay(recorder);assert(offered.size()==5);auto second=offered.back().receipt;
+        auto retired=second;retired.needs_attention=true;acknowledge(recorder,retired);
+        clock_us=2000000000;replay(recorder);assert(offered.size()==5);
+        assert(recorder.PendingCount()==1&&recorder.NeedsAttention()&&!recorder.HasFault());
+    }
+    join();
+    std::cout<<"Bounded automatic offers and needs_attention retirement cases passed\n";
+}
+
 void queued_retry_scope_case() {
     fresh();
     {
@@ -519,7 +543,7 @@ void dictation_cases() {
     join();
     std::cout<<"Dictation worker reservation, cap, Stop sealing, exact retry and restart cases passed\n";
 }
-int main(){normal_cases();context_cases();explicit_retry_cases();queued_retry_scope_case();dictation_ack_stop_race();dictation_cases();}
+int main(){normal_cases();context_cases();explicit_retry_cases();bounded_offer_cases();queued_retry_scope_case();dictation_ack_stop_race();dictation_cases();}
 
 '''
 

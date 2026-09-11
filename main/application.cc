@@ -1616,8 +1616,11 @@ const char* Application::GetProvisionsIdleStatus() const {
             return "Capture unavailable";
         if (recorder->RetryPending())
             return "Retry queued";
-        if (recorder->NeedsAttention())
-            return recorder->CanRetry() ? "Hold blue to retry" : "Recording kept";
+        // Only a storage/context fault is an error. A recording the server
+        // retired (needs_attention) or whose offers ran out stays in flash
+        // without holding the face on "Please try again"; blue hold still retries.
+        if (recorder->HasFault())
+            return "Recording kept";
         if (recorder->PendingCount() > 0)
             return "Saved on Orbit";
     }

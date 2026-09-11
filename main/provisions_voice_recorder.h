@@ -91,6 +91,13 @@ public:
     bool IsReady() const { return storage_ready_.load(); }
     unsigned PendingCount() const { return pending_count_.load(); }
     bool NeedsAttention() const { return needs_attention_.load(); }
+    // Storage or context faults only. A kept recording that is no longer being
+    // offered (server needs_attention, or the automatic offer budget spent) is
+    // not a fault and must not hold the screen on an error.
+    bool HasFault() const { return fault_.load(); }
+    // Automatic re-offers of one command recording per boot. An explicit retry
+    // gesture is not counted; dictation segments keep their existing cadence.
+    static constexpr uint8_t kMaximumAutomaticOffers = 3;
     bool CanRetry() const { return can_retry_.load(); }
     bool RetryPending() const { return retry_pending_count_.load() != 0; }
 
@@ -109,6 +116,7 @@ private:
     std::atomic<bool> has_context_{false};
     std::atomic<unsigned> pending_count_{0};
     std::atomic<bool> needs_attention_{false};
+    std::atomic<bool> fault_{false};
     std::atomic<bool> can_retry_{false};
     std::atomic<unsigned> retry_pending_count_{0};
     mutable std::mutex mutex_;
@@ -131,6 +139,7 @@ private:
     std::array<int64_t, VoiceOutbox::kSlots> retry_after_{};
     std::array<bool, VoiceOutbox::kSlots> attention_{};
     std::array<bool, VoiceOutbox::kSlots> offered_{};
+    std::array<uint8_t, VoiceOutbox::kSlots> offers_{};
     std::array<VoiceId, VoiceOutbox::kSlots> retry_tokens_{};
     std::array<bool, VoiceOutbox::kSlots> retry_used_{};
     std::array<bool, VoiceOutbox::kSlots> retry_pending_{};

@@ -336,6 +336,7 @@ void VoiceRecorder::Save(const VoiceRecording::Work& work) {
         retry_after_[saved.slot] = 0;
         attention_[saved.slot] = false;
         offered_[saved.slot] = false;
+        offers_[saved.slot] = 0;
         retry_tokens_[saved.slot] = {};
         retry_used_[saved.slot] = retry_pending_[saved.slot] = false;
     }
@@ -362,6 +363,7 @@ void VoiceRecorder::RefreshCount() {
     unsigned retry_count = 0;
     bool can_retry = false;
     bool attention = context_write_failed_;
+    bool fault = context_write_failed_;
     VoiceContext context;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -374,7 +376,7 @@ void VoiceRecorder::RefreshCount() {
             if (result != VoiceStoreResult::Empty)
                 ++count;
             if (result != VoiceStoreResult::Ok && result != VoiceStoreResult::Empty)
-                attention = true;
+                attention = fault = true;
             attention = attention || attention_[slot];
             if (result == VoiceStoreResult::Ok &&
                 saved.capture.conversation_id == context.conversation_id) {
@@ -387,6 +389,7 @@ void VoiceRecorder::RefreshCount() {
     }
     pending_count_.store(count);
     needs_attention_.store(attention);
+    fault_.store(fault);
     can_retry_.store(can_retry);
     retry_pending_count_.store(retry_count);
 }
@@ -437,6 +440,8 @@ void VoiceRecorder::PrepareReplay() {
         SavedVoiceCapture saved;
         if (outbox_.journal()->Read(slot, saved) == VoiceStoreResult::Ok &&
             saved.capture.conversation_id == context.conversation_id &&
+            (saved.capture.IsDictation() || retry_pending_[slot] ||
+             offers_[slot] < kMaximumAutomaticOffers) &&
             (selected == VoiceOutbox::kSlots ||
              (retry_pending_[slot] && !retry_pending_[selected]) ||
              (retry_pending_[slot] == retry_pending_[selected] && saved.sequence < oldest))) {
@@ -460,6 +465,13 @@ void VoiceRecorder::PrepareReplay() {
     std::memcpy(replay_->frames, saved.frames.data, saved.frames.size);
     retry_after_[selected] = esp_timer_get_time() + kRetryDelayUs;
     offered_[selected] = true;
+    if (!saved.capture.IsDictation() && !retry_pending_[selected] &&
+        ++offers_[selected] == kMaximumAutomaticOffers) {
+        // Last automatic offer. With no durable receipt the recording stays in
+        // flash (the app's retained list) but the 30 s loop ends here; only an
+        // explicit retry or a reboot offers it again.
+        RefreshCount();
+    }
     replay_ready_(replay_);
 }
 void VoiceRecorder::ApplyReceipt(const VoiceCaptureReceipt& receipt) {

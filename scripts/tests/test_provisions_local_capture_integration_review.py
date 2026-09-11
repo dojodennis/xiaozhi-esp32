@@ -772,7 +772,7 @@ struct WebsocketProtocol {
 struct Recorder {
     bool ready=false,context=false,attention=false;unsigned count=0;
     bool IsReady(){return ready;}bool HasContext(){return context;}
-    bool NeedsAttention(){return attention;}unsigned PendingCount(){return count;}
+    bool NeedsAttention(){return attention;}bool HasFault(){return attention;}unsigned PendingCount(){return count;}
     bool CanRetry(){return false;}bool RetryPending(){return false;}
 };
 struct Application {

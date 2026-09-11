@@ -63,7 +63,8 @@ struct Display {
 struct Board {Display display;static Board& GetInstance(){static Board value;return value;}Display* GetDisplay(){return &display;}};
 struct Protocol {bool open=true;bool IsAudioChannelOpened(){return open;}};
 struct Recorder {
-    int retries=0;bool can_retry=true,attention=true,pending=false,ready=true,context=true;
+    int retries=0;bool can_retry=true,attention=true,pending=false,ready=true,context=true,fault=false;
+    bool HasFault(){return fault;}
     bool RequestRetry(){++retries;return can_retry;}
     bool CanRetry(){return can_retry;}bool NeedsAttention(){return attention;}bool RetryPending(){return pending;}
     bool IsReady(){return ready;}bool HasContext(){return context;}unsigned PendingCount(){return 1;}
@@ -134,9 +135,11 @@ int main(){
     app.protocol->open=true;app.Drain();assert(app.provisions_recorder_->retries==0); // Reconnection does not imply another gesture.
     board.button2_.long_press();app.Drain();assert(app.provisions_recorder_->retries==1);
     assert(Board::GetInstance().display.text=="Retry queued. Recording stays saved.");
-    assert(std::string(app.GetProvisionsIdleStatus())=="Hold blue to retry");
+    // A kept recording that is no longer offered never holds an error face.
+    assert(std::string(app.GetProvisionsIdleStatus())=="Saved on Orbit");
     app.provisions_recorder_->pending=true;assert(std::string(app.GetProvisionsIdleStatus())=="Retry queued");
-    app.provisions_recorder_->pending=false;app.provisions_recorder_->can_retry=false;assert(std::string(app.GetProvisionsIdleStatus())=="Recording kept");
+    app.provisions_recorder_->pending=false;app.provisions_recorder_->can_retry=false;assert(std::string(app.GetProvisionsIdleStatus())=="Saved on Orbit");
+    app.provisions_recorder_->fault=true;assert(std::string(app.GetProvisionsIdleStatus())=="Recording kept");
     board.button2_.long_press();app.Drain();assert(Board::GetInstance().display.text=="No saved recording is ready to retry.");
     const auto volume_before=board.volume.value;const auto retries_before=app.provisions_recorder_->retries;
     board.button2_.double_click();app.Drain();assert(app.dictation&&app.controls==0&&board.volume.value==volume_before);
