@@ -53,6 +53,11 @@ struct Display {
     }
     bool Audible(){return timer_alarm_state_.active()&&!timer_alarm_state_.silenced();}
     void ApplyAlarmOutputChange(AlarmOutputChange change){if(change==AlarmOutputChange::kStop)++silences;}
+    std::function<void()> timer_dismiss_callback_;int dismissals=0;
+    AlarmOutputChange DismissDueTimersLocked(){
+        ++dismissals;const auto change=timer_alarm_state_.Update({});
+        timer_alarm_active_=timer_alarm_state_.active();return change;
+    }
 ''' + silence + r'''
 };
 struct Board {Display display;static Board& GetInstance(){static Board value;return value;}Display* GetDisplay(){return &display;}};
@@ -110,6 +115,10 @@ int main(){
         assert(!board.display_->Audible()&&board.volume.value==50&&!app.dictation);
         assert(app.provisions_recorder_->retries==0&&!app.manual_listening_requested_);
     }
+    // The next blue gesture on the silenced takeover dismisses it, not volume.
+    board.button2_.click();app.Drain();
+    assert(board.display_->dismissals==1&&!board.display_->timer_alarm_state_.active());
+    assert(!board.display_->timer_alarm_active_&&board.volume.value==50&&app.provisions_recorder_->retries==0);
     board.button2_.click();assert(app.provisions_recorder_->retries==0);app.Drain();assert(board.volume.value==100&&app.provisions_recorder_->retries==0);
     // A new Talk press before the scheduled blue action runs must win.
     board.button2_.long_press();assert(app.provisions_recorder_->retries==0);

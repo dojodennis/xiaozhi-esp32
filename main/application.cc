@@ -22,10 +22,12 @@
 
 #include <driver/gpio.h>
 #include <esp_log.h>
+#include <esp_random.h>
 #include <esp_system.h>
 #include <arpa/inet.h>
 #include <cJSON.h>
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <initializer_list>
 #include <limits>
@@ -1014,6 +1016,20 @@ void Application::InitializeProtocol() {
         const bool timer_tts =
             strcmp(type->valuestring, "tts") == 0 &&
             (timer_player_.OwnsOutput() || cJSON_GetObjectItemCaseSensitive(root, "playback_id"));
+        if (timer_frame) {
+            // The gateway's answer to a physical dismissal. It never reaches the
+            // alarm player; a well-formed ack for an old request is harmless.
+            auto action = cJSON_GetObjectItemCaseSensitive(root, "action");
+            if (cJSON_IsString(action) && strcmp(action->valuestring, "dismiss_ack") == 0) {
+                auto* websocket = static_cast<WebsocketProtocol*>(protocol.get());
+                if (!websocket->TimersNegotiated() ||
+                    !timer_dismissals_.OnAck(root, protocol->session_id()))
+                    reject_gateway_frame();
+                else
+                    xEventGroupSetBits(event_group_, MAIN_EVENT_TIMER);
+                return;
+            }
+        }
         if (timer_frame || timer_tts) {
             auto* websocket = static_cast<WebsocketProtocol*>(protocol.get());
             if (!timer_player_.OnJson(root, protocol->session_id(), websocket->TimersNegotiated(),
@@ -2945,10 +2961,18 @@ void Application::ServiceTimers() {
                        audio_service_.IsLocalInputIdle() && audio_service_.IsPlaybackIdle();
     timer_player_.Service(session, negotiated, ready, provisions_physical_press_.id(),
                           esp_timer_get_time());
+    timer_dismissals_.Service(session, negotiated, esp_timer_get_time(),
+                              [&protocol](const std::string& frame) {
+                                  return protocol && static_cast<WebsocketProtocol*>(protocol.get())
+                                                         ->SendTimerReceipt(frame);
+                              });
     timeval now{};
     if (has_server_time_.load())
         gettimeofday(&now, nullptr);
-    const auto snapshot = timer_player_.GetSnapshot();
+    auto snapshot = timer_player_.GetSnapshot();
+    // A timer the chef dismissed stays off the dial and takeover until the
+    // gateway's snapshot drops it or raises its revision.
+    timer_dismissals_.Filter(snapshot);
     const int64_t trusted_now_ms = static_cast<int64_t>(now.tv_sec) * 1000 + now.tv_usec / 1000;
     Board::GetInstance().GetDisplay()->SetTimerText(
         negotiated && snapshot.session_id == session
@@ -2970,4 +2994,29 @@ void Application::ServiceTimers() {
                 callback(update);
         });
 }
+
+void Application::DismissDueTimers() {
+    // The takeover has already cleared locally; this only reports the gesture.
+    // Without negotiated ring timers and a current session it does nothing.
+    const auto protocol = GetProtocol();
+    const bool negotiated =
+        protocol && static_cast<WebsocketProtocol*>(protocol.get())->TimersNegotiated();
+    const auto session = protocol ? protocol->session_id() : std::string{};
+    timeval now{};
+    if (has_server_time_.load())
+        gettimeofday(&now, nullptr);
+    const int64_t trusted_now_ms = static_cast<int64_t>(now.tv_sec) * 1000 + now.tv_usec / 1000;
+    const size_t count = timer_dismissals_.Dismiss(
+        timer_player_.GetSnapshot(), session, negotiated, trusted_now_ms, esp_timer_get_time(),
+        []() {
+            std::array<uint8_t, 16> bytes{};
+            esp_fill_random(bytes.data(), bytes.size());
+            return provisions::timers::Dismissals::FormatUuidV4(bytes);
+        });
+    ESP_LOGI(TAG, "Timer dismiss gesture: %u due timer(s) reported", static_cast<unsigned>(count));
+    if (count > 0)
+        ServiceTimers();
+}
+#else
+void Application::DismissDueTimers() {}
 #endif

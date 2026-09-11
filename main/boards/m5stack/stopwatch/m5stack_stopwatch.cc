@@ -284,6 +284,12 @@ private:
     ProvisionsTimerSnapshot::Snapshot timer_snapshot_;
     ProvisionsStopwatchOrbit::SlotBoard orbit_slot_board_;
     ProvisionsStopwatchOrbit::AlarmState timer_alarm_state_;
+    struct DismissedTimer {
+        std::string id;
+        int64_t deadline_ms = 0;
+    };
+    std::vector<DismissedTimer> dismissed_timers_;
+    std::function<void()> timer_dismiss_callback_;
     std::function<void(bool)> timer_alarm_output_callback_;
 #if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
     int64_t bench_clock_ms_ = 0;
@@ -787,8 +793,9 @@ private:
                 lv_label_set_text(alarm_names_label_, names.c_str());
             }
             if (alarm_hint_label_ != nullptr) {
-                lv_label_set_text(alarm_hint_label_,
-                                  timer_alarm_state_.silenced() ? "SILENCED" : "BLUE SILENCES");
+                lv_label_set_text(alarm_hint_label_, timer_alarm_state_.silenced()
+                                                         ? "SILENCED\nBLUE CLEARS"
+                                                         : "BLUE SILENCES");
             }
         }
         SetReplyLayoutLocked(reply_visible_.load());
@@ -1621,6 +1628,11 @@ public:
         timer_alarm_output_callback_ = std::move(callback);
     }
 
+    // Runs on the Application task after a dismiss gesture cleared the takeover.
+    void SetTimerDismissCallback(std::function<void()> callback) {
+        timer_dismiss_callback_ = std::move(callback);
+    }
+
     void ApplyTimerSnapshot(const ProvisionsTimerSnapshot::Snapshot& snapshot) {
         AlarmOutputChange output_change;
         {
@@ -1635,6 +1647,7 @@ public:
             orbit_snapshot_received_ = true;
             galley_session_id_ = snapshot.session_id;
             timer_snapshot_ = snapshot;
+            HideDismissedTimersLocked();
             if (same_galley_session) {
                 ProvisionsStopwatchOrbit::PreserveAttention(previous_timers,
                                                             timer_snapshot_.timers);
@@ -1661,8 +1674,12 @@ public:
         ApplyAlarmOutputChange(output_change);
     }
 
+    // First blue gesture on a ringing takeover silences it; the next blue
+    // gesture on the silenced takeover dismisses every due timer: the takeover
+    // clears and the motor stops at once, and the gateway is told afterwards.
     bool SilenceTimerAlarm() {
         AlarmOutputChange output_change = AlarmOutputChange::kNone;
+        bool dismissed = false;
         {
             DisplayLockGuard lock(this);
 #if CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO
@@ -1673,20 +1690,64 @@ public:
             if (!timer_alarm_active_.load()) {
                 return false;
             }
-            output_change = timer_alarm_state_.Silence();
-            // An already-silenced due timer stays on the board. It must not
-            // consume every later blue gesture and trap retry/dictation forever.
-            if (output_change != AlarmOutputChange::kStop)
-                return false;
-            if (output_change == AlarmOutputChange::kStop) {
+            if (timer_alarm_state_.silenced()) {
+                // Dismissal removes the takeover, so a silenced timer can no
+                // longer consume every later blue gesture and trap retry/dictation.
+                output_change = DismissDueTimersLocked();
+                dismissed = true;
+            } else {
+                output_change = timer_alarm_state_.Silence();
+                if (output_change != AlarmOutputChange::kStop)
+                    return false;
                 if (alarm_hint_label_ != nullptr) {
-                    lv_label_set_text(alarm_hint_label_, "SILENCED");
+                    lv_label_set_text(alarm_hint_label_, "SILENCED\nBLUE CLEARS");
                 }
             }
 #endif
         }
         ApplyAlarmOutputChange(output_change);
+        if (dismissed && timer_dismiss_callback_)
+            timer_dismiss_callback_();
         return true;
+    }
+
+    // Removes the due timers from the face and remembers them so a snapshot
+    // still in flight cannot bring the takeover back. Caller holds the lock.
+    AlarmOutputChange DismissDueTimersLocked() {
+        const auto due = ProvisionsStopwatchOrbit::FinishedTimers(timer_snapshot_.timers,
+                                                                  EffectiveServerNowMs());
+        for (const auto& timer : due) {
+            if (dismissed_timers_.size() >= ProvisionsTimerSnapshot::kMaximumTimers)
+                dismissed_timers_.erase(dismissed_timers_.begin());
+            dismissed_timers_.push_back({timer.id, timer.deadline_ms});
+        }
+        HideDismissedTimersLocked();
+        return RefreshOrbitLocked();
+    }
+
+    // A dismissed timer is forgotten once a snapshot omits it; one that comes
+    // back with a new deadline (extended or re-armed) is shown again.
+    void HideDismissedTimersLocked() {
+        auto& timers = timer_snapshot_.timers;
+        dismissed_timers_.erase(
+            std::remove_if(dismissed_timers_.begin(), dismissed_timers_.end(),
+                           [&timers](const DismissedTimer& gone) {
+                               return std::none_of(timers.begin(), timers.end(),
+                                                   [&gone](const auto& timer) {
+                                                       return timer.id == gone.id;
+                                                   });
+                           }),
+            dismissed_timers_.end());
+        timers.erase(std::remove_if(timers.begin(), timers.end(),
+                                    [this](const auto& timer) {
+                                        return std::any_of(
+                                            dismissed_timers_.begin(), dismissed_timers_.end(),
+                                            [&timer](const DismissedTimer& gone) {
+                                                return gone.id == timer.id &&
+                                                       gone.deadline_ms == timer.deadline_ms;
+                                            });
+                                    }),
+                     timers.end());
     }
 
     bool HasTimerAlarm() const { return timer_alarm_active_.load(); }
@@ -2348,6 +2409,7 @@ public:
         });
 #endif
 #if !CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO && !CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+        display_->SetTimerDismissCallback([]() { Application::GetInstance().DismissDueTimers(); });
         Application::GetInstance().RegisterProvisionsTimerSnapshotCallback(
             [this](const ProvisionsTimerSnapshot::Update& update) {
                 if (update.kind == ProvisionsTimerSnapshot::Update::Kind::kReset) {

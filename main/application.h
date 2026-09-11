@@ -27,6 +27,7 @@
 #endif
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
 #include "provisions_timer_dial_link.h"
+#include "provisions_timer_dismissal.h"
 #include "provisions_timer_player.h"
 #include "provisions_voice_recorder.h"
 #endif
@@ -101,6 +102,9 @@ public:
     void Alert(const char* status, const char* message, const char* emotion = "",
                const std::string_view& sound = "");
     void DismissAlert();
+    // Blue dismissal of the timer takeover: reports each due ring timer to the
+    // gateway (timers_v1 only). Main task. No-op without local capture.
+    void DismissDueTimers();
 
     void AbortSpeaking(AbortReason reason);
 
@@ -210,6 +214,7 @@ private:
     provisions::timers::NvsStore timer_store_;
     provisions::timers::Player timer_player_{timer_store_};
     provisions::timers::DialLink timer_dial_link_;  // Main task only.
+    provisions::timers::Dismissals timer_dismissals_;  // Acks arrive on the network task.
     void InitializeTimers();
     void ServiceTimers();
     void HandleTimerOutputEnded();
