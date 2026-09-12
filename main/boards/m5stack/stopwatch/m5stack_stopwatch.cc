@@ -30,6 +30,7 @@
 #endif
 #include "assets/lang_config.h"
 #include <algorithm>
+#include <cctype>
 #include <array>
 #include <atomic>
 #include <cstring>
@@ -107,9 +108,15 @@ constexpr uint32_t kColorBlue = 0x9FB8D8;
 constexpr uint32_t kColorAmber = 0xE0A256;
 constexpr uint32_t kColorRed = 0xE07566;
 constexpr uint32_t kColorTalkButton = 0xF2C84B;
+// The app's six timer colours, in its order (PDC slot colours). Slot five used
+// to be a red that sat under an amber collision track: orange on red, the
+// contrast Dennis called out on 12 Sept. Nothing here is red now.
 constexpr std::array<uint32_t, ProvisionsStopwatchOrbit::kMaximumSlots> kOrbitColors = {
-    0xD4B67A, 0x7FBF8F, 0x9FB8D8, 0xC99FD8, 0xE07566, 0x73C7C4,
+    0x6EE7B7, 0x7DD3FC, 0xFDA4AF, 0xFCD34D, 0xC4B5FD, 0xFDBA74,
 };
+// muted #b8af96 at 28% over the black face, as the app draws its track.
+constexpr uint32_t kOrbitTrack = 0x3B3830;
+constexpr uint32_t kOrbitService = 0xDAB560;
 
 class ProvisionsStopwatchAudioCodec final : public Es8311AudioCodec {
 public:
@@ -297,6 +304,9 @@ private:
     std::vector<DismissedTimer> dismissed_timers_;
     std::atomic<int64_t> timer_face_until_us_{0};
     std::vector<std::string> announced_timer_ids_;
+    lv_obj_t* orbit_service_arc_ = nullptr;
+    std::string orbit_service_id_;
+    int64_t orbit_service_first_seen_ms_ = 0;
     // The chord put the timer face away while timers are still running.
     bool timer_face_put_away_ = false;
     std::atomic<bool> new_timer_wake_{false};
@@ -703,9 +713,21 @@ private:
 #if !CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
         ProvisionsStopwatchOrbit::LatchDueTimers(timer_snapshot_.timers, now_ms);
 #endif
-        orbit_slot_board_.Update(timer_snapshot_.timers, now_ms);
-        const auto colliding_ids =
-            ProvisionsStopwatchOrbit::CollidingIds(timer_snapshot_.timers, now_ms);
+        // The service countdown is the outer ring, never a slot - the same
+        // division the app makes.
+        std::vector<ProvisionsTimerSnapshot::Timer> slot_timers;
+        const ProvisionsTimerSnapshot::Timer* service = nullptr;
+        slot_timers.reserve(timer_snapshot_.timers.size());
+        for (const auto& timer : timer_snapshot_.timers) {
+            if (service == nullptr && IsServiceLabel(timer.label)) {
+                service = &timer;
+                continue;
+            }
+            slot_timers.push_back(timer);
+        }
+        RefreshServiceRingLocked(service, now_ms);
+        orbit_slot_board_.Update(slot_timers, now_ms);
+        const auto colliding_ids = ProvisionsStopwatchOrbit::CollidingIds(slot_timers, now_ms);
         const auto& slots = orbit_slot_board_.slots();
         for (std::size_t index = 0; index < slots.size(); ++index) {
             const auto& slot = slots[index];
@@ -720,7 +742,8 @@ private:
             if (!slot.occupied) {
                 lv_arc_set_value(objects.arc, 0);
                 lv_obj_set_style_arc_color(objects.arc, lv_color_hex(0x252525), LV_PART_MAIN);
-                lv_obj_set_style_arc_color(objects.arc, lv_color_hex(0x252525), LV_PART_INDICATOR);
+                lv_obj_set_style_arc_color(objects.arc, lv_color_hex(0x252525),
+                                           LV_PART_INDICATOR);
                 lv_obj_set_style_arc_width(objects.arc, 6, LV_PART_MAIN);
                 lv_label_set_text(objects.label, "+");
                 lv_obj_set_style_text_color(objects.label, lv_color_hex(0x555555), 0);
@@ -736,13 +759,18 @@ private:
 #endif
             const bool colliding = std::find(colliding_ids.begin(), colliding_ids.end(),
                                              slot.timer.id) != colliding_ids.end();
-            const uint32_t color = finished ? kColorRed : kOrbitColors[index];
-            const int arc_value = static_cast<int>(
-                ProvisionsStopwatchOrbit::RemainingFraction(slot, now_ms) * 1000.0F);
+            // A finished timer keeps its own colour and shows an empty ring:
+            // the app draws track only when a timer is ringing, and the word
+            // DONE carries the meaning. A collision widens the track instead
+            // of tinting it, so no two hues ever sit on each other.
+            const uint32_t color = kOrbitColors[index];
+            const int arc_value =
+                finished ? 0
+                         : static_cast<int>(
+                               ProvisionsStopwatchOrbit::RemainingFraction(slot, now_ms) * 1000.0F);
             lv_arc_set_value(objects.arc, arc_value);
             lv_obj_set_style_arc_color(objects.arc, lv_color_hex(color), LV_PART_INDICATOR);
-            lv_obj_set_style_arc_color(
-                objects.arc, lv_color_hex(colliding ? kColorAmber : 0x303030), LV_PART_MAIN);
+            lv_obj_set_style_arc_color(objects.arc, lv_color_hex(kOrbitTrack), LV_PART_MAIN);
             lv_obj_set_style_arc_width(objects.arc, colliding ? 10 : 6, LV_PART_MAIN);
             lv_label_set_text(objects.label, slot.timer.label.c_str());
             lv_obj_set_style_text_color(objects.label, lv_color_hex(kColorCream), 0);
@@ -881,6 +909,45 @@ private:
         ApplyAlarmOutputChange(output_change);
     }
 
+    static bool IsServiceLabel(const std::string& label) {
+        if (label.size() != 7) {
+            return false;
+        }
+        static constexpr char kService[] = "service";
+        for (std::size_t index = 0; index < 7; ++index) {
+            if (std::tolower(static_cast<unsigned char>(label[index])) != kService[index]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void RefreshServiceRingLocked(const ProvisionsTimerSnapshot::Timer* service, int64_t now_ms) {
+        if (orbit_service_arc_ == nullptr) {
+            return;
+        }
+        SetVisible(orbit_service_arc_, service != nullptr);
+        if (service == nullptr) {
+            return;
+        }
+        ProvisionsStopwatchOrbit::Slot slot;
+        slot.occupied = true;
+        slot.timer = *service;
+        slot.first_seen_ms = orbit_service_first_seen_ms_;
+        if (orbit_service_id_ != service->id) {
+            orbit_service_id_ = service->id;
+            orbit_service_first_seen_ms_ = now_ms;
+            slot.first_seen_ms = now_ms;
+        }
+        const bool due = service->status == ProvisionsTimerSnapshot::TimerStatus::kAttention ||
+                         service->deadline_ms <= now_ms;
+        const int value =
+            due ? 0
+                : static_cast<int>(ProvisionsStopwatchOrbit::RemainingFraction(slot, now_ms) *
+                                   1000.0F);
+        lv_arc_set_value(orbit_service_arc_, value);
+    }
+
     void CreateOrbitUiLocked(lv_obj_t* screen) {
         orbit_layer_ = lv_obj_create(screen);
         lv_obj_set_size(orbit_layer_, ProvisionsStopwatchOrbit::kDisplaySize,
@@ -892,6 +959,24 @@ private:
         lv_obj_set_style_bg_opa(orbit_layer_, LV_OPA_COVER, 0);
         lv_obj_clear_flag(orbit_layer_, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_center(orbit_layer_);
+
+        // Service runs on the outside in gold, as it does in the app.
+        orbit_service_arc_ = lv_arc_create(orbit_layer_);
+        lv_obj_set_size(orbit_service_arc_, ProvisionsStopwatchOrbit::kDisplaySize - 10,
+                        ProvisionsStopwatchOrbit::kDisplaySize - 10);
+        lv_obj_center(orbit_service_arc_);
+        lv_arc_set_rotation(orbit_service_arc_, 270);
+        lv_arc_set_bg_angles(orbit_service_arc_, 0, 360);
+        lv_arc_set_range(orbit_service_arc_, 0, 1000);
+        lv_arc_set_value(orbit_service_arc_, 1000);
+        lv_obj_remove_style(orbit_service_arc_, nullptr, LV_PART_KNOB);
+        lv_obj_clear_flag(orbit_service_arc_, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_arc_width(orbit_service_arc_, 7, LV_PART_MAIN);
+        lv_obj_set_style_arc_width(orbit_service_arc_, 7, LV_PART_INDICATOR);
+        lv_obj_set_style_arc_color(orbit_service_arc_, lv_color_hex(kOrbitTrack), LV_PART_MAIN);
+        lv_obj_set_style_arc_color(orbit_service_arc_, lv_color_hex(kOrbitService),
+                                   LV_PART_INDICATOR);
+        SetVisible(orbit_service_arc_, false);
 
         for (std::size_t index = 0; index < orbit_slot_objects_.size(); ++index) {
             const auto center = ProvisionsStopwatchOrbit::SlotCenter(static_cast<int>(index));

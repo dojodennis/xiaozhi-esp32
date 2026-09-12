@@ -316,6 +316,28 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("SetVisible(alarm_layer_, show_alarm)", reply_layout)
         self.assertNotIn("LV_ANIM_REPEAT_INFINITE", source)
 
+    def test_the_dial_uses_the_app_palette_and_keeps_service_outside(self):
+        source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
+        palette = source.split("kOrbitColors = {", 1)[1].split("}", 1)[0]
+        # The app's six colours, and nothing red: slot five used to be a red
+        # arc under an amber collision track.
+        for colour in ("0x6EE7B7", "0x7DD3FC", "0xFDA4AF", "0xFCD34D", "0xC4B5FD", "0xFDBA74"):
+            self.assertIn(colour, palette)
+        self.assertNotIn("0xE07566", palette)
+        refresh = source.split("AlarmOutputChange RefreshOrbitLocked() {", 1)[1].split(
+            "\n    }", 1)[0]
+        self.assertIn("IsServiceLabel(timer.label)", refresh)
+        self.assertIn("RefreshServiceRingLocked(service, now_ms)", refresh)
+        self.assertIn("orbit_slot_board_.Update(slot_timers, now_ms)", refresh)
+        # A finished timer empties its own ring rather than turning red.
+        self.assertIn("const uint32_t color = kOrbitColors[index]", refresh)
+        self.assertIn("lv_color_hex(kOrbitTrack), LV_PART_MAIN", refresh)
+        self.assertNotIn("kColorRed", refresh)
+        self.assertNotIn("kColorAmber", refresh)
+        service = source.split("void RefreshServiceRingLocked", 1)[1].split("\n    }", 1)[0]
+        self.assertIn("SetVisible(orbit_service_arc_, service != nullptr)", service)
+        self.assertIn("kOrbitService", source)
+
     def test_a_running_timer_keeps_the_dial_as_the_resting_face(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
         gate = source.split("bool ShouldShowOrbitLocked() const {", 1)[1].split(
