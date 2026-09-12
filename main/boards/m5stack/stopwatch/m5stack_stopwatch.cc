@@ -2164,6 +2164,16 @@ private:
         };
         ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_bus_cfg, &i2c_bus_));
 
+        // One-off probe: config.h declares a CST820B touch panel at 0x15 that
+        // no code drives yet. Whether it answers on this bus is the one fact a
+        // touch driver needs and cannot be established from source. Reads
+        // nothing, changes no behaviour.
+        {
+            const esp_err_t touch_probe = i2c_master_probe(i2c_bus_, 0x15, 100);
+            ESP_LOGI(TAG, "provisions touch probe addr=0x15 result=%s",
+                     touch_probe == ESP_OK ? "present" : esp_err_to_name(touch_probe));
+        }
+
         if (ioe_.begin(i2c_bus_, M5IOE1_I2C_ADDR, M5IOE1_I2C_FREQ_100K, M5IOE1_INT_MODE_POLLING) != M5IOE1_OK) {
             ESP_LOGE(TAG, "M5IOE1 begin failed");
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED

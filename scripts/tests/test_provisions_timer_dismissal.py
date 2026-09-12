@@ -39,6 +39,10 @@ class ProvisionsTimerDismissalTests(unittest.TestCase):
         self.assertIn("TimersNegotiated()", dismiss)
         self.assertIn("timer_dismissals_.Dismiss(", dismiss)
         self.assertIn("esp_fill_random", dismiss)
+        # The takeover only covered the face; dismissal must repaint it, or a
+        # status frozen before the alarm ("Please try again") is uncovered.
+        self.assertIn("GetDeviceState() == kDeviceStateIdle", dismiss)
+        self.assertIn("SetStatus(GetProvisionsIdleStatus())", dismiss)
 
         silence = board.split("bool SilenceTimerAlarm()", 1)[1].split("bool HasTimerAlarm()", 1)[0]
         self.assertIn("timer_alarm_state_.silenced()", silence)

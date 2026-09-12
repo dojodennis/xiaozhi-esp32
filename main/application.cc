@@ -3024,6 +3024,12 @@ void Application::DismissDueTimers() {
     ESP_LOGI(TAG, "Timer dismiss gesture: %u due timer(s) reported", static_cast<unsigned>(count));
     if (count > 0)
         ServiceTimers();
+    // The takeover only covered the face underneath it. Uncovering a status
+    // frozen before the alarm (a lost stop frame, or a fault since cleared)
+    // left the ring on "Please try again" after every dismissal, so the
+    // resting face is recomputed and repainted here instead of revealed.
+    if (GetDeviceState() == kDeviceStateIdle)
+        Board::GetInstance().GetDisplay()->SetStatus(GetProvisionsIdleStatus());
 }
 #else
 void Application::NoteTalkPressDown(int64_t) {}
