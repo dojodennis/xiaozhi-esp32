@@ -296,6 +296,8 @@ private:
     std::vector<DismissedTimer> dismissed_timers_;
     std::atomic<int64_t> timer_face_until_us_{0};
     std::vector<std::string> announced_timer_ids_;
+    // The chord put the timer face away while timers are still running.
+    bool timer_face_put_away_ = false;
     std::atomic<bool> new_timer_wake_{false};
     std::function<void()> timer_dismiss_callback_;
     std::function<void(bool)> timer_alarm_output_callback_;
@@ -578,8 +580,26 @@ private:
         if (TimerFaceForced()) {
             return true;
         }
-        return orbit_snapshot_received_ && !receipt_visible_.load() &&
-               resting_state_.load() == VisualState::kReady;
+        if (receipt_visible_.load()) {
+            return false;
+        }
+        // A running timer owns the resting face until it is gone or the chef
+        // puts it away with the chord: a countdown that vanishes after 30 s is
+        // not a timer you can trust (Dennis, 12 Sept).
+        if (!timer_face_put_away_ && HasLiveTimerLocked()) {
+            return true;
+        }
+        return orbit_snapshot_received_ && resting_state_.load() == VisualState::kReady;
+    }
+
+    bool HasLiveTimerLocked() const {
+        for (const auto& timer : timer_snapshot_.timers) {
+            if (timer.status == ProvisionsTimerSnapshot::TimerStatus::kActive ||
+                timer.status == ProvisionsTimerSnapshot::TimerStatus::kAttention) {
+                return true;
+            }
+        }
+        return false;
     }
 
     bool TimerFaceForced() const { return timer_face_until_us_.load() > esp_timer_get_time(); }
@@ -1690,6 +1710,7 @@ public:
                 }
             }
             if (new_timer) {
+                timer_face_put_away_ = false;
                 timer_face_until_us_.store(esp_timer_get_time() + kTimerFaceIdleUs);
                 new_timer_wake_.store(true);
                 SetReplyLayoutLocked(reply_visible_.load());
@@ -1709,6 +1730,7 @@ public:
         {
             DisplayLockGuard lock(this);
             orbit_snapshot_received_ = false;
+            timer_face_put_away_ = false;
             timer_alarm_active_.store(false);
             snapshot_received_monotonic_ms_ = 0;
             galley_session_id_.clear();
@@ -1808,7 +1830,8 @@ public:
         AlarmOutputChange output_change;
         {
             DisplayLockGuard lock(this);
-            const bool showing = TimerFaceForced();
+            const bool showing = TimerFaceForced() || (!timer_face_put_away_ && HasLiveTimerLocked());
+            timer_face_put_away_ = showing;
             timer_face_until_us_.store(showing ? 0 : esp_timer_get_time() + kTimerFaceIdleUs);
             output_change = RefreshOrbitLocked();
             SetReplyLayoutLocked(reply_visible_.load());

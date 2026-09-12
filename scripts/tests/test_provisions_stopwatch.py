@@ -316,6 +316,19 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("SetVisible(alarm_layer_, show_alarm)", reply_layout)
         self.assertNotIn("LV_ANIM_REPEAT_INFINITE", source)
 
+    def test_a_running_timer_keeps_the_dial_as_the_resting_face(self):
+        source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
+        gate = source.split("bool ShouldShowOrbitLocked() const {", 1)[1].split(
+            "bool HasLiveTimerLocked", 1)[0]
+        self.assertIn("!timer_face_put_away_ && HasLiveTimerLocked()", gate)
+        live = source.split("bool HasLiveTimerLocked() const {", 1)[1].split("\n    }", 1)[0]
+        self.assertIn("TimerStatus::kActive", live)
+        self.assertIn("TimerStatus::kAttention", live)
+        toggle = source.split("void ToggleTimerFace()", 1)[1].split("\n    }", 1)[0]
+        self.assertIn("timer_face_put_away_ = showing", toggle)
+        reset = source.split("void ResetTimerSnapshot()", 1)[1].split("\n    }", 1)[0]
+        self.assertIn("timer_face_put_away_ = false", reset)
+
     def test_provisions_new_timer_brings_dial_forward_over_reply(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
         apply = source.split("void ApplyTimerSnapshot", 1)[1].split("void ResetTimerSnapshot", 1)[0]
