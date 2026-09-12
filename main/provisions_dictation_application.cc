@@ -195,6 +195,15 @@ void Application::ServiceDictation() {
             ++pending;
     status += "\n" + std::to_string(r.count) + "/60 segments, " + std::to_string(pending) +
               " pending\nNote / UTC";
-    Board::GetInstance().GetDisplay()->SetDictationScreen(dictation_screen_.load(), status, action);
+    const bool dictation_visible = dictation_screen_.load();
+    Board::GetInstance().GetDisplay()->SetDictationScreen(dictation_visible, status, action);
+    // Closing the dictation panel only un-hides the face beneath it, which is
+    // whatever was last painted - often a stale "Please try again" from an
+    // earlier turn. Recompute the resting face on the way out, exactly as a
+    // timer dismissal does.
+    static bool dictation_was_visible = false;
+    if (dictation_was_visible && !dictation_visible && GetDeviceState() == kDeviceStateIdle)
+        Board::GetInstance().GetDisplay()->SetStatus(GetProvisionsIdleStatus());
+    dictation_was_visible = dictation_visible;
 }
 #endif

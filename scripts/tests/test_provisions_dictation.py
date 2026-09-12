@@ -95,6 +95,16 @@ void receipt_no_authority(){NvsStore s;Journal j(s);assert(j.Initialize());asser
 int main(){reset();cycle();reset();pending_stop();reset();bounds();compact_corruption();reset();faults();reset();receipt_no_authority();wire_rejections();std::cout<<"Dictation durable controls, CAS, reservations, restart and receipt authority passed\n";}
 '''
 class DictationTests(unittest.TestCase):
+    def test_closing_the_dictation_screen_repaints_the_resting_face(self):
+        # Hiding the panel only reveals the face underneath, so a stale
+        # "Please try again" survived every visit to dictation.
+        source = (ROOT / "main/provisions_dictation_application.cc").read_text(encoding="utf-8")
+        service = source.split("void Application::ServiceDictation()", 1)[1]
+        self.assertIn("SetDictationScreen(dictation_visible, status, action)", service)
+        self.assertIn("dictation_was_visible && !dictation_visible", service)
+        self.assertIn("GetDeviceState() == kDeviceStateIdle", service)
+        self.assertIn("SetStatus(GetProvisionsIdleStatus())", service)
+
     def test_actual_journal_nvs_and_wire(self):
         cjson = ROOT / 'managed_components/espressif__cjson/cJSON'
         with tempfile.TemporaryDirectory(prefix='orbit-dictation-') as folder:
