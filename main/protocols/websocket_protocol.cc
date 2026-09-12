@@ -1,3 +1,4 @@
+#include "provisions_hardware_facts.h"
 #include "websocket_protocol.h"
 #include "application.h"
 #include "board.h"
@@ -686,6 +687,21 @@ std::string WebsocketProtocol::GetHelloMessage() {
     cJSON_AddBoolToObject(features, "mcp", true);
 #endif
     cJSON_AddItemToObject(root, "features", features);
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    {
+        const auto touch = provisions::hardware::TouchProbe();
+        const int mic_ready = provisions::hardware::MicReadyMs();
+        if (!touch.empty() || mic_ready >= 0) {
+            cJSON* facts = cJSON_AddObjectToObject(root, "hardware");
+            if (facts != nullptr) {
+                if (!touch.empty())
+                    cJSON_AddStringToObject(facts, "touch", touch.c_str());
+                if (mic_ready >= 0)
+                    cJSON_AddNumberToObject(facts, "mic_ready_ms", mic_ready);
+            }
+        }
+    }
+#endif
     AddTextFontCapabilities(root);
     cJSON_AddStringToObject(root, "transport", "websocket");
     cJSON* audio_params = cJSON_CreateObject();

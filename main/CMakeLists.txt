@@ -909,7 +909,8 @@ if(PROVISIONS_STOPWATCH_PROFILE)
             "provisions_dictation_application.cc"
             "provisions_voice_wire.cc" "protocols/provisions_websocket.cc"
             "provisions_timers.cc" "provisions_timer_store.cc" "provisions_timer_player.cc"
-            "provisions_timer_dial_link.cc" "provisions_timer_dismissal.cc")
+            "provisions_timer_dial_link.cc" "provisions_timer_dismissal.cc"
+            "provisions_hardware_facts.cc")
     endif()
 endif()
 

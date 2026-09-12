@@ -1,3 +1,4 @@
+#include "provisions_hardware_facts.h"
 #include "provisions_voice_recorder.h"
 #include <esp_heap_caps.h>
 #include <esp_timer.h>
@@ -339,6 +340,8 @@ void VoiceRecorder::Save(const VoiceRecording::Work& work) {
             work.press == timing_press_.load() && first_chunk > 0 && pressed > 0
                 ? (first_chunk - pressed) / 1000
                 : -1;
+        if (press_to_chunk_ms >= 0)
+            hardware::NoteMicReadyMs(static_cast<int>(press_to_chunk_ms));
         const auto line =
             DescribeCapture(work.press, ok, work.samples, work.levels, bytes, press_to_chunk_ms);
 #ifdef ESP_PLATFORM

@@ -15,6 +15,7 @@
 #include "button_chord.h"
 #include "orbit_dial.h"
 #include "provisions_local_capture_feedback.h"
+#include "provisions_hardware_facts.h"
 #include "provisions_timer_snapshot.h"
 #include "utf8_ellipsis.h"
 #if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
@@ -2210,8 +2211,9 @@ private:
         // nothing, changes no behaviour.
         {
             const esp_err_t touch_probe = i2c_master_probe(i2c_bus_, 0x15, 100);
-            ESP_LOGI(TAG, "provisions touch probe addr=0x15 result=%s",
-                     touch_probe == ESP_OK ? "present" : esp_err_to_name(touch_probe));
+            const char* result = touch_probe == ESP_OK ? "present" : esp_err_to_name(touch_probe);
+            ESP_LOGI(TAG, "provisions touch probe addr=0x15 result=%s", result);
+            provisions::hardware::SetTouchProbe(result);
         }
 
         if (ioe_.begin(i2c_bus_, M5IOE1_I2C_ADDR, M5IOE1_I2C_FREQ_100K, M5IOE1_INT_MODE_POLLING) != M5IOE1_OK) {
