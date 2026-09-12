@@ -17,8 +17,10 @@ namespace provisions::timers {
 class DialLink {
 public:
     // Returns true when `update` must be delivered to the dial consumer. An
-    // unchanged snapshot never repaints; losing the timers, the session or the
-    // trusted clock yields exactly one kReset.
+    // unchanged snapshot never repaints. Exactly one kReset is emitted when a
+    // LIVE session reports no timers; losing the session, the negotiation or
+    // the trusted clock leaves the dial exactly as it is, because a countdown
+    // that survives a reconnect is worth more than one that blanks.
     bool Reconcile(const Snapshot& snapshot, const std::string& session, bool negotiated,
                    int64_t trusted_now_ms, ProvisionsTimerSnapshot::Update& update);
 

@@ -2,9 +2,17 @@
 namespace provisions::timers {
 bool DialLink::Reconcile(const Snapshot& snapshot, const std::string& session, bool negotiated,
                          int64_t trusted_now_ms, ProvisionsTimerSnapshot::Update& update) {
-    const bool eligible = negotiated && !session.empty() && snapshot.session_id == session &&
-                          !snapshot.timers.empty() && trusted_now_ms > 0;
-    if (!eligible) {
+    // A live, negotiated session is the only authority that may empty the dial.
+    // Losing the socket used to clear it, so a six-second reconnect blanked
+    // three running timers mid-countdown (Dennis, 12 Sept). The ring rings from
+    // its own list, so the countdown stays on screen while the link is down and
+    // corrects within a second of reconnecting.
+    const bool live = negotiated && !session.empty() && snapshot.session_id == session &&
+                      trusted_now_ms > 0;
+    if (!live) {
+        return false;
+    }
+    if (snapshot.timers.empty()) {
         if (!applied_)
             return false;
         applied_ = false;

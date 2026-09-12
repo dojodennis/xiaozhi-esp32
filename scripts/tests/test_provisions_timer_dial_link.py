@@ -122,7 +122,7 @@ class ProvisionsTimerDialLinkTests(unittest.TestCase):
                 assert(consumer.received.back().snapshot.timers.size() == 1);
                 assert(consumer.received.back().snapshot.timers[0].id == "t2");
 
-                // An empty snapshot yields exactly one reset, then silence.
+                // Only a LIVE session may empty the dial: one reset, then silence.
                 Snapshot empty;
                 empty.session_id = kSession;
                 assert(consumer.Tick(empty, kSession, true, kNow + 5000));
@@ -139,26 +139,36 @@ class ProvisionsTimerDialLinkTests(unittest.TestCase):
                 assert(!idle.Tick(snapshot, kSession, true, 0));
                 assert(idle.received.empty());
 
-                // Applied, then a session change resets once and the next session
-                // restarts the revision sequence.
+                // A reconnect must NOT blank a running countdown: while the
+                // transport is away the dial keeps what it has, and the new
+                // session repaints it with a restarted revision sequence.
                 Consumer roaming;
                 assert(roaming.Tick(snapshot, kSession, true, kNow));
-                assert(roaming.Tick(snapshot, "other", true, kNow));
-                assert(roaming.received.back().kind == Update::Kind::kReset);
+                assert(roaming.received.size() == 1);
+                assert(!roaming.Tick(snapshot, "other", true, kNow));
+                assert(!roaming.Tick(snapshot, "", true, kNow));
+                assert(!roaming.Tick(snapshot, kSession, false, kNow));
+                assert(!roaming.Tick(snapshot, kSession, true, 0));
+                assert(roaming.received.size() == 1);
                 snapshot.session_id = "other";
                 assert(roaming.Tick(snapshot, "other", true, kNow));
                 assert(roaming.received.back().kind == Update::Kind::kSnapshot);
                 assert(roaming.received.back().snapshot.session_id == "other");
                 assert(roaming.received.back().snapshot.revision == 1);
 
-                // Losing negotiation or the trusted clock while applied resets once.
+                // Losing negotiation or the trusted clock leaves the countdown
+                // on screen: the ring rings from its own list, and a dial that
+                // blanks on every reconnect cannot be trusted.
                 Consumer dropped;
                 assert(dropped.Tick(snapshot, "other", true, kNow));
-                assert(dropped.Tick(snapshot, "other", false, kNow));
-                assert(dropped.received.back().kind == Update::Kind::kReset);
+                assert(dropped.received.size() == 1);
                 assert(!dropped.Tick(snapshot, "other", false, kNow));
-                assert(dropped.Tick(snapshot, "other", true, kNow));
-                assert(dropped.Tick(snapshot, "other", true, 0));
+                assert(!dropped.Tick(snapshot, "other", true, 0));
+                assert(dropped.received.size() == 1);
+                // The live session is still the authority that empties it.
+                Snapshot cleared;
+                cleared.session_id = "other";
+                assert(dropped.Tick(cleared, "other", true, kNow));
                 assert(dropped.received.back().kind == Update::Kind::kReset);
                 return 0;
             }
