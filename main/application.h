@@ -202,7 +202,10 @@ private:
     // listening window so a chef with full hands can say "stop". The capture is
     // command-only (see VoiceCaptureStart's alarm_stop flag) and is never
     // deferred: if it cannot go now, it is not worth sending later.
+    // The press an alarm window opened. It stays set until the ring falls
+    // silent, because the capture is uploaded after the window has closed.
     std::atomic<uint32_t> alarm_listen_press_{0};
+    std::atomic<uint32_t> alarm_listen_open_press_{0};
     int64_t alarm_listen_close_us_ = 0;
     int64_t alarm_listen_next_us_ = 0;
     int alarm_listen_attempts_ = 0;

@@ -3032,10 +3032,13 @@ void Application::ServiceAlarmListening(bool ringing, bool ready, int64_t now_us
     constexpr int64_t kSpacingUs = 6LL * 1000 * 1000;
     constexpr int kMaxWindows = 6;
     auto* display = Board::GetInstance().GetDisplay();
-    const uint32_t open_press = alarm_listen_press_.load();
+    const uint32_t open_press = alarm_listen_open_press_.load();
     if (open_press != 0 && (now_us >= alarm_listen_close_us_ || !ringing ||
                             provisions_physical_press_.id() != open_press)) {
-        alarm_listen_press_.store(0);
+        // Only the window closes here. The press stays tagged as an alarm stop
+        // until the ring falls silent: the capture is uploaded after the window
+        // has gone, and an untagged capture is refused while a timer rings.
+        alarm_listen_open_press_.store(0);
         alarm_listen_close_us_ = 0;
         display->PauseTimerAlarmOutput(false);
         if (manual_listening_requested_.load() && provisions_physical_press_.id() == open_press)
@@ -3046,6 +3049,7 @@ void Application::ServiceAlarmListening(bool ringing, bool ready, int64_t now_us
         alarm_listen_attempts_ = 0;
         alarm_listen_next_us_ = 0;
         alarm_listen_blocked_logged_ = false;
+        alarm_listen_press_.store(0);
         return;
     }
     if (open_press != 0 || alarm_listen_attempts_ >= kMaxWindows)
@@ -3078,6 +3082,7 @@ void Application::ServiceAlarmListening(bool ringing, bool ready, int64_t now_us
         return;
     }
     alarm_listen_press_.store(press);
+    alarm_listen_open_press_.store(press);
     alarm_listen_close_us_ = now_us + kWindowUs;
     alarm_listen_next_us_ = now_us + kWindowUs + kSpacingUs;
     ++alarm_listen_attempts_;
