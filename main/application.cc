@@ -1736,7 +1736,12 @@ void Application::HandleVoiceRecordingResult(provisions::VoiceRecorder::Result r
 }
 
 void Application::SendVoiceRecording(std::shared_ptr<const provisions::VoiceReplay> replay) {
-    if (timer_player_.Fenced())
+    // An alarm-stop capture is exempt from the timer fence: the fence exists to
+    // keep ordinary traffic off the air while an alarm owns the slot, and this
+    // capture is the one utterance that can end it.
+    const bool alarm_stop =
+        replay && replay->press != 0 && replay->press == alarm_listen_press_.load();
+    if (timer_player_.Fenced() && !alarm_stop)
         return;
     auto protocol = GetProtocol();
     if (!protocol || !protocol->IsAudioChannelOpened() || manual_listening_requested_.load() ||
@@ -1758,8 +1763,10 @@ void Application::SendVoiceRecording(std::shared_ptr<const provisions::VoiceRepl
         std::shared_ptr<const provisions::VoiceReplay> replay;
         uint32_t physical;
         bool deferred;
+        bool alarm_stop;
     };
-    auto* work = new (std::nothrow) Upload{this, protocol, std::move(replay), physical, deferred};
+    auto* work =
+        new (std::nothrow) Upload{this, protocol, std::move(replay), physical, deferred, alarm_stop};
     if (!work ||
         xTaskCreate(
             [](void* argument) {
@@ -1773,7 +1780,8 @@ void Application::SendVoiceRecording(std::shared_ptr<const provisions::VoiceRepl
                                 return !app->manual_listening_requested_.load() &&
                                        app->provisions_physical_press_.id() == physical &&
                                        app->GetProtocol() == protocol;
-                            });
+                            },
+                            work->alarm_stop);
                 app->Schedule([app, protocol = work->protocol, physical = work->physical, sent]() {
                     app->provisions_network_busy_.store(false);
                     if (app->GetProtocol() != protocol)
@@ -2985,6 +2993,15 @@ void Application::ServiceTimers() {
     // timer_snapshot frame. While timers are negotiated the player-derived
     // update is the dial's only source (see the timer_snapshot gate); the link
     // repaints only when the timer set actually changed.
+    bool ringing = false;
+    for (const auto& timer : snapshot.timers) {
+        if (timer.deadline_ms > 0 && trusted_now_ms > 0 && timer.deadline_ms <= trusted_now_ms) {
+            ringing = true;
+            break;
+        }
+    }
+    ServiceAlarmListening(ringing && negotiated && snapshot.session_id == session, ready,
+                          esp_timer_get_time());
     ProvisionsTimerSnapshot::Update update;
     if (timer_dial_link_.Reconcile(snapshot, session, negotiated, trusted_now_ms, update))
         Schedule([this, update = std::move(update)]() {
@@ -2996,6 +3013,55 @@ void Application::ServiceTimers() {
             if (callback)
                 callback(update);
         });
+}
+
+// Hands-free stop. While a timer rings, open a short listening window so the
+// chef can say "stop" without touching the ring: three windows of 3 s, six
+// seconds apart, then silence — a ring that listens for the whole alarm would
+// hold the radio at full clock and fill the capture slots with kitchen noise.
+// The motor is quiet for the duration; a press still works throughout.
+void Application::ServiceAlarmListening(bool ringing, bool ready, int64_t now_us) {
+    constexpr int64_t kWindowUs = 3LL * 1000 * 1000;
+    constexpr int64_t kSpacingUs = 6LL * 1000 * 1000;
+    constexpr int kMaxWindows = 3;
+    auto* display = Board::GetInstance().GetDisplay();
+    const uint32_t open_press = alarm_listen_press_.load();
+    if (open_press != 0 && (now_us >= alarm_listen_close_us_ || !ringing ||
+                            provisions_physical_press_.id() != open_press)) {
+        alarm_listen_press_.store(0);
+        alarm_listen_close_us_ = 0;
+        display->PauseTimerAlarmOutput(false);
+        if (manual_listening_requested_.load() && provisions_physical_press_.id() == open_press)
+            StopListening();
+        return;
+    }
+    if (!ringing) {
+        alarm_listen_attempts_ = 0;
+        alarm_listen_next_us_ = 0;
+        return;
+    }
+    if (open_press != 0 || alarm_listen_attempts_ >= kMaxWindows)
+        return;
+    if (alarm_listen_next_us_ != 0 && now_us < alarm_listen_next_us_)
+        return;
+    if (!ready || manual_listening_requested_.load())
+        return;
+    const auto protocol = GetProtocol();
+    if (!protocol || !protocol->IsAudioChannelOpened() || !has_server_time_.load())
+        return;
+    display->PauseTimerAlarmOutput(true);
+    StartListening();
+    const uint32_t press = provisions_physical_press_.id();
+    if (press == 0 || !manual_listening_requested_.load()) {
+        display->PauseTimerAlarmOutput(false);
+        return;
+    }
+    alarm_listen_press_.store(press);
+    alarm_listen_close_us_ = now_us + kWindowUs;
+    alarm_listen_next_us_ = now_us + kWindowUs + kSpacingUs;
+    ++alarm_listen_attempts_;
+    ESP_LOGI(TAG, "alarm listening window %d/%d press=%u", alarm_listen_attempts_, kMaxWindows,
+             static_cast<unsigned>(press));
 }
 
 void Application::NoteTalkPressDown(int64_t now_us) {

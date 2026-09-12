@@ -897,7 +897,7 @@ bool WebsocketProtocol::AcceptCaptureContext(const provisions::VoiceContext& con
     return true;
 }
 bool WebsocketProtocol::SendStoredRecording(const provisions::VoiceReplay& replay, bool deferred,
-                                            const std::function<bool()>& current) {
+                                            const std::function<bool()>& current, bool alarm_stop) {
     if (replay.capture.IsDictation() && (!deferred || !DictationNegotiated()))
         return false;
     if (!BeginOperation())
@@ -918,7 +918,7 @@ bool WebsocketProtocol::SendStoredRecording(const provisions::VoiceReplay& repla
     };
     bool started = false;
     if (ok) {
-        const auto start = provisions::VoiceCaptureStart(replay, session, turn, deferred);
+        const auto start = provisions::VoiceCaptureStart(replay, session, turn, deferred, alarm_stop);
         ok = !start.empty() && still_current() && SendText(start);
         started = ok;
     }

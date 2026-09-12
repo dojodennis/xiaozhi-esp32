@@ -301,6 +301,7 @@ private:
     std::atomic<bool> new_timer_wake_{false};
     std::function<void()> timer_dismiss_callback_;
     std::function<void(bool)> timer_alarm_output_callback_;
+    bool alarm_output_paused_ = false;
 #if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
     int64_t bench_clock_ms_ = 0;
     bool bench_clock_trusted_ = false;
@@ -841,7 +842,23 @@ private:
         return output_change;
     }
 
+    void PauseTimerAlarmOutput(bool paused) override {
+        if (timer_alarm_output_callback_ == nullptr) {
+            return;
+        }
+        if (paused == alarm_output_paused_) {
+            return;
+        }
+        alarm_output_paused_ = paused;
+        // Only the output is paused; timer_alarm_state_ still says ringing, so
+        // the takeover stays up and the alarm resumes when the window closes.
+        timer_alarm_output_callback_(!paused && timer_alarm_active_.load());
+    }
+
     void ApplyAlarmOutputChange(AlarmOutputChange change) {
+        if (alarm_output_paused_ && change == AlarmOutputChange::kStart) {
+            return;
+        }
         if (timer_alarm_output_callback_ == nullptr || change == AlarmOutputChange::kNone) {
             return;
         }

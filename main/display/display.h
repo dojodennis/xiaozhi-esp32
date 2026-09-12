@@ -41,6 +41,9 @@ public:
     virtual void SetChatMessage(const char* role, const char* content);
     virtual void ClearChatMessages();
     virtual void SetTimerText(const std::string& text) {}
+    // Quiet the alarm's own output (motor) without settling the timer, so a
+    // hands-free listening window is not recorded through a buzzing case.
+    virtual void PauseTimerAlarmOutput(bool paused) {}
     virtual void SetDictationScreen(bool visible, const std::string& status,
                                     const std::string& action) {}
     virtual void ShowLocalCaptureReceipt(int duration_ms = 1800) {

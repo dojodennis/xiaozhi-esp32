@@ -54,7 +54,7 @@ public:
     bool AcceptCaptureContext(const provisions::VoiceContext& context, bool reassignment = false);
     // Run on the application's bounded network task, never the button/audio task.
     bool SendStoredRecording(const provisions::VoiceReplay& replay, bool deferred,
-                             const std::function<bool()>& current);
+                             const std::function<bool()>& current, bool alarm_stop = false);
     void InterruptStoredRecording();
     bool IsTransportBusy() const { return operation_owner_.load() != nullptr; }
 #endif

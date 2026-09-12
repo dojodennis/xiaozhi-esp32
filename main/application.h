@@ -198,6 +198,15 @@ private:
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     ProvisionsReplyTurn provisions_physical_press_;
     std::atomic<uint32_t> provisions_capture_press_{0};
+    // Hands-free stop: while a timer rings, the ring opens its own short
+    // listening window so a chef with full hands can say "stop". The capture is
+    // command-only (see VoiceCaptureStart's alarm_stop flag) and is never
+    // deferred: if it cannot go now, it is not worth sending later.
+    std::atomic<uint32_t> alarm_listen_press_{0};
+    int64_t alarm_listen_close_us_ = 0;
+    int64_t alarm_listen_next_us_ = 0;
+    int alarm_listen_attempts_ = 0;
+    void ServiceAlarmListening(bool ringing, bool ready, int64_t now_us);
     bool ProvisionsReplyInterrupted() const {
         return !provisions_physical_press_.IsCurrent(provisions_capture_press_.load());
     }
