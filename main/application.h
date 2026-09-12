@@ -206,6 +206,7 @@ private:
     int64_t alarm_listen_close_us_ = 0;
     int64_t alarm_listen_next_us_ = 0;
     int alarm_listen_attempts_ = 0;
+    bool alarm_listen_blocked_logged_ = false;
     void ServiceAlarmListening(bool ringing, bool ready, int64_t now_us);
     bool ProvisionsReplyInterrupted() const {
         return !provisions_physical_press_.IsCurrent(provisions_capture_press_.load());

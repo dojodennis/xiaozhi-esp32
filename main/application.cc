@@ -3000,7 +3000,14 @@ void Application::ServiceTimers() {
             break;
         }
     }
-    ServiceAlarmListening(ringing && negotiated && snapshot.session_id == session, ready,
+    // The alarm player owns the speaker for the whole ring, so the player's own
+    // readiness (which requires idle playback) would never let a listening
+    // window open. Listening needs the mic and the radio, not the speaker.
+    const bool listen_ready =
+        GetDeviceState() == kDeviceStateIdle && !manual_listening_requested_.load() &&
+        !provisions_response_pending_.load() && !provisions_network_busy_.load() &&
+        !provisions_recording_saving_.load() && audio_service_.IsLocalInputIdle();
+    ServiceAlarmListening(ringing && negotiated && snapshot.session_id == session, listen_ready,
                           esp_timer_get_time());
     ProvisionsTimerSnapshot::Update update;
     if (timer_dial_link_.Reconcile(snapshot, session, negotiated, trusted_now_ms, update))
@@ -3023,7 +3030,7 @@ void Application::ServiceTimers() {
 void Application::ServiceAlarmListening(bool ringing, bool ready, int64_t now_us) {
     constexpr int64_t kWindowUs = 3LL * 1000 * 1000;
     constexpr int64_t kSpacingUs = 6LL * 1000 * 1000;
-    constexpr int kMaxWindows = 3;
+    constexpr int kMaxWindows = 6;
     auto* display = Board::GetInstance().GetDisplay();
     const uint32_t open_press = alarm_listen_press_.load();
     if (open_press != 0 && (now_us >= alarm_listen_close_us_ || !ringing ||
@@ -3038,17 +3045,31 @@ void Application::ServiceAlarmListening(bool ringing, bool ready, int64_t now_us
     if (!ringing) {
         alarm_listen_attempts_ = 0;
         alarm_listen_next_us_ = 0;
+        alarm_listen_blocked_logged_ = false;
         return;
     }
     if (open_press != 0 || alarm_listen_attempts_ >= kMaxWindows)
         return;
     if (alarm_listen_next_us_ != 0 && now_us < alarm_listen_next_us_)
         return;
-    if (!ready || manual_listening_requested_.load())
-        return;
     const auto protocol = GetProtocol();
-    if (!protocol || !protocol->IsAudioChannelOpened() || !has_server_time_.load())
+    const bool connected = protocol && protocol->IsAudioChannelOpened();
+    const bool clocked = has_server_time_.load();
+    if (!ready || !connected || !clocked || manual_listening_requested_.load()) {
+        // Say once per ring why no window opened; a silent no-op is impossible
+        // to diagnose from the bench.
+        if (!alarm_listen_blocked_logged_) {
+            alarm_listen_blocked_logged_ = true;
+            ESP_LOGI(TAG,
+                     "alarm listening held off state=%d ready=%d connected=%d clock=%d "
+                     "manual=%d pending=%d busy=%d saving=%d input_idle=%d",
+                     static_cast<int>(GetDeviceState()), ready, connected, clocked,
+                     manual_listening_requested_.load(), provisions_response_pending_.load(),
+                     provisions_network_busy_.load(), provisions_recording_saving_.load(),
+                     audio_service_.IsLocalInputIdle());
+        }
         return;
+    }
     display->PauseTimerAlarmOutput(true);
     StartListening();
     const uint32_t press = provisions_physical_press_.id();
