@@ -3031,7 +3031,25 @@ void Application::ServiceAlarmListening(bool ringing, bool ready, int64_t now_us
     constexpr int64_t kWindowUs = 3LL * 1000 * 1000;
     constexpr int64_t kSpacingUs = 6LL * 1000 * 1000;
     constexpr int kMaxWindows = 6;
+    // After the window closes the ring stays quiet while the stop is heard and
+    // settled: on 13 Sept that took 5.4 s, and resuming after the 3 s window
+    // had it buzzing again before the settle arrived, so the chef reached for
+    // the button. Resume once the turn has gone quiet, the timer stops ringing,
+    // or ten seconds pass - whichever is first.
+    constexpr int64_t kHoldMaxUs = 10LL * 1000 * 1000;
+    constexpr int64_t kHoldMinUs = 1500LL * 1000;
     auto* display = Board::GetInstance().GetDisplay();
+    if (alarm_output_held_) {
+        const bool turn_quiet = !provisions_recording_saving_.load() &&
+                                !provisions_network_busy_.load() &&
+                                !provisions_response_pending_.load() &&
+                                !manual_listening_requested_.load();
+        if (!ringing || now_us >= alarm_hold_until_us_ ||
+            (now_us >= alarm_hold_since_us_ + kHoldMinUs && turn_quiet)) {
+            alarm_output_held_ = false;
+            display->PauseTimerAlarmOutput(false);
+        }
+    }
     const uint32_t open_press = alarm_listen_open_press_.load();
     if (open_press != 0 && (now_us >= alarm_listen_close_us_ || !ringing ||
                             provisions_physical_press_.id() != open_press)) {
@@ -3040,7 +3058,14 @@ void Application::ServiceAlarmListening(bool ringing, bool ready, int64_t now_us
         // has gone, and an untagged capture is refused while a timer rings.
         alarm_listen_open_press_.store(0);
         alarm_listen_close_us_ = 0;
-        display->PauseTimerAlarmOutput(false);
+        if (ringing) {
+            // Hold the output: the capture is still on its way to be heard.
+            alarm_output_held_ = true;
+            alarm_hold_since_us_ = now_us;
+            alarm_hold_until_us_ = now_us + kHoldMaxUs;
+        } else {
+            display->PauseTimerAlarmOutput(false);
+        }
         if (manual_listening_requested_.load() && provisions_physical_press_.id() == open_press)
             StopListening();
         return;
@@ -3052,7 +3077,7 @@ void Application::ServiceAlarmListening(bool ringing, bool ready, int64_t now_us
         alarm_listen_press_.store(0);
         return;
     }
-    if (open_press != 0 || alarm_listen_attempts_ >= kMaxWindows)
+    if (open_press != 0 || alarm_output_held_ || alarm_listen_attempts_ >= kMaxWindows)
         return;
     if (alarm_listen_next_us_ != 0 && now_us < alarm_listen_next_us_)
         return;

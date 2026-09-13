@@ -210,6 +210,10 @@ private:
     int64_t alarm_listen_next_us_ = 0;
     int alarm_listen_attempts_ = 0;
     bool alarm_listen_blocked_logged_ = false;
+    // The motor stays quiet after a window closes until the stop is settled.
+    bool alarm_output_held_ = false;
+    int64_t alarm_hold_since_us_ = 0;
+    int64_t alarm_hold_until_us_ = 0;
     void ServiceAlarmListening(bool ringing, bool ready, int64_t now_us);
     bool ProvisionsReplyInterrupted() const {
         return !provisions_physical_press_.IsCurrent(provisions_capture_press_.load());
