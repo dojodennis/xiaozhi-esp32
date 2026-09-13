@@ -359,8 +359,10 @@ int main() {
         self.assertIn("lite_idle_status_.store(render.idle_status);", render)
         self.assertIn("display->ShowNotification(render.notification);", render)
         self.assertIn('display->SetChatMessage("assistant", text.c_str());', render)
-        # A turn-ending face cuts playback and clears the reply watchdog.
+        # A ready face received after tts/stop must let the decoder drain.
         self.assertIn("if (provisions::lite::EndsTurn(face)) {", render)
+        self.assertIn("lite_playback_.state() == LitePlaybackBuffer::State::kDraining", render)
+        self.assertIn("if (!draining_reply) {", render)
         self.assertIn("SetProvisionsResponsePending(false);", render)
         idle = method(APPLICATION, "const char* Application::GetProvisionsIdleStatus() const")
         self.assertIn("if (const char* face = lite_idle_status_.load();", idle)
@@ -383,6 +385,8 @@ class LiteWiringReview(unittest.TestCase):
             self.assertIn(state, handler)
         self.assertIn('strcmp(type, "stt") == 0', handler)
         self.assertIn('strcmp(type, "provisions") == 0', handler)
+        self.assertIn('strcmp(state->valuestring, "capture_consumed") == 0', handler)
+        self.assertIn("ParseLiteCaptureConsumed(root, protocol->session_id(), receipt)", handler)
         # Nothing in the lite handler can close the channel or alert.
         self.assertNotIn("reject_gateway_frame", handler)
         self.assertNotIn("CloseAudioChannel", handler)

@@ -1,11 +1,12 @@
 """Orbit Lite preservation: the real recorder worker under the lite transport.
 
-Codex correction items 2 and 3 (docs/orbit-lite-candidate-review-2026-09-10.md):
-a local upload is never a receipt, deferred captures are never retired, the only
-erase outside a durable receipt is the bounded show-time eviction, and connecting
-in lite leaves the stored context, retained recordings and the dictation
-assignment proof intact. Runs the actual VoiceRecorder/outbox/dictation sources
-through the deterministic task/flash/NVS shims of the recorder review harness.
+An upload alone is never a receipt. A later authenticated, exact
+capture_consumed acknowledgement may retire an ordinary Lite capture after its
+answer completed; otherwise the bounded show-time eviction remains the only
+non-durable erase. Connecting in Lite leaves the stored full-gateway context,
+other recordings and dictation assignment proof intact. Runs the actual
+VoiceRecorder/outbox/dictation sources through deterministic task/flash/NVS
+shims.
 """
 import importlib.util
 import os
@@ -73,10 +74,11 @@ void lite_upload_cases(){
         // No re-offer every 30 s any more.
         clock_us+=30*1000000LL;replay(recorder);assert(offered.size()==1);
         clock_us+=30*1000000LL;replay(recorder);assert(offered.size()==1);
-        // A later correlated durable receipt still retires it (full gateway path unchanged).
-        auto receipt=offered.back().receipt;receipt.durable=true;acknowledge(recorder,receipt);
+        // A later exact Lite completion retires only this ordinary capture.
+        auto receipt=offered.back().receipt;receipt.consumed=true;acknowledge(recorder,receipt);
         assert(recorder.PendingCount()==1&&recorder.AwaitingReceiptCount()==0&&state.erases==erases+1);
-        assert(notice_count(VoiceRecorder::Result::Synced)==synced+1&&stored_sequence(lite_slot)==0);
+        assert(notice_count(VoiceRecorder::Result::Consumed)==1&&
+               notice_count(VoiceRecorder::Result::Synced)==synced&&stored_sequence(lite_slot)==0);
         // Dictation segments are never marked.
         VoiceReplay dictation;dictation.capture.purpose=VoicePurpose::Dictation;
         assert(!recorder.MarkUploadedAwaitingReceipt(dictation,kBaseMs));
@@ -102,12 +104,12 @@ void lite_upload_cases(){
         assert(recorder.PendingCount()==1&&state.erases==erases_after_reboot);
     }
     join();
-    std::cout<<"Lite upload keeps the slot, marks awaiting receipt, persists across reboot, no Synced, no erase\n";
+    std::cout<<"Lite upload is retained until an exact completion acknowledgement\n";
 }
 
 void lite_deferred_cases(){
-    // A capture whose press is gone (reboot) is a deferred capture. Under lite it
-    // is still offered for upload and never retired locally.
+    // A capture whose press is gone (reboot) is still offered under Lite. An
+    // upload does not retire it; only the exact completion acknowledgement does.
     fresh();
     {
         VoiceRecorder recorder;initialize(recorder);authorize(recorder);use_lite(recorder);record(recorder,1);
@@ -264,16 +266,19 @@ class LitePreservationTests(unittest.TestCase):
                                     env={**os.environ, "ASAN_OPTIONS":
                                          "detect_leaks=0" if sys.platform == "darwin" else "detect_leaks=1"})
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            for line in ("Lite upload keeps the slot", "Deferred (reboot) capture", "Eviction: only the oldest",
+            for line in ("Lite upload is retained until", "Deferred (reboot) capture", "Eviction: only the oldest",
                          "Connecting in lite keeps"):
                 self.assertIn(line, result.stdout)
 
-    def test_source_never_erases_outside_receipt_or_bounded_eviction(self):
-        # The only two callers of the erase primitive in the recorder are the
-        # durable-receipt path and the bounded eviction; the lite mark never is.
-        self.assertEqual(RECORDER.count("RemoveAfterReceipt("), 2)
+    def test_source_erases_only_on_exact_completion_receipt_or_bounded_eviction(self):
+        # The three callers are exact Lite completion, durable full-gateway
+        # receipt, and bounded eviction. The upload mark itself never erases.
+        self.assertEqual(RECORDER.count("RemoveAfterReceipt("), 3)
         receipt = RECORDER[RECORDER.index("void VoiceRecorder::ApplyReceipt("):RECORDER.index("void VoiceRecorder::Run()")]
-        self.assertIn("if (receipt.durable) {", receipt)
+        self.assertIn("if (receipt.consumed) {", receipt)
+        self.assertIn("} else if (receipt.durable) {", receipt)
+        self.assertIn("saved.capture.IsDictation()", receipt)
+        self.assertIn("notify_(Result::Consumed, presses_[slot]);", receipt)
         mark = RECORDER[RECORDER.index("void VoiceRecorder::ApplyUploadMark("):RECORDER.index("bool VoiceRecorder::EvictForNewCapture(")]
         self.assertNotIn("RemoveAfterReceipt", mark)
         self.assertNotIn("Synced", mark)

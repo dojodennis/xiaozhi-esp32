@@ -567,7 +567,26 @@ void VoiceRecorder::ApplyReceipt(const VoiceCaptureReceipt& receipt) {
         std::array<uint8_t, 32> digest{};
         if (!Digest(saved.frames, digest) || digest != receipt.digest)
             return;
-        if (receipt.durable) {
+        if (receipt.consumed) {
+            if (saved.capture.IsDictation())
+                return;
+            if (outbox_.journal()->RemoveAfterReceipt(slot, receipt.capture.request_id,
+                                                      receipt.capture.conversation_id) ==
+                VoiceStoreResult::Ok) {
+                attention_[slot] = false;
+                offered_[slot] = false;
+                retry_tokens_[slot] = {};
+                retry_used_[slot] = retry_pending_[slot] = false;
+                if (awaiting_receipt_[slot]) {
+                    awaiting_receipt_[slot] = false;
+                    awaiting_receipt_unix_ms_[slot] = 0;
+                    awaiting_receipt_mono_us_[slot] = 0;
+                    ForgetAwaitingReceipt(slot);
+                }
+                RefreshCount();
+                notify_(Result::Consumed, presses_[slot]);
+            }
+        } else if (receipt.durable) {
             if (saved.capture.IsDictation() && !dictation_journal_.Terminal(saved.capture)) {
                 dictation_error_.store(true);
                 PublishDictation();

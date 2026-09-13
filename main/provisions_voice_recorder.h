@@ -32,6 +32,10 @@ struct VoiceCaptureReceipt {
     bool needs_attention = false;
     VoiceId retry_token{};
     bool retry_used = false;
+    // Lite-only acknowledgement: the authenticated gateway accepted this
+    // exact capture and completed its audible response. This retires the local
+    // copy without claiming durable server transcription.
+    bool consumed = false;
 };
 
 // The button and input callbacks only copy bounded PCM/control state. This one
@@ -44,6 +48,7 @@ public:
         Failed,
         NeedsAttention,
         Synced,
+        Consumed,
         ContextReady,
         RetryQueued,
         RetryUnavailable,
@@ -76,10 +81,10 @@ public:
     // recording and the dictation journal are left untouched. RAM only: a
     // reboot or the next full-gateway ActivateContext() drops it.
     bool UseLiteContext(const VoiceContext& context);
-    // Orbit Lite sends no capture_receipt. Record that this exact capture was
-    // uploaded: the slot is kept, marked "uploaded, awaiting server receipt"
-    // (persisted with the entry's sequence), and not re-offered every 30 s.
-    // Never removes anything. Dictation segments are never marked.
+    // Orbit Lite sends no durable capture_receipt. Record that this exact
+    // capture was uploaded: the slot is kept and not re-offered while awaiting
+    // an exact capture_consumed acknowledgement. This method never removes
+    // anything. Dictation segments are never marked.
     bool MarkUploadedAwaitingReceipt(const VoiceReplay& replay, uint64_t uploaded_unix_ms);
     bool Begin(uint32_t press, uint64_t captured_unix_ms);
     bool BeginDictation(uint32_t press, uint64_t captured_unix_ms);

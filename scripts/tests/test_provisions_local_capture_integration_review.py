@@ -63,7 +63,7 @@ struct VoiceRecorder {
     bool BeginDictation(uint32_t,uint64_t){return false;}
     bool DictationPreparing(uint32_t)const{return false;}
 
-    enum class Result {Saved,Failed,NeedsAttention,Synced,ContextReady,RetryQueued,RetryUnavailable,DictationReady,DictationChanged,DictationAuthorized,DictationRecorded,Uploaded,Evicted};
+    enum class Result {Saved,Failed,NeedsAttention,Synced,Consumed,ContextReady,RetryQueued,RetryUnavailable,DictationReady,DictationChanged,DictationAuthorized,DictationRecorded,Uploaded,Evicted};
     bool allow_begin=true;unsigned begun=0,released=0,replays=0;
     bool CanRetry() const {return false;}
     std::function<void()> before_begin;

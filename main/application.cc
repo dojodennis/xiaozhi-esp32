@@ -1055,9 +1055,9 @@ void Application::InitializeProtocol() {
         }
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
         if (protocol->IsLiteMode()) {
-            // Orbit Lite frames carry no session_id, turn_id or receipts and
-            // never close the channel; the strict gateway checks below do not
-            // apply. Unknown types are ignored.
+            // Orbit Lite has one exact, session-bound capture completion
+            // acknowledgement. Other Lite controls stay deliberately thin;
+            // unknown types are ignored and never close the channel.
             HandleLiteGatewayFrame(root, type->valuestring);
             return;
         }
@@ -1727,9 +1727,10 @@ void Application::InvalidateProvisionsTtsTurn() {
 
 // ---- Orbit Lite ------------------------------------------------------------
 // Thin gateway (provisions.mode == "lite"): stock xiaozhi tts/stt frames plus
-// {"type":"provisions","state":"face",...}. No session/turn correlation, no
-// fence, receipt, grant or timer authority. Playback is jitter-buffered; the
-// Talk press aborts and records on the same hold. See docs/orbit-lite-mode.md.
+// {"type":"provisions","state":"face",...}. The one correlated control is an
+// exact capture_consumed acknowledgement after a completed reply; it is not a
+// durable transcript receipt. No fence, grant or timer authority. Playback is
+// jitter-buffered; Talk aborts and records on the same hold.
 
 bool Application::PushLitePlayback(std::unique_ptr<AudioStreamPacket>& packet) {
     // Called under the jitter buffer lock from the socket or pump-timer task.
@@ -1861,6 +1862,17 @@ void Application::HandleLiteGatewayFrame(const cJSON* root, const char* type) {
     }
     if (strcmp(type, "provisions") == 0) {
         auto state = cJSON_GetObjectItem(root, "state");
+        if (cJSON_IsString(state) && strcmp(state->valuestring, "capture_consumed") == 0) {
+            const auto protocol = GetProtocol();
+            auto recorder = std::atomic_load(&provisions_recorder_);
+            provisions::VoiceCaptureReceipt receipt;
+            if (!protocol || !recorder ||
+                !provisions::ParseLiteCaptureConsumed(root, protocol->session_id(), receipt) ||
+                !recorder->Acknowledge(receipt)) {
+                ESP_LOGW(TAG, "Ignoring invalid Orbit Lite capture acknowledgement");
+            }
+            return;
+        }
         if (!cJSON_IsString(state) || strcmp(state->valuestring, "face") != 0) {
             ESP_LOGD(TAG, "Ignoring Orbit Lite provisions frame");
             return;
@@ -1895,13 +1907,18 @@ void Application::RenderLiteFace(provisions::lite::Face face, const std::string&
     const auto render = provisions::lite::RenderFor(face);
     lite_idle_status_.store(render.idle_status);
     if (provisions::lite::EndsTurn(face)) {
-        provisions_tts_deadline_us_.store(0);
-        if (GetDeviceState() == kDeviceStateSpeaking) {
-            ResetLitePlayback();
-            audio_service_.ResetDecoder();
-            SetDeviceState(kDeviceStateIdle);
+        const bool draining_reply =
+            face == Face::kReady && GetDeviceState() == kDeviceStateSpeaking &&
+            lite_playback_.state() == LitePlaybackBuffer::State::kDraining;
+        if (!draining_reply) {
+            provisions_tts_deadline_us_.store(0);
+            if (GetDeviceState() == kDeviceStateSpeaking) {
+                ResetLitePlayback();
+                audio_service_.ResetDecoder();
+                SetDeviceState(kDeviceStateIdle);
+            }
+            SetProvisionsResponsePending(false);
         }
-        SetProvisionsResponsePending(false);
     }
     if (render.status != nullptr && GetDeviceState() == kDeviceStateIdle) {
         display->SetStatus(face == Face::kReady ? GetProvisionsIdleStatus() : render.status);
@@ -1915,7 +1932,7 @@ void Application::RenderLiteFace(provisions::lite::Face face, const std::string&
 }
 
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
-// The lite gateway keeps no intake and sends no capture_receipt. The upload's
+// The Lite gateway sends no durable capture_receipt. The upload's
 // own `listen stop` proves only that the bytes left the device, never that a
 // server committed them, so it is not a receipt: the journal entry is kept in
 // flash and marked "uploaded, awaiting server receipt" so it stops being
@@ -1984,7 +2001,7 @@ void Application::HandleVoiceRecordingResult(provisions::VoiceRecorder::Result r
                 audio_service_.StopLocalRecording(press);
                 provisions_recording_saving_.store(false);
                 provisions_recording_failed_.store(true);
-            } else if (result == Result::Synced) {
+            } else if (result == Result::Synced || result == Result::Consumed) {
                 provisions_recording_local_.store(false);
             }
         }
@@ -2100,9 +2117,9 @@ void Application::SendVoiceRecording(std::shared_ptr<const provisions::VoiceRepl
                     app->provisions_network_busy_.store(false);
                     if (app->GetProtocol() != protocol)
                         return;
-                    // Orbit Lite sends no capture receipt: keep the journal
-                    // slot, mark it uploaded-awaiting-receipt so it is not
-                    // re-offered every 30 s. Nothing is erased here.
+                    // Upload alone is not completion: keep the journal slot and
+                    // mark it awaiting the gateway's exact capture_consumed
+                    // acknowledgement. Nothing is erased here.
                     if (sent && protocol->IsLiteMode())
                         app->MarkLiteUploaded(replay);
                     if (!sent && app->provisions_physical_press_.id() == physical)

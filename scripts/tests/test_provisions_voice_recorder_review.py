@@ -246,6 +246,31 @@ void normal_cases() {
     join();
     std::cout<<"Recorder worker exact receipts, retry silence, restart, scope and full-store cases passed\n";
 }
+
+void lite_consumed_cases() {
+    fresh();
+    {
+        VoiceRecorder recorder;initialize(recorder);authorize(recorder);record(recorder,1);replay(recorder);
+        const auto original=offered.back().receipt;
+        for(int field=0;field<8;++field) {
+            auto receipt=original;receipt.consumed=true;
+            if(field==0)receipt.capture.request_id[1]^=1;
+            if(field==1)receipt.capture.conversation_id[1]^=1;
+            if(field==2)receipt.capture.source_request_id[1]^=1;
+            if(field==3)++receipt.capture.source_revision;
+            if(field==4)++receipt.capture.captured_unix_ms;
+            if(field==5)++receipt.capture.packet_count;
+            if(field==6)++receipt.bytes;
+            if(field==7)receipt.digest[0]^=1;
+            acknowledge(recorder,receipt);assert(recorder.PendingCount()==1);
+        }
+        auto consumed=original;consumed.consumed=true;acknowledge(recorder,consumed);
+        assert(recorder.PendingCount()==0);
+        assert(notices.back()==std::make_pair(VoiceRecorder::Result::Consumed,uint32_t(1)));
+    }
+    join();
+    std::cout<<"Lite completion removes only the exact ordinary capture\n";
+}
 void context_cases() {
     // A failed preparation has not displayed the new answer or changed RAM.
     fresh();
@@ -543,7 +568,7 @@ void dictation_cases() {
     join();
     std::cout<<"Dictation worker reservation, cap, Stop sealing, exact retry and restart cases passed\n";
 }
-int main(){normal_cases();context_cases();explicit_retry_cases();bounded_offer_cases();queued_retry_scope_case();dictation_ack_stop_race();dictation_cases();}
+int main(){normal_cases();lite_consumed_cases();context_cases();explicit_retry_cases();bounded_offer_cases();queued_retry_scope_case();dictation_ack_stop_race();dictation_cases();}
 
 '''
 

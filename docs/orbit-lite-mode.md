@@ -26,8 +26,10 @@ Host tests: `scripts/tests/test_provisions_lite_mode.py`,
   `{"type":"tts","state":"start"}` → speaking, `{"type":"tts","state":"sentence_start","text":...}`
   → face text line, binary Opus frames → playback, `{"type":"tts","state":"stop"}`
   → drain then Ready, `{"type":"provisions","state":"face","face":"<name>","text":"<≤40 chars>"}`
-  → the named face. Fence, receipt, grant, timer-authority, pong and every
-  other frame type are ignored in lite mode (never rejected, never closing).
+  → the named face. After a successful answer the gateway may send the exact
+  session/turn/request/capture-bound `provisions.capture_consumed` control
+  described below. Fence, durable receipt, grant, timer-authority, pong and
+  every other frame type are ignored in lite mode (never closing).
 - Device → server: on a Talk press the fork's existing abort frame
   `{"session_id":"<server hello session_id, or empty>","type":"abort"}` is sent
   (it is sent on every press, as before), playback stops at once and the jitter
@@ -61,25 +63,27 @@ items 2 and 3):
   that has never held a full-gateway context cannot journal on lite (the
   journal key is only created under an authenticated negotiated context);
   that is reported as "Capture unavailable", not worked around.
-- **Uploads are never receipts.** Lite sends no `capture_receipt`. After a
+- **Uploads are never receipts.** Lite sends no durable `capture_receipt`. After a
   successful upload (`listen stop` sent) the entry is kept in flash and marked
   "uploaded, awaiting server receipt" (`MarkLiteUploaded` →
   `VoiceRecorder::MarkUploadedAwaitingReceipt`). The mark is persisted in NVS
   bound to the entry's journal sequence, so it survives a reboot and can never
-  attach to a reused slot. Marked entries are not re-offered every 30 s; they
-  are removed only by a correlated durable `capture_receipt` (full gateway) or
-  by the bounded eviction below. No `durable` receipt is constructed locally
-  and the recorder's erase path is never reached from the lite upload. Deferred
-  captures (reboot, re-offer, superseded press) are uploaded like any other and
-  are never retired without an upload. Dictation segments are never uploaded
-  on lite (explicitly refused, kept for the full gateway) and never marked.
+  attach to a reused slot. Marked entries are not re-offered every 30 s.
+- **Successful answers retire exactly one capture.** Only after the complete
+  reply has crossed the device socket, the gateway checks framed byte count,
+  packet count and SHA-256 against the capture envelope. It then sends
+  `{"type":"provisions","state":"capture_consumed","session_id":…,"turn_id":N,"request_id":…,"capture":{…}}`.
+  The ring accepts the exact schema and live session only, rechecks all capture
+  metadata, stored size and digest on the recorder worker, and removes that one
+  ordinary slot. Missing, failed, aborted or mismatched turns send no completion
+  and retain the audio. This is not a durable transcript claim. Dictation is
+  never accepted by this control.
 
 ### Accepted show-time trade-off: bounded slot reuse
 
-The journal has four slots. Because lite never confirms a save, marked entries
-would otherwise accumulate until the ring can no longer record at a show. The
-accepted rule, implemented in `VoiceRecorder::EvictForNewCapture()` and only
-reached when a new press finds every slot occupied:
+The journal has four slots. Exact completion normally releases each slot. The
+bounded reuse rule remains a failure fallback for a lost acknowledgement and is
+only reached when a new press finds every slot occupied:
 
 - evict exactly one entry: the **oldest** (lowest journal sequence) command
   capture that is in "uploaded, awaiting receipt" state **and** has been so for
@@ -94,9 +98,8 @@ reached when a new press finds every slot occupied:
 - every eviction is logged (`Orbit Lite: evicted the oldest
   uploaded-awaiting-receipt capture …`).
 
-This is a deliberate, bounded loss: a note that the lite gateway received at
-least 30 minutes earlier may be erased to make room for a new one. It is the
-only path on which lite removes a recording.
+This fallback is a deliberate, bounded loss: a note that the Lite gateway
+received at least 30 minutes earlier may be erased to make room for a new one.
 
 ### Dictation on lite
 
@@ -116,9 +119,11 @@ by a lite socket; it stays for the next full-gateway session.
 - frames keep flowing into the decode queue (20 frames) as they arrive; a 100 ms
   pump timer serves the start rule and refills the queue when it had no room;
 - underrun (decode queue drained mid-stream) → wait for 2 frames, resume;
-- `tts stop` → drain everything held, then Ready when the queue runs dry;
+- `tts stop` → drain everything held, then Ready when the queue runs dry; a
+  following `ready` face updates the pending idle face but never resets a
+  decoder that is still draining;
 - bounded at 50 frames (~3 s); overflow drops the oldest with a log line;
-- a Talk press, socket loss, a turn-ending face or a timed-out turn flushes it.
+- a Talk press, socket loss, failed/offline face or a timed-out turn flushes it.
 
 ## Faces
 
@@ -136,8 +141,9 @@ Status faces become the idle status too, so they survive the 1 s status tick
 until the next press, `tts start`, turn end or face. Non-empty `text` goes to
 the reply surface via `SetChatMessage("assistant", text)` (≤ 40 bytes, control
 characters dropped, UTF-8 never split); on the ring it is headed by the last
-banner title. `ready`, `failed` and `offline` end the turn: response-pending
-clears and any playback still running is cut.
+banner title. `failed` and `offline` end the turn immediately. `ready` ends an
+idle turn, but after `tts stop` the playback-drained event owns completion so
+the tail is not cut.
 
 ## Failure
 

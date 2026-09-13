@@ -7,6 +7,8 @@
 namespace provisions {
 bool ParseVoiceContext(const cJSON* value, VoiceContext& output);
 bool ParseVoiceReceipt(const cJSON* value, VoiceCaptureReceipt& output);
+bool ParseLiteCaptureConsumed(const cJSON* value, const std::string& session,
+                              VoiceCaptureReceipt& output);
 bool ParseVoiceId(const char* value, VoiceId& output);
 std::string VoiceIdText(const VoiceId& id);
 // `alarm_stop` marks a capture the ring opened by itself while a timer was

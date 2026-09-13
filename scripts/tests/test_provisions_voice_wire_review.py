@@ -43,6 +43,14 @@ Json receipt(const std::string& status="transcribed",bool durable=true) {
         "\"captured_unix_ms\":1788712345678},\"state\":\""+status+"\",\"durable\":"+
         (durable?"true":"false")+"}");
 }
+Json consumed(const std::string& session="authenticated-session") {
+    return parse("{\"session_id\":\""+session+"\",\"type\":\"provisions\","
+        "\"state\":\"capture_consumed\",\"request_id\":\""+request+"\",\"capture\":{"
+        "\"conversation_id\":\""+conversation+"\",\"source_request_id\":\""+source+
+        "\",\"source_revision\":7,\"audio_sha256\":\""+std::string(64,'a')+
+        "\",\"audio_bytes\":5,\"packet_count\":1,\"captured_unix_ms\":1788712345678},"
+        "\"turn_id\":9}");
+}
 void replace(cJSON* object,const char* key,const std::string& value) {
     auto parsed=parse(value);assert(cJSON_ReplaceItemInObjectCaseSensitive(object,key,parsed.release()));
 }
@@ -76,6 +84,24 @@ int main() {
         assert(out.durable==terminal && out.needs_attention==(status=="needs_attention"));
         auto wrong=receipt(status,!terminal);assert(!ParseVoiceReceipt(wrong.get(),out));
     }
+    auto lite=consumed();assert(ParseLiteCaptureConsumed(lite.get(),"authenticated-session",out));
+    assert(out.consumed&&!out.durable&&out.bytes==5&&out.capture.packet_count==1);
+    assert(VoiceIdText(out.capture.request_id)==request);
+    assert(!ParseLiteCaptureConsumed(lite.get(),"other-session",out));
+    for(const char* field:{"session_id","type","state","request_id","capture","turn_id"}) {
+        auto bad=consumed();replace(bad.get(),field,"null");
+        assert(!ParseLiteCaptureConsumed(bad.get(),"authenticated-session",out));
+    }
+    for(const std::string invalid:{"0","2147483648","-1","1.5","true"}) {
+        auto bad=consumed();replace(bad.get(),"turn_id",invalid);
+        assert(!ParseLiteCaptureConsumed(bad.get(),"authenticated-session",out));
+    }
+    auto lite_extra=consumed();cJSON_AddNullToObject(lite_extra.get(),"durable");
+    assert(!ParseLiteCaptureConsumed(lite_extra.get(),"authenticated-session",out));
+    auto lite_dictation=consumed();
+    cJSON_AddStringToObject(cJSON_GetObjectItemCaseSensitive(lite_dictation.get(),"capture"),
+                            "purpose","dictation");
+    assert(!ParseLiteCaptureConsumed(lite_dictation.get(),"authenticated-session",out));
     for(const char* field:{"type","request_id","capture","state","durable"})
         for(const std::string invalid:{"null","[]","{}","42"}) {
             auto value=receipt();replace(value.get(),field,invalid);assert(!ParseVoiceReceipt(value.get(),out));

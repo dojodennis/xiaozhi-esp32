@@ -224,6 +224,46 @@ bool ParseVoiceReceipt(const cJSON* value, VoiceCaptureReceipt& output) {
     output.needs_attention = status == "needs_attention";
     return true;
 }
+bool ParseLiteCaptureConsumed(const cJSON* value, const std::string& session,
+                              VoiceCaptureReceipt& output) {
+    output = {};
+    if (!Keys(value, {"session_id", "type", "state", "request_id", "capture", "turn_id"}))
+        return false;
+    const auto session_value = cJSON_GetObjectItemCaseSensitive(value, "session_id");
+    const auto type = cJSON_GetObjectItemCaseSensitive(value, "type");
+    const auto state = cJSON_GetObjectItemCaseSensitive(value, "state");
+    const auto id = cJSON_GetObjectItemCaseSensitive(value, "request_id");
+    const auto capture = cJSON_GetObjectItemCaseSensitive(value, "capture");
+    uint64_t turn = 0;
+    if (!cJSON_IsString(session_value) || session != session_value->valuestring ||
+        !cJSON_IsString(type) || std::strcmp(type->valuestring, "provisions") != 0 ||
+        !cJSON_IsString(state) || std::strcmp(state->valuestring, "capture_consumed") != 0 ||
+        !cJSON_IsString(id) || !ParseVoiceId(id->valuestring, output.capture.request_id) ||
+        !Integer(cJSON_GetObjectItemCaseSensitive(value, "turn_id"), 2147483647, turn) || !turn ||
+        !Keys(capture, {"conversation_id", "source_request_id", "source_revision",
+                        "audio_sha256", "audio_bytes", "packet_count", "captured_unix_ms"}))
+        return false;
+    VoiceContext context;
+    uint64_t count = 0, bytes = 0, captured = 0;
+    const auto digest = cJSON_GetObjectItemCaseSensitive(capture, "audio_sha256");
+    if (!ContextFields(capture, context) || !cJSON_IsString(digest) ||
+        !Bytes(digest->valuestring, 64, output.digest.data()) ||
+        !Integer(cJSON_GetObjectItemCaseSensitive(capture, "packet_count"), 167, count) || !count ||
+        !Integer(cJSON_GetObjectItemCaseSensitive(capture, "audio_bytes"),
+                 VoiceOutbox::kMaxFrameBytes, bytes) ||
+        bytes < count * 3 || bytes > count * 2050 ||
+        !Integer(cJSON_GetObjectItemCaseSensitive(capture, "captured_unix_ms"),
+                 253402300799999ULL, captured))
+        return false;
+    output.capture.conversation_id = context.conversation_id;
+    output.capture.source_request_id = context.source_request_id;
+    output.capture.source_revision = context.source_revision;
+    output.capture.packet_count = count;
+    output.capture.captured_unix_ms = captured;
+    output.bytes = bytes;
+    output.consumed = true;
+    return true;
+}
 std::string VoiceCaptureStart(const VoiceReplay& replay, const std::string& session, uint32_t turn,
                               bool deferred, bool alarm_stop) {
     const bool retry = std::any_of(replay.retry_token.begin(), replay.retry_token.end(),
