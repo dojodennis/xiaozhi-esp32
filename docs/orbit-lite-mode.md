@@ -164,7 +164,28 @@ September 2026 it passed:
 - the matching gateway's complete test suite, lint and strict source type
   check, with the native Lite compatibility bridge disabled.
 
-The generated application and merged images are deliberately unsigned and
-have not been flashed. Motor behavior, microphone capture, 24 kHz ES8311
-playback quality and interruption latency remain physical-device acceptance
-gates.
+## Supervised installation — 13 September 2026
+
+After explicit approval, source
+`ee505135a49c5de75aaaa25891253b91c82fa999` was signed with the existing
+accepted device key and installed application-only at `0x020000`. The signed
+application is 3,280,896 bytes with SHA-256
+`cba359b11b1f5d7a224592fe142531436765663e961b57d58a7bc09afeb61862`.
+Independent span verification passed, and the complete 16 MiB post-flash image
+exactly matched the expected overlay with SHA-256
+`1ae8236a5adc33818858b0eaf08e8ae847f124d39589f77d89cbe987ff3a9860`;
+every byte outside the application span remained unchanged. The private
+pre-flash backup has SHA-256
+`e381cb5912e9e0678a5497e1e744b0a77e8c24d5cb61920f145e25c64fc1aa52`.
+
+Orbit booted and authenticated at 17:33:38 UTC with touch present. The matching
+gateway revision `6cd34db10db472c72f314b0b93659db795fa3b5d` was then activated with
+`ORBIT_LITE=true`, `ORBIT_LITE_VOICE_API=live`, and
+`ORBIT_LITE_LEGACY_DEVICE_COMPAT=false`; Orbit reauthenticated in native Lite
+mode at 17:37:12 UTC. Gateway health, zero restarts, route codes
+`200/405/404/426`, and loopback-only exposure passed the stability gate.
+
+Motor behavior, microphone capture, 24 kHz ES8311 playback quality and
+interruption latency remain the focused physical acceptance gates. Exact signed
+firmware `7105d4a` and gateway image `orbit-monaco-ba7e00e-amd64` remain the
+rollback pair.
