@@ -3028,9 +3028,14 @@ void Application::ServiceTimers() {
 // hold the radio at full clock and fill the capture slots with kitchen noise.
 // The motor is quiet for the duration; a press still works throughout.
 void Application::ServiceAlarmListening(bool ringing, bool ready, int64_t now_us) {
-    constexpr int64_t kWindowUs = 3LL * 1000 * 1000;
-    constexpr int64_t kSpacingUs = 6LL * 1000 * 1000;
-    constexpr int kMaxWindows = 6;
+    // Dennis, 13 Sept: "repeat it all the time or I don't catch it". A chef
+    // cannot aim for a three-second window six seconds apart; the ring now
+    // listens for four seconds, buzzes for two so it is plainly still ringing,
+    // and repeats for as long as the timer rings. The cap only stops a ring
+    // nobody is near from listening for ever (about four minutes).
+    constexpr int64_t kWindowUs = 4LL * 1000 * 1000;
+    constexpr int64_t kSpacingUs = 2LL * 1000 * 1000;
+    constexpr int kMaxWindows = 40;
     // After the window closes the ring stays quiet while the stop is heard and
     // settled: on 13 Sept that took 5.4 s, and resuming after the 3 s window
     // had it buzzing again before the settle arrived, so the chef reached for
