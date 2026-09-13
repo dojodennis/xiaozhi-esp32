@@ -925,6 +925,16 @@ config PROVISIONS_SCHEDULE_BENCH_DEMO
         one due alert. No microphone, network, enrollment or authoritative writes.
         This is not an installed/live schedule capability or timing acceptance.
 
+config PROVISIONS_EXHIBITION_DEMO
+    bool "Offline button-driven Orbit exhibition demo"
+    depends on BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH && PROVISIONS_GATEWAY_REQUIRED && !PROVISIONS_LOCAL_CAPTURE && !PROVISIONS_SCHEDULE_BENCH_DEMO
+    default n
+    help
+        Deliberately separate exhibition firmware. Yellow drives the real Orbit
+        listening, checking, speaking and result faces and plays one embedded
+        reply through the real speaker. No microphone, network, enrollment,
+        gateway session or authoritative write is started.
+
 config PROVISIONS_SCHEDULE_HARDWARE_BENCH
     bool "Isolated Orbit schedule hardware bench (real speaker, network disabled)"
     depends on BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH && PROVISIONS_LOCAL_CAPTURE && WAKE_WORD_DISABLED

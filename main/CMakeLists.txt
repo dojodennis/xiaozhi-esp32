@@ -220,7 +220,9 @@ elseif(CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH)
     set(BOARD_DIR "m5stack/stopwatch")
     set(PROVISIONS_STOPWATCH_PROFILE ON)
     set(PROVISIONS_STOPWATCH_BOARD_NAME "provisions-kitchen-helper-stopwatch")
-    if(CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO)
+    if(CONFIG_PROVISIONS_EXHIBITION_DEMO)
+        set(PROVISIONS_STOPWATCH_BOARD_NAME "provisions-kitchen-helper-stopwatch-exhibition-demo")
+    elseif(CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO)
         set(PROVISIONS_STOPWATCH_BOARD_NAME "provisions-kitchen-helper-stopwatch-schedule-demo")
     elseif(CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH)
         set(PROVISIONS_STOPWATCH_BOARD_NAME "provisions-kitchen-helper-stopwatch-schedule-bench")
@@ -902,15 +904,15 @@ if(PROVISIONS_STOPWATCH_PROFILE)
     endif()
     set(BOARD_NAME "${PROVISIONS_STOPWATCH_BOARD_NAME}")
     list(APPEND SOURCES "provisions_endpoint_policy.cc"
-        "provisions_voice_outbox.cc" "provisions_voice_outbox_esp.cc")
+        "provisions_voice_outbox.cc" "provisions_voice_outbox_esp.cc"
+        "provisions_hardware_facts.cc")
     if(CONFIG_PROVISIONS_LOCAL_CAPTURE)
         list(APPEND SOURCES "provisions_voice_recording.cc" "provisions_voice_recorder.cc"
             "provisions_dictation.cc" "provisions_dictation_store.cc" "provisions_dictation_recorder.cc"
             "provisions_dictation_application.cc"
             "provisions_voice_wire.cc" "protocols/provisions_websocket.cc"
             "provisions_timers.cc" "provisions_timer_store.cc" "provisions_timer_player.cc"
-            "provisions_timer_dial_link.cc" "provisions_timer_dismissal.cc"
-            "provisions_hardware_facts.cc")
+            "provisions_timer_dial_link.cc" "provisions_timer_dismissal.cc")
     endif()
 endif()
 
@@ -1135,6 +1137,10 @@ if(CONFIG_PROVISIONS_LOCAL_CAPTURE)
         "assets/provisions/saved_on_orbit.ogg"
         "assets/provisions/could_not_save.ogg")
 endif()
+if(CONFIG_PROVISIONS_EXHIBITION_DEMO)
+    set(PROVISIONS_EXHIBITION_DEMO_SOUNDS
+        "assets/provisions/exhibition_sea_bass.ogg")
+endif()
 if(BOARD_TYPE STREQUAL "m5stack-stick-s3")
     list(APPEND MAIN_PRIV_REQUIRES_EXTRA
         m5stack__m5pm1
@@ -1158,7 +1164,7 @@ if(CONFIG_BOARD_TYPE_ESP32_P4_FUNCTION_EV_BOARD)
     )
 endif()
 idf_component_register(SRCS ${SOURCES}
-                    EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS} ${PROVISIONS_FEEDBACK_SOUNDS}
+                    EMBED_FILES ${LANG_SOUNDS} ${COMMON_SOUNDS} ${PROVISIONS_FEEDBACK_SOUNDS} ${PROVISIONS_EXHIBITION_DEMO_SOUNDS}
                     INCLUDE_DIRS ${INCLUDE_DIRS}
                     WHOLE_ARCHIVE
                     PRIV_REQUIRES

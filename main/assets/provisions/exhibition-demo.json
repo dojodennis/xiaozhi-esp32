@@ -1,0 +1,18 @@
+{
+  "sample_rate": 24000,
+  "channels": 1,
+  "frame_duration_ms": 60,
+  "voice": "Ava (macOS system voice)",
+  "generated_date": "2026-09-13",
+  "encoding": "libopus, audio application, 24 kbps VBR, 60 ms frames",
+  "demo_only": true,
+  "authoritative_writes": false,
+  "phrases": [
+    {
+      "file": "exhibition_sea_bass.ogg",
+      "text": "Two portions of sea bass are in the lower fridge. Use them by Tuesday.",
+      "bytes": 10848,
+      "sha256": "0829301943b6b5f8dd7d753b85932e094eab3c00858869cc5213e4d652cee5eb"
+    }
+  ]
+}

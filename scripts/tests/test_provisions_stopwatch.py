@@ -28,11 +28,13 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertEqual(config["target"], "esp32s3")
         builds = {item["name"]: item for item in config["builds"]}
         demo_name = f"{PROFILE}-schedule-demo"
+        exhibition_name = f"{PROFILE}-exhibition-demo"
         bench_name = f"{PROFILE}-schedule-bench"
         expected_symbols = {
             "m5stack-stopwatch": "CONFIG_BOARD_TYPE_M5STACK_STOPWATCH",
             PROFILE: PROFILE_SYMBOL,
             demo_name: PROFILE_SYMBOL,
+            exhibition_name: PROFILE_SYMBOL,
             bench_name: PROFILE_SYMBOL,
         }
         self.assertEqual(set(builds), set(expected_symbols))
@@ -58,6 +60,7 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         generic = set(builds["m5stack-stopwatch"]["sdkconfig_append"])
         provisions = set(builds[PROFILE]["sdkconfig_append"])
         demo = set(builds[demo_name]["sdkconfig_append"])
+        exhibition = set(builds[exhibition_name]["sdkconfig_append"])
         self.assertIn("CONFIG_USE_AFE_WAKE_WORD=y", generic)
         self.assertNotIn(f"{PROFILE_SYMBOL}=y", generic)
         self.assertNotIn("CONFIG_PROVISIONS_GATEWAY_REQUIRED=y", generic)
@@ -76,6 +79,14 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         }
         self.assertEqual(demo - provisions, demo_only)
         self.assertEqual(provisions - demo, set())
+        exhibition_only = {
+            "CONFIG_PROVISIONS_LOCAL_CAPTURE=n",
+            "CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO=n",
+            "CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH=n",
+            "CONFIG_PROVISIONS_EXHIBITION_DEMO=y",
+        }
+        self.assertEqual(exhibition - provisions, exhibition_only)
+        self.assertEqual(provisions - exhibition, set())
         accepted = json.loads((BOARD_DIR / "bench_profile.json").read_text())["builds"][0]
         hardware_bench = json.loads((BOARD_DIR / "hardware_bench_profile.json").read_text())["builds"][0]
         self.assertEqual(hardware_bench, builds[bench_name])
@@ -94,6 +105,27 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
                     options.get("CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO"), "y"
                 )
                 self.assertNotEqual(options.get("CONFIG_PROVISIONS_LOCAL_CAPTURE"), "n")
+
+    def test_exhibition_demo_is_local_explicit_and_audible(self):
+        source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
+        cmake = (ROOT / "main/CMakeLists.txt").read_text(encoding="utf-8")
+        manifest = json.loads(
+            (ROOT / "main/assets/provisions/exhibition-demo.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertIn("CONFIG_PROVISIONS_EXHIBITION_DEMO", source)
+        self.assertIn("network disabled", source)
+        self.assertIn('display_->SetStatus("Listening")', source)
+        self.assertIn('display_->SetStatus("Working")', source)
+        self.assertIn('display_->SetStatus("Speaking")', source)
+        self.assertIn("orbit::exhibition_demo::kSeaBassReply", source)
+        self.assertIn('SetCrestResultLocked("2 SEA BASS\\nUSE BY TUESDAY"', source)
+        self.assertIn("PROVISIONS_EXHIBITION_DEMO_SOUNDS", cmake)
+        self.assertTrue(manifest["demo_only"])
+        self.assertFalse(manifest["authoritative_writes"])
+        clip = ROOT / "main/assets/provisions" / manifest["phrases"][0]["file"]
+        self.assertEqual(clip.stat().st_size, manifest["phrases"][0]["bytes"])
 
     def test_provisions_behavior_is_thin_hold_to_talk(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
@@ -778,6 +810,10 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("CONFIG_BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH", cmake)
         self.assertIn('set(BOARD_DIR "m5stack/stopwatch")', cmake)
         self.assertIn(f'set(PROVISIONS_STOPWATCH_BOARD_NAME "{PROFILE}")', cmake)
+        self.assertIn(
+            'set(PROVISIONS_STOPWATCH_BOARD_NAME "provisions-kitchen-helper-stopwatch-exhibition-demo")',
+            cmake,
+        )
         self.assertIn("NOT BOARD_NAME STREQUAL PROVISIONS_STOPWATCH_BOARD_NAME", cmake)
         self.assertIn("config BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH", kconfig)
         self.assertIn(f'kSelectedHardwareIdentity = "{PROFILE}"', policy)

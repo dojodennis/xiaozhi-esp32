@@ -18,6 +18,9 @@
 #include "provisions_hardware_facts.h"
 #include "provisions_timer_snapshot.h"
 #include "utf8_ellipsis.h"
+#if CONFIG_PROVISIONS_EXHIBITION_DEMO
+#include "orbit_exhibition_demo_audio.h"
+#endif
 #if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
 #include <esp_pthread.h>
 #include "service_schedule_hardware_bench.h"
@@ -98,6 +101,10 @@ constexpr int64_t kOrbitTickIntervalUs = 1000LL * 1000;
 constexpr int kOrbitArcDiameter = ProvisionsStopwatchOrbit::kSlotRadius * 2;
 constexpr int kOrbitLabelWidth = 94;
 constexpr int kOrbitAlarmMaximumNames = 2;
+#if CONFIG_PROVISIONS_EXHIBITION_DEMO
+constexpr int64_t kExhibitionWorkingDelayUs = 1200LL * 1000;
+constexpr int64_t kExhibitionReplyDurationUs = 3900LL * 1000;
+#endif
 
 constexpr uint32_t kColorGold = 0xD4B67A;
 // Pure white on the true-black ground so the UI melts into the device frame
@@ -2086,6 +2093,17 @@ private:
     }
 
 public:
+#if CONFIG_PROVISIONS_EXHIBITION_DEMO
+    void ShowExhibitionDemoResult() {
+        DisplayLockGuard lock(this);
+        resting_state_.store(VisualState::kReady);
+        receipt_visible_.store(false);
+        ClearReplyLocked();
+        SetCrestResultLocked("2 SEA BASS\nUSE BY TUESDAY", 5000);
+        SetReplyLayoutLocked(false);
+    }
+#endif
+
     void ShowNotification(const std::string& notification, int duration_ms = 3000) override {
         ShowNotification(notification.c_str(), duration_ms);
     }
@@ -2175,6 +2193,94 @@ private:
     std::atomic<int64_t> display_idle_deadline_us_{0};
     provisions::LocalCapturePulse capture_haptic_pulse_;
     bool display_dimmed_ = false;
+#if CONFIG_PROVISIONS_EXHIBITION_DEMO
+    enum class ExhibitionPhase : uint8_t { kIdle, kListening, kWorking, kSpeaking };
+    std::atomic<ExhibitionPhase> exhibition_phase_{ExhibitionPhase::kIdle};
+    esp_timer_handle_t exhibition_work_timer_ = nullptr;
+    esp_timer_handle_t exhibition_reply_timer_ = nullptr;
+
+    void StopExhibitionTimer(esp_timer_handle_t timer) {
+        if (timer == nullptr)
+            return;
+        const auto result = esp_timer_stop(timer);
+        if (result != ESP_OK && result != ESP_ERR_INVALID_STATE)
+            ESP_LOGW(TAG, "Exhibition timer stop failed: %s", esp_err_to_name(result));
+    }
+
+    void ShowExhibitionReady() {
+        exhibition_phase_.store(ExhibitionPhase::kIdle);
+        display_->SetStatus("Ready");
+        display_->SetTimerText("DEMO - HOLD YELLOW");
+    }
+
+    void StartExhibitionDemo() {
+        ExhibitionPhase expected = ExhibitionPhase::kIdle;
+        if (!exhibition_phase_.compare_exchange_strong(expected, ExhibitionPhase::kListening))
+            return;
+        StopExhibitionTimer(exhibition_work_timer_);
+        StopExhibitionTimer(exhibition_reply_timer_);
+        ResetDisplayIdleTimer();
+        display_->SetStatus("Listening");
+        display_->SetTimerText("DEMO - RELEASE TO ASK");
+        PulseLocalCaptureHaptic(70);
+    }
+
+    void FinishExhibitionListening() {
+        ExhibitionPhase expected = ExhibitionPhase::kListening;
+        if (!exhibition_phase_.compare_exchange_strong(expected, ExhibitionPhase::kWorking))
+            return;
+        display_->SetStatus("Working");
+        display_->SetTimerText("DEMO - LOCAL REPLY");
+        ESP_ERROR_CHECK(
+            esp_timer_start_once(exhibition_work_timer_, kExhibitionWorkingDelayUs));
+    }
+
+    void PlayExhibitionReply() {
+        if (exhibition_phase_.exchange(ExhibitionPhase::kSpeaking) !=
+            ExhibitionPhase::kWorking) {
+            return;
+        }
+        display_->SetStatus("Speaking");
+        display_->SetTimerText("DEMO - NO DATA SAVED");
+        Application::GetInstance().PlaySound(orbit::exhibition_demo::kSeaBassReply);
+        ESP_ERROR_CHECK(
+            esp_timer_start_once(exhibition_reply_timer_, kExhibitionReplyDurationUs));
+    }
+
+    void FinishExhibitionReply() {
+        if (exhibition_phase_.exchange(ExhibitionPhase::kIdle) !=
+            ExhibitionPhase::kSpeaking) {
+            return;
+        }
+        display_->ShowExhibitionDemoResult();
+        display_->SetTimerText("DEMO - YELLOW TO REPLAY");
+    }
+
+    void InitializeExhibitionDemoTimers() {
+        esp_timer_create_args_t work_args = {
+            .callback = [](void* raw) {
+                auto* self = static_cast<M5StackStopwatchBoard*>(raw);
+                Application::GetInstance().Schedule([self]() { self->PlayExhibitionReply(); });
+            },
+            .arg = this,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "orbit_demo_work",
+            .skip_unhandled_events = true,
+        };
+        ESP_ERROR_CHECK(esp_timer_create(&work_args, &exhibition_work_timer_));
+        esp_timer_create_args_t reply_args = {
+            .callback = [](void* raw) {
+                auto* self = static_cast<M5StackStopwatchBoard*>(raw);
+                Application::GetInstance().Schedule([self]() { self->FinishExhibitionReply(); });
+            },
+            .arg = this,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "orbit_demo_reply",
+            .skip_unhandled_events = true,
+        };
+        ESP_ERROR_CHECK(esp_timer_create(&reply_args, &exhibition_reply_timer_));
+    }
+#endif
 #if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
     std::unique_ptr<orbit::service_schedule::HardwareBench> bench_;
     std::atomic<orbit::service_schedule::HardwareBench*> bench_published_{nullptr};
@@ -2500,7 +2606,21 @@ private:
 
     void InitializeButtons() {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+#if CONFIG_PROVISIONS_EXHIBITION_DEMO
+        button1_.OnPressDown([this]() {
+            Application::GetInstance().Schedule([this]() { StartExhibitionDemo(); });
+        });
+        button1_.OnPressUp([this]() {
+            Application::GetInstance().Schedule([this]() { FinishExhibitionListening(); });
+        });
+        button2_.OnClick([this]() {
+            Application::GetInstance().Schedule([this]() {
+                auto* codec = GetAudioCodec();
+                const bool maximum = codec->output_volume() >= kMaximumOutputVolume;
+                codec->SetOutputVolume(maximum ? kDefaultOutputVolume : kMaximumOutputVolume);
+            });
+        });
+#elif CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
         button1_.OnClick([this]() { QueueBenchGesture(false); });
         button2_.OnClick([this]() { QueueBenchGesture(true); });
 #elif CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO
@@ -2718,6 +2838,9 @@ public:
         InitializeCaptureHapticTimer();
         InitializeTalkChordTimer();
 #endif
+#if CONFIG_PROVISIONS_EXHIBITION_DEMO
+        InitializeExhibitionDemoTimers();
+#endif
 #if !CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
         display_->SetTimerAlarmOutputCallback([this](bool active) {
             ioe_.digitalWrite(IOE_PIN_MOTOR, active ? HIGH : LOW);
@@ -2805,7 +2928,12 @@ public:
     }
 #endif
 
-#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+#if CONFIG_PROVISIONS_EXHIBITION_DEMO
+    void StartNetwork() override {
+        ESP_LOGI(TAG, "Orbit exhibition demo: local speaker/display only; network disabled");
+        ShowExhibitionReady();
+    }
+#elif CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
     void StartNetwork() override {
         ESP_LOGI(TAG,
                  "Isolated schedule BENCH: real speaker, no network/capture; orbit_bench_v1 only");
