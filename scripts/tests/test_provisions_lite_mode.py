@@ -453,19 +453,14 @@ class LiteWiringReview(unittest.TestCase):
         self.assertIn("provisions_response_ticks_ >= kProvisionsResponseTimeoutSeconds", maintenance)
         self.assertIn('Alert("Unavailable", "Request timed out", "cancel", Lang::Sounds::OGG_EXCLAMATION);', maintenance)
 
-    def test_actual_socket_loss_keeps_the_offline_buzz_and_drops_lite_playback(self) -> None:
+    def test_actual_socket_loss_drops_lite_playback(self) -> None:
         closed = APPLICATION[APPLICATION.index("protocol->OnAudioChannelClosed(["):]
         closed = closed[:closed.index("protocol->OnIncomingJson(")]
-        self.assertIn("NoteProvisionsOffline();", closed)
         self.assertIn("ResetLitePlayback();", closed)
-        self.assertLess(closed.index("NoteProvisionsOffline();"), closed.index("ResetLitePlayback();"))
         opened = APPLICATION[APPLICATION.index("protocol->OnAudioChannelOpened(["):]
         opened = opened[:opened.index("protocol->OnAudioChannelClosed([")]
         self.assertIn("ResetLitePlayback();", opened)
         self.assertIn("lite_idle_status_.store(nullptr);", opened)
-        # PR #3 reconnect/buzz code is not modified beyond these calls.
-        self.assertEqual(APPLICATION.count("kProvisionsOfflineBuzzMs"), 2)
-        self.assertIn("Board::GetInstance().PulseHaptic(kProvisionsOfflineBuzzMs)", APPLICATION)
 
     def test_actual_lite_upload_keeps_the_journal_slot_and_marks_it_awaiting_receipt(self) -> None:
         # Codex correction item 2: a local upload is never a receipt. The lite

@@ -142,16 +142,29 @@ clears and any playback still running is cut.
 ## Failure
 
 - Socket close or a protocol error during a turn takes the existing path:
-  OFFLINE face, the PR #3 OFFLINE buzz (`NoteProvisionsOffline`), jittered
-  reconnect. Lite playback is flushed with the socket.
+  OFFLINE face and reconnect. Lite playback is flushed with the socket.
 - Reply watchdog: 12 s after the upload with no `tts`/face frame → Ready with
   the failed face, socket kept.
 - A `tts start` with no `tts stop` within the existing 35 s TTS deadline →
   Ready with the failed face, socket kept.
 - No ping/pong in lite; the heartbeat expiry is disabled. Liveness is the socket.
 
-## Unverified (no toolchain on the authoring Mac)
+## Verification
 
-Target compile, the motor, and 24 kHz decode on the ES8311 path are unverified
-here; the host suite covers the hello parser, the jitter buffer, the face
-mapping and the wiring.
+This implementation was ported onto the known-working StopWatch base
+`7105d4a`, preserving its timer, display and alarm-stop behavior. On 13
+September 2026 it passed:
+
+- the complete 335-test host suite, including Lite hello, jitter/drain,
+  interruption, retained-capture, timer and reconnect coverage;
+- an ESP-IDF 6.0.2 target build for `m5stack/stopwatch` with
+  `bench_profile.json` (`provisions-kitchen-helper-stopwatch`); the application
+  uses 0x320000 bytes and leaves 0xd0000 bytes (21%) in its smallest app
+  partition;
+- the matching gateway's complete test suite, lint and strict source type
+  check, with the native Lite compatibility bridge disabled.
+
+The generated application and merged images are deliberately unsigned and
+have not been flashed. Motor behavior, microphone capture, 24 kHz ES8311
+playback quality and interruption latency remain physical-device acceptance
+gates.

@@ -256,7 +256,8 @@ class LitePreservationTests(unittest.TestCase):
                  str(ROOT / "main/provisions_dictation.cc"),
                  str(ROOT / "main/provisions_dictation_store.cc"),
                  str(ROOT / "main/provisions_voice_wire.cc"),
-                 str(ROOT / "main/provisions_timers.cc"), str(path / "json.o"), "-lcrypto",
+                 str(ROOT / "main/provisions_timers.cc"),
+                 str(ROOT / "main/provisions_hardware_facts.cc"), str(path / "json.o"), "-lcrypto",
                  "-o", str(binary)], capture_output=True, text=True)
             self.assertEqual(built.returncode, 0, built.stderr)
             result = subprocess.run([str(binary)], capture_output=True, text=True, timeout=60,

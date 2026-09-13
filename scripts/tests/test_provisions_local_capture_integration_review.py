@@ -565,8 +565,8 @@ TaskHandle_t xTaskGetCurrentTaskHandle(){return current_task;}
 void xEventGroupSetBits(int,int){}
 namespace provisions {
 struct VoiceReplay {VoiceCapture capture;size_t bytes=0;uint8_t* frames=nullptr;};
-std::string VoiceCaptureStart(const VoiceReplay&,const std::string&,uint32_t turn,bool deferred){
-    return "start:"+std::to_string(turn)+(deferred?":deferred":":live");
+std::string VoiceCaptureStart(const VoiceReplay&,const std::string&,uint32_t turn,bool deferred,bool alarm_stop){
+    return "start:"+std::to_string(turn)+(deferred?":deferred":":live")+(alarm_stop?":alarm_stop":"");
 }
 }
 struct Observed {
@@ -592,7 +592,7 @@ struct WebsocketProtocol {
     bool BeginOperation();void EndOperation();void CloseAudioChannel(bool send_goodbye=false);
     void InterruptStoredRecording();
     bool DictationNegotiated() const{return dictation_enabled_.load();}
-    bool SendStoredRecording(const provisions::VoiceReplay&,bool,const std::function<bool()>&);
+    bool SendStoredRecording(const provisions::VoiceReplay&,bool,const std::function<bool()>&,bool alarm_stop=false);
     bool IsAudioChannelOpened(){auto ws=std::atomic_load(&websocket_);return gateway_authenticated_.load() && ws && ws->seen.connected;}
     bool GetCaptureContext(provisions::VoiceContext& out){out.conversation_id[0]=1;return capture_enabled_.load();}
     uint32_t voice_turn_id(){return voice_turn_.id();}

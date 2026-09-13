@@ -566,7 +566,7 @@ struct WebsocketProtocol {
  std::string session_id(){return "00000000-0000-0000-0000-000000000001";}
  bool SendDictationControl(const std::string& text){controls.push_back(text);return true;}
 };
-struct Display {bool visible=false;std::string status,action;void SetDictationScreen(bool v,const std::string& s,const std::string& a){visible=v;status=s;action=a;}};
+struct Display {bool visible=false;std::string status,action;void SetStatus(const char* s){status=s?s:"";}void SetDictationScreen(bool v,const std::string& s,const std::string& a){visible=v;status=s;action=a;}};
 struct Board {Display display;static Board& GetInstance(){static Board board;return board;}Display* GetDisplay(){return &display;}};
 int64_t DictationNow(bool trusted){return trusted?1788712345678LL:0;}
 
@@ -589,6 +589,7 @@ struct Application {
  int64_t dictation_next_receipt_us_=0,dictation_last_send_us_=0;std::string dictation_sent_control_;
  struct TimerPlayer{bool fenced=false;bool Fenced(){return fenced;}}timer_player_;
  std::shared_ptr<WebsocketProtocol> GetProtocol(){return protocol;}int GetDeviceState(){return state;}void SetDeviceState(int value){state=value;}
+ const char* GetProvisionsIdleStatus() const{return "Ready";}
  bool IsLiteMode()const{return protocol&&protocol->IsLiteMode();}
  void Schedule(std::function<void()> fn){fn();}void HandleVoiceRecordingResult(VoiceRecorder::Result,uint32_t){assert(false);}
  void StartListening();void StopListening();bool BeginLocalRecordingOnMain();void EndLocalRecordingOnMain();void ToggleDictationScreen();void DictationButton();void CloseDictationInputOnMain();void ServiceDictation();void HandleDictationControlOnMain();
@@ -819,7 +820,8 @@ class VoiceRecorderReviewTests(unittest.TestCase):
                             str(ROOT / "main/provisions_voice_recorder.cc"),
                             str(ROOT / "main/provisions_dictation_recorder.cc"),
                             str(ROOT / "main/provisions_dictation.cc"), str(ROOT / "main/provisions_dictation_store.cc"),
-                            str(ROOT / "main/provisions_voice_wire.cc"), str(ROOT / "main/provisions_timers.cc"), str(path / "json.o"), "-lcrypto",
+                            str(ROOT / "main/provisions_voice_wire.cc"), str(ROOT / "main/provisions_timers.cc"),
+                            str(ROOT / "main/provisions_hardware_facts.cc"), str(path / "json.o"), "-lcrypto",
                             "-o", str(binary)], check=True)
             subprocess.run([str(binary)], check=True, timeout=30, env={**os.environ, "ASAN_OPTIONS":
                 "detect_leaks=0" if sys.platform == "darwin" else "detect_leaks=1"})
