@@ -11,6 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CJSON_DIR = ROOT / "managed_components/espressif__cjson/cJSON"
 BOARD = ROOT / "main/boards/m5stack/stopwatch/m5stack_stopwatch.cc"
+TOUCH = ROOT / "main/boards/m5stack/stopwatch/cst820_touch.cc"
 
 
 class ProvisionsTimerDismissalTests(unittest.TestCase):
@@ -50,6 +51,39 @@ class ProvisionsTimerDismissalTests(unittest.TestCase):
         self.assertIn("timer_dismiss_callback_()", silence)
         self.assertIn("Application::GetInstance().DismissDueTimers()", board)
         self.assertNotIn("timer.acknowledge", board)
+
+    def test_touch_dismisses_only_an_active_ringing_timer(self):
+        board = BOARD.read_text(encoding="utf-8")
+        touch = TOUCH.read_text(encoding="utf-8")
+
+        dismiss = board.split("bool DismissRingingTimers()", 1)[1].split(
+            "AlarmOutputChange DismissDueTimersLocked()", 1
+        )[0]
+        self.assertIn("if (!timer_alarm_active_.load())", dismiss)
+        self.assertIn("FinishedTimers(", dismiss)
+        self.assertIn("if (due.empty())", dismiss)
+        self.assertIn("DismissDueTimersLocked()", dismiss)
+        self.assertIn("timer_dismiss_callback_()", dismiss)
+
+        touch_init = board.split("void InitializeTouch()", 1)[1].split(
+            "void InitializeI2c()", 1
+        )[0]
+        self.assertIn("if (!self->display_->HasTimerAlarm())", touch_init)
+        self.assertIn("pressed && !self->touch_was_pressed_", touch_init)
+        self.assertIn("touch_dismiss_queued_.exchange(true)", touch_init)
+        self.assertIn("Application::GetInstance().Schedule", touch_init)
+        self.assertIn("display_->DismissRingingTimers()", touch_init)
+        self.assertNotIn("SilenceTimerAlarm()", touch_init)
+
+        # Match M5Stack's CST820 frame: status begins at 0x00, finger count is
+        # byte two, and X-high bits encode down/contact/up.
+        self.assertIn("kStatusRegister = 0x00", touch)
+        self.assertIn("const uint8_t finger_count = frame[2]", touch)
+        self.assertIn("const uint8_t event = (frame[3] & 0xC0) >> 6", touch)
+        self.assertIn("finger_count > 0 && (event == 0 || event == 2)", touch)
+
+        self.assertIn('"TAP TO STOP\\nBLUE SILENCES"', board)
+        self.assertIn('"TAP TO STOP\\nBLUE CLEARS"', board)
 
     @unittest.skipUnless(
         shutil.which("c++") and shutil.which("cc"),

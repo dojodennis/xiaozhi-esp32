@@ -9,6 +9,7 @@
 #include "M5PM1.h"
 #include "config.h"
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+#include "cst820_touch.h"
 #include "crest_asset.h"
 #include "crest_audio.h"
 #include "crest_motion.h"
@@ -863,8 +864,8 @@ private:
             }
             if (alarm_hint_label_ != nullptr) {
                 lv_label_set_text(alarm_hint_label_, timer_alarm_state_.silenced()
-                                                         ? "SILENCED\nBLUE CLEARS"
-                                                         : "BLUE SILENCES");
+                                                         ? "TAP TO STOP\nBLUE CLEARS"
+                                                         : "TAP TO STOP\nBLUE SILENCES");
             }
         }
         SetReplyLayoutLocked(reply_visible_.load());
@@ -1067,7 +1068,7 @@ private:
         lv_obj_set_style_text_color(alarm_hint_label_, lv_color_hex(kColorAmber), 0);
         lv_obj_set_style_text_letter_space(alarm_hint_label_, 2, 0);
         lv_obj_set_style_text_align(alarm_hint_label_, LV_TEXT_ALIGN_CENTER, 0);
-        lv_label_set_text(alarm_hint_label_, "BLUE SILENCES");
+        lv_label_set_text(alarm_hint_label_, "TAP TO STOP\nBLUE SILENCES");
         lv_obj_align(alarm_hint_label_, LV_ALIGN_BOTTOM_MID, 0, -92);
 
         SetVisible(orbit_layer_, false);
@@ -1871,7 +1872,7 @@ public:
                 if (output_change != AlarmOutputChange::kStop)
                     return false;
                 if (alarm_hint_label_ != nullptr) {
-                    lv_label_set_text(alarm_hint_label_, "SILENCED\nBLUE CLEARS");
+                    lv_label_set_text(alarm_hint_label_, "TAP TO STOP\nBLUE CLEARS");
                 }
             }
 #endif
@@ -1879,6 +1880,29 @@ public:
         ApplyAlarmOutputChange(output_change);
         if (dismissed && timer_dismiss_callback_)
             timer_dismiss_callback_();
+        return true;
+    }
+
+    // A screen tap is an emergency fallback, not a general timer control: it
+    // dismisses only timers that are already due and driving the alarm takeover.
+    bool DismissRingingTimers() {
+        AlarmOutputChange output_change = AlarmOutputChange::kNone;
+        {
+            DisplayLockGuard lock(this);
+            if (!timer_alarm_active_.load()) {
+                return false;
+            }
+            const auto due = ProvisionsStopwatchOrbit::FinishedTimers(
+                timer_snapshot_.timers, EffectiveServerNowMs());
+            if (due.empty()) {
+                return false;
+            }
+            output_change = DismissDueTimersLocked();
+        }
+        ApplyAlarmOutputChange(output_change);
+        if (timer_dismiss_callback_) {
+            timer_dismiss_callback_();
+        }
         return true;
     }
 
@@ -2172,6 +2196,10 @@ private:
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     esp_timer_handle_t display_idle_timer_ = nullptr;
     esp_timer_handle_t capture_haptic_timer_ = nullptr;
+    StopwatchCst820Touch touch_;
+    TaskHandle_t touch_task_ = nullptr;
+    std::atomic<bool> touch_dismiss_queued_{false};
+    bool touch_was_pressed_ = false;
     std::atomic<int64_t> display_idle_deadline_us_{0};
     provisions::LocalCapturePulse capture_haptic_pulse_;
     bool display_dimmed_ = false;
@@ -2277,6 +2305,57 @@ private:
 #endif
 #endif
 
+    void InitializeTouch() {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED && !CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO && \
+    !CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+        ioe_.pinMode(IOE_PIN_TOUCH_RST, OUTPUT);
+        ioe_.setDriveMode(IOE_PIN_TOUCH_RST, M5IOE1_DRIVE_PUSHPULL);
+        ioe_.digitalWrite(IOE_PIN_TOUCH_RST, LOW);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        ioe_.digitalWrite(IOE_PIN_TOUCH_RST, HIGH);
+        vTaskDelay(pdMS_TO_TICKS(50));
+
+        const bool ready = touch_.Begin(i2c_bus_);
+        provisions::hardware::SetTouchProbe(ready ? "present" : "unavailable");
+        if (!ready) {
+            ESP_LOGW(TAG, "CST820 touch unavailable");
+            return;
+        }
+
+        const BaseType_t created = xTaskCreate(
+            [](void* arg) {
+                auto* self = static_cast<M5StackStopwatchBoard*>(arg);
+                while (true) {
+                    if (!self->display_->HasTimerAlarm()) {
+                        self->touch_was_pressed_ = false;
+                        vTaskDelay(pdMS_TO_TICKS(100));
+                        continue;
+                    }
+
+                    bool pressed = false;
+                    if (self->touch_.ReadPressed(pressed)) {
+                        if (pressed && !self->touch_was_pressed_ &&
+                            !self->touch_dismiss_queued_.exchange(true)) {
+                            Application::GetInstance().Schedule([self]() {
+                                self->touch_dismiss_queued_.store(false);
+                                if (self->display_->DismissRingingTimers()) {
+                                    self->ResetDisplayIdleTimer();
+                                }
+                            });
+                        }
+                        self->touch_was_pressed_ = pressed;
+                    }
+                    vTaskDelay(pdMS_TO_TICKS(20));
+                }
+            },
+            "stopwatch_touch", 3072, this, 2, &touch_task_);
+        if (created != pdPASS) {
+            touch_task_ = nullptr;
+            ESP_LOGE(TAG, "Failed to start touch task");
+        }
+#endif
+    }
+
     void InitializeI2c() {
         i2c_master_bus_config_t i2c_bus_cfg = {
             .i2c_port = I2C_NUM_0,
@@ -2289,17 +2368,6 @@ private:
             .flags = {.enable_internal_pullup = 1},
         };
         ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_bus_cfg, &i2c_bus_));
-
-        // One-off probe: config.h declares a CST820B touch panel at 0x15 that
-        // no code drives yet. Whether it answers on this bus is the one fact a
-        // touch driver needs and cannot be established from source. Reads
-        // nothing, changes no behaviour.
-        {
-            const esp_err_t touch_probe = i2c_master_probe(i2c_bus_, 0x15, 100);
-            const char* result = touch_probe == ESP_OK ? "present" : esp_err_to_name(touch_probe);
-            ESP_LOGI(TAG, "provisions touch probe addr=0x15 result=%s", result);
-            provisions::hardware::SetTouchProbe(result);
-        }
 
         if (ioe_.begin(i2c_bus_, M5IOE1_I2C_ADDR, M5IOE1_I2C_FREQ_100K, M5IOE1_INT_MODE_POLLING) != M5IOE1_OK) {
             ESP_LOGE(TAG, "M5IOE1 begin failed");
@@ -2712,6 +2780,7 @@ public:
         InitializeI2c();
         InitializeSpi();
         InitializeDisplay();
+        InitializeTouch();
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
 #if !CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO && !CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
         InitializeDisplayIdleTimer();
