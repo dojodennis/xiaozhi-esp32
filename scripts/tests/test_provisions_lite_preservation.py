@@ -142,9 +142,9 @@ void lite_eviction_cases(){
         mark_uploaded(recorder,offered.back(),kBaseMs+kMinuteMs); // newer, uploaded a minute later
         assert(recorder.AwaitingReceiptCount()==2);
         const auto erases=state.erases;
-        // Full store, nothing aged: the new press fails and nothing is evicted.
+        // Full store, nothing aged: Lite streams from RAM and evicts nothing.
         record(recorder,5,kBaseMs+10*kMinuteMs);
-        assert(notices.back()==std::make_pair(VoiceRecorder::Result::Failed,uint32_t(5)));
+        assert(notices.back()==std::make_pair(VoiceRecorder::Result::LiveOnly,uint32_t(5)));
         assert(recorder.PendingCount()==4&&state.erases==erases&&notice_count(VoiceRecorder::Result::Evicted)==0);
         // Un-uploaded entries (presses 3 and 4) are never candidates even when old.
         record(recorder,6,kBaseMs+31*kMinuteMs);
@@ -154,12 +154,12 @@ void lite_eviction_cases(){
         bool evicted_oldest=false;
         for(const auto& notice:notices)if(notice.first==VoiceRecorder::Result::Evicted){evicted_oldest=notice.second==1;}
         assert(evicted_oldest&&recorder.PendingCount()==4&&recorder.AwaitingReceiptCount()==1);
-        // Exactly one per full press: the next aged press evicts press 2, the next fails.
+        // Exactly one per full press: the next aged press evicts press 2, the next is RAM-only.
         record(recorder,7,kBaseMs+40*kMinuteMs);
         assert(notice_count(VoiceRecorder::Result::Evicted)==2&&recorder.AwaitingReceiptCount()==0&&recorder.PendingCount()==4);
         const auto settled=state.erases;
-        record(recorder,8,kBaseMs+60*kMinuteMs); // Nothing uploaded remains: fail, erase nothing.
-        assert(notices.back()==std::make_pair(VoiceRecorder::Result::Failed,uint32_t(8))&&state.erases==settled);
+        record(recorder,8,kBaseMs+60*kMinuteMs); // Nothing uploaded remains: RAM-only, erase nothing.
+        assert(notices.back()==std::make_pair(VoiceRecorder::Result::LiveOnly,uint32_t(8))&&state.erases==settled);
         assert(notice_count(VoiceRecorder::Result::Evicted)==2&&recorder.PendingCount()==4);
     }
     join();
@@ -170,16 +170,16 @@ void lite_eviction_cases(){
         for(uint32_t press=1;press<=4;++press)record(recorder,press,0);
         replay(recorder);assert(offered.size()==1);mark_uploaded(recorder,offered.back(),0);
         const auto erases=state.erases;
-        record(recorder,5,0);assert(notices.back()==std::make_pair(VoiceRecorder::Result::Failed,uint32_t(5)));
+        record(recorder,5,0);assert(notices.back()==std::make_pair(VoiceRecorder::Result::LiveOnly,uint32_t(5)));
         clock_us+=29*kMinuteUs;record(recorder,6,0);
-        assert(notices.back()==std::make_pair(VoiceRecorder::Result::Failed,uint32_t(6))&&state.erases==erases);
+        assert(notices.back()==std::make_pair(VoiceRecorder::Result::LiveOnly,uint32_t(6))&&state.erases==erases);
         clock_us+=2*kMinuteUs;record(recorder,7,0);
         assert(notices.back()==std::make_pair(VoiceRecorder::Result::Saved,uint32_t(7))&&state.erases>erases);
         assert(notice_count(VoiceRecorder::Result::Evicted)==1&&recorder.PendingCount()==4&&recorder.AwaitingReceiptCount()==0);
     }
     join();
     // After a reboot the monotonic mark is unknown; without a trusted clock on
-    // either side the entry is not evictable (conservative), so the press fails.
+    // either side the entry is not evictable (conservative), so Lite uses RAM.
     fresh();
     {
         VoiceRecorder recorder;initialize(recorder);authorize(recorder);use_lite(recorder);
@@ -191,10 +191,36 @@ void lite_eviction_cases(){
     {
         VoiceRecorder recorder;initialize(recorder);use_lite(recorder);assert(recorder.AwaitingReceiptCount()==1);
         clock_us+=60*kMinuteUs;record(recorder,5,0);
-        assert(notices.back()==std::make_pair(VoiceRecorder::Result::Failed,uint32_t(5))&&state.erases==erases_rebooted);
+        assert(notices.back()==std::make_pair(VoiceRecorder::Result::LiveOnly,uint32_t(5))&&state.erases==erases_rebooted);
     }
     join();
     std::cout<<"Eviction: only the oldest uploaded-awaiting-receipt command capture over 30 min, one per full press\n";
+}
+
+void lite_full_live_only_cases(){
+    // A full store with retained, non-evictable data must not erase anything.
+    // Authenticated Lite may instead use the bounded RAM replay allocation.
+    fresh();
+    {
+        VoiceRecorder recorder;initialize(recorder);authorize(recorder);use_lite(recorder);
+        for(uint32_t press=1;press<=4;++press)record(recorder,press,0);
+        const auto retained=state.flash;const auto erases=state.erases;
+        hold_replay=true;record(recorder,5,0);
+        assert(notices.back()==std::make_pair(VoiceRecorder::Result::LiveOnly,uint32_t(5)));
+        assert(offered.size()==1&&offered.back().press==5&&offered.back().slot==VoiceOutbox::kSlots);
+        assert(recorder.PendingCount()==4&&state.flash==retained&&state.erases==erases);
+        // While the first RAM replay is owned by the uploader, a second press
+        // fails closed instead of mutating or aliasing it.
+        record(recorder,6,0);
+        assert(notices.back()==std::make_pair(VoiceRecorder::Result::Failed,uint32_t(6)));
+        assert(offered.size()==1&&state.flash==retained&&state.erases==erases);
+        held.reset();hold_replay=false;record(recorder,7,0);
+        assert(notices.back()==std::make_pair(VoiceRecorder::Result::LiveOnly,uint32_t(7)));
+        assert(offered.size()==2&&offered.back().slot==VoiceOutbox::kSlots);
+        assert(recorder.PendingCount()==4&&state.flash==retained&&state.erases==erases);
+    }
+    join();
+    std::cout<<"Full Lite journal streams from bounded RAM without changing retained slots\n";
 }
 
 void lite_connect_cases(){
@@ -232,7 +258,7 @@ class LitePreservationTests(unittest.TestCase):
         head = worker[:worker.index("int main(){")]
         program = (review.PRELUDE + review.SUPPORT + head + LITE_CASES +
                    "int main(){lite_upload_cases();lite_deferred_cases();lite_eviction_cases();"
-                   "lite_connect_cases();return 0;}\n")
+                   "lite_full_live_only_cases();lite_connect_cases();return 0;}\n")
         with tempfile.TemporaryDirectory(prefix="orbit-lite-preservation-") as folder:
             path = Path(folder)
             for name, source in review.HEADERS.items():
@@ -267,6 +293,7 @@ class LitePreservationTests(unittest.TestCase):
                                          "detect_leaks=0" if sys.platform == "darwin" else "detect_leaks=1"})
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             for line in ("Lite upload is retained until", "Deferred (reboot) capture", "Eviction: only the oldest",
+                         "Full Lite journal streams from bounded RAM",
                          "Connecting in lite keeps"):
                 self.assertIn(line, result.stdout)
 
@@ -283,13 +310,18 @@ class LitePreservationTests(unittest.TestCase):
         self.assertNotIn("RemoveAfterReceipt", mark)
         self.assertNotIn("Synced", mark)
         self.assertIn("saved.capture.IsDictation())\n            return;", mark)
-        evict = RECORDER[RECORDER.index("bool VoiceRecorder::EvictForNewCapture("):RECORDER.index("bool VoiceRecorder::Store(")]
+        evict = RECORDER[RECORDER.index("bool VoiceRecorder::EvictForNewCapture("):RECORDER.index("VoiceStoreResult VoiceRecorder::Store(")]
         self.assertIn("if (!awaiting_receipt_[slot])\n            continue;", evict)
         self.assertIn("saved.capture.IsDictation())\n            continue;", evict)
         self.assertIn("kAwaitingReceiptEvictionUs", evict)
         self.assertIn("notify_(Result::Evicted, press);", evict)
-        store = RECORDER[RECORDER.index("bool VoiceRecorder::Store("):RECORDER.index("void VoiceRecorder::Run()")]
+        store = RECORDER[RECORDER.index("VoiceStoreResult VoiceRecorder::Store("):RECORDER.index("void VoiceRecorder::Run()")]
         self.assertIn("result == VoiceStoreResult::Full && EvictForNewCapture(", store)
+        save = RECORDER[RECORDER.index("void VoiceRecorder::Save("):RECORDER.index("void VoiceRecorder::RefreshCount()")]
+        self.assertIn("stored == VoiceStoreResult::Full && lite_active_.load()", save)
+        self.assertIn("replay_.use_count() == 1", save)
+        self.assertIn("notify_(Result::LiveOnly, work.press);", save)
+        self.assertIn("replay_->slot = VoiceOutbox::kSlots;", save)
         header = (ROOT / "main/provisions_voice_recorder.h").read_text()
         self.assertIn("kAwaitingReceiptEvictionUs = 30LL * 60 * 1000 * 1000", header)
         # Replay suppression and the RAM-only lite context.
@@ -305,10 +337,13 @@ class LitePreservationTests(unittest.TestCase):
         self.assertIn("? recorder->UseLiteContext(context)", opened)
         self.assertIn(": recorder->UpdateContext(context))", opened)
         handler = APPLICATION[APPLICATION.index("void Application::HandleVoiceRecordingResult("):APPLICATION.index("void Application::SendVoiceRecording(")]
+        self.assertIn("result == Result::LiveOnly", handler)
         self.assertIn("result == Result::Uploaded", handler)
         self.assertIn("Sent. Kept on Orbit until confirmed.", handler)
         self.assertIn("result == Result::Evicted", handler)
         self.assertIn("ESP_LOGW", handler[handler.index("result == Result::Evicted"):])
+        mark = APPLICATION[APPLICATION.index("void Application::MarkLiteUploaded("):APPLICATION.index("void Application::HandleVoiceRecordingResult(")]
+        self.assertIn("replay->slot == provisions::VoiceOutbox::kSlots", mark)
         press = APPLICATION[APPLICATION.index("bool Application::BeginLocalRecordingOnMain()"):]
         press = press[:press.index("provisions_recording_started_press_ = press;")]
         lite = press[press.index("if (dictation_screen_.load()) {"):press.index("DictationAuthorization() != dictation_authorization_seen_")]

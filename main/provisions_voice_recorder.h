@@ -62,7 +62,12 @@ public:
         // Orbit Lite show-time trade-off: an uploaded-awaiting-receipt command
         // capture older than kAwaitingReceiptEvictionUs was erased to journal a
         // new press on a full store. Never dictation, never an un-uploaded slot.
-        Evicted
+        Evicted,
+        // The four retained slots were deliberately preserved. While an
+        // authenticated Lite socket is active, one ordinary capture may use
+        // the existing RAM replay buffer instead of failing solely because the
+        // journal is full. It has no local durable-copy claim.
+        LiveOnly
     };
     static constexpr int64_t kAwaitingReceiptEvictionUs = 30LL * 60 * 1000 * 1000;
     using Notify = std::function<void(Result, uint32_t)>;
@@ -196,7 +201,8 @@ private:
     void ForgetAwaitingReceipt(size_t slot);
     void ApplyUploadMark(const UploadMark& mark);
     bool EvictForNewCapture(uint64_t now_unix_ms);
-    bool Store(const VoiceCapture& capture, VoiceBytes frames, SavedVoiceCapture& saved);
+    VoiceStoreResult Store(const VoiceCapture& capture, VoiceBytes frames,
+                           SavedVoiceCapture& saved);
     dictation::NvsStore dictation_store_;
     dictation::Journal dictation_journal_{dictation_store_};
     dictation::Record dictation_snapshot_{};

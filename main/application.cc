@@ -1943,6 +1943,10 @@ void Application::MarkLiteUploaded(const std::shared_ptr<const provisions::Voice
     if (!recorder || !replay) {
         return;
     }
+    // A full-journal Live-only replay has no local slot. Its successful upload
+    // must not manufacture an awaiting marker or imply a retained copy.
+    if (replay->slot == provisions::VoiceOutbox::kSlots)
+        return;
     uint64_t uploaded_unix_ms = 0;
     if (has_server_time_) {
         timeval now{};
@@ -2001,6 +2005,10 @@ void Application::HandleVoiceRecordingResult(provisions::VoiceRecorder::Result r
                 audio_service_.StopLocalRecording(press);
                 provisions_recording_saving_.store(false);
                 provisions_recording_failed_.store(true);
+            } else if (result == Result::LiveOnly) {
+                provisions_recording_saving_.store(false);
+                provisions_recording_local_.store(false);
+                provisions_recording_failed_.store(false);
             } else if (result == Result::Synced || result == Result::Consumed) {
                 provisions_recording_local_.store(false);
             }

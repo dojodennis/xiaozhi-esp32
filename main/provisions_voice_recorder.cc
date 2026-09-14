@@ -369,10 +369,28 @@ void VoiceRecorder::Save(const VoiceRecording::Work& work) {
                                      : dictation_journal_.Seal(capture);
     }
     const bool empty_dictation = work.capture.IsDictation() && work.samples == 0 && manifest;
-    bool ok = empty_dictation ||
-              (manifest && storage_ready_.load() && Encode(work, capture, bytes) &&
-               (capture.IsDictation() || outbox_.NewRequestId(capture.request_id)) &&
-               Store(capture, {frames_, bytes}, saved));
+    VoiceStoreResult stored = VoiceStoreResult::Invalid;
+    const bool encoded =
+        !empty_dictation && manifest && storage_ready_.load() && Encode(work, capture, bytes) &&
+        (capture.IsDictation() || outbox_.NewRequestId(capture.request_id));
+    if (encoded)
+        stored = Store(capture, {frames_, bytes}, saved);
+    const bool ok = empty_dictation || stored == VoiceStoreResult::Ok;
+    // A full journal must not make an authenticated Lite conversation unusable
+    // or erase a retained recording merely to recover. Reuse the already
+    // bounded replay allocation only when no upload owns it. This path is
+    // ordinary speech only, RAM only, and never claims a local durable save.
+    const bool live_only =
+        !capture.IsDictation() && stored == VoiceStoreResult::Full && lite_active_.load() &&
+        replay_.use_count() == 1 && Digest({frames_, bytes}, replay_->digest);
+    if (live_only) {
+        replay_->capture = capture;
+        replay_->slot = VoiceOutbox::kSlots;
+        replay_->bytes = bytes;
+        replay_->press = work.press;
+        replay_->retry_token = {};
+        std::memcpy(replay_->frames, frames_, bytes);
+    }
     if (!work.capture.IsDictation() || work.samples != 0) {
         const int64_t first_chunk = timing_first_chunk_us_.load();
         const int64_t pressed = timing_press_us_.load();
@@ -382,10 +400,14 @@ void VoiceRecorder::Save(const VoiceRecording::Work& work) {
                 : -1;
         if (press_to_chunk_ms >= 0)
             hardware::NoteMicReadyMs(static_cast<int>(press_to_chunk_ms));
-        const auto line =
-            DescribeCapture(work.press, ok, work.samples, work.levels, bytes, press_to_chunk_ms);
+        const auto line = DescribeCapture(work.press, ok || live_only, work.samples, work.levels,
+                                          bytes, press_to_chunk_ms);
 #ifdef ESP_PLATFORM
         ESP_LOGI("VoiceRecorder", "%s", line.c_str());
+        if (live_only)
+            ESP_LOGW("VoiceRecorder",
+                     "journal full: streaming one authenticated Lite capture from RAM; retained "
+                     "slots unchanged");
 #else
         (void)line;
 #endif
@@ -432,6 +454,9 @@ void VoiceRecorder::Save(const VoiceRecording::Work& work) {
             notify_(Result::DictationRecorded, work.press);
             RequestReplay();
         }
+    } else if (live_only) {
+        notify_(Result::LiveOnly, work.press);
+        replay_ready_(replay_);
     } else
         notify_(ok ? Result::Saved : Result::Failed, work.press);
 }
@@ -750,11 +775,12 @@ bool VoiceRecorder::EvictForNewCapture(uint64_t now_unix_ms) {
     notify_(Result::Evicted, press);
     return true;
 }
-bool VoiceRecorder::Store(const VoiceCapture& capture, VoiceBytes frames, SavedVoiceCapture& saved) {
+VoiceStoreResult VoiceRecorder::Store(const VoiceCapture& capture, VoiceBytes frames,
+                                      SavedVoiceCapture& saved) {
     auto result = outbox_.journal()->Save(capture, frames, saved);
     if (result == VoiceStoreResult::Full && EvictForNewCapture(capture.captured_unix_ms))
         result = outbox_.journal()->Save(capture, frames, saved);
-    return result == VoiceStoreResult::Ok;
+    return result;
 }
 void VoiceRecorder::Run() {
     VoiceContext cached;

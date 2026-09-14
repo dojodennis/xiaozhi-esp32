@@ -63,7 +63,7 @@ struct VoiceRecorder {
     bool BeginDictation(uint32_t,uint64_t){return false;}
     bool DictationPreparing(uint32_t)const{return false;}
 
-    enum class Result {Saved,Failed,NeedsAttention,Synced,Consumed,ContextReady,RetryQueued,RetryUnavailable,DictationReady,DictationChanged,DictationAuthorized,DictationRecorded,Uploaded,Evicted};
+    enum class Result {Saved,Failed,NeedsAttention,Synced,Consumed,ContextReady,RetryQueued,RetryUnavailable,DictationReady,DictationChanged,DictationAuthorized,DictationRecorded,Uploaded,Evicted,LiveOnly};
     bool allow_begin=true;unsigned begun=0,released=0,replays=0;
     bool CanRetry() const {return false;}
     std::function<void()> before_begin;
@@ -196,6 +196,13 @@ int main(){
         assert(app.audio_service_.mic==2&&app.manual_listening_requested_&&app.audio_service_.feedback.size()==1);
         assert(!app.provisions_recording_failed_&&app.alert_text.empty());
         assert(app.provisions_recorder_->replays==2); // A stale saved record can still sync silently.
+    }
+    {
+        Application app;app.protocol->open=true;app.StartAndRun();app.StopAndRun();
+        app.HandleVoiceRecordingResult(Result::LiveOnly,1);
+        assert(!app.provisions_recording_saving_&&!app.provisions_recording_local_);
+        assert(!app.provisions_recording_failed_&&app.audio_service_.feedback.empty());
+        assert(app.provisions_recorder_->replays==0); // Recorder directly offers the RAM replay.
     }
     {
         Application app;app.provisions_recorder_->allow_begin=false;app.audio_service_.pending="old cue";

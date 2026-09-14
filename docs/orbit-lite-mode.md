@@ -93,13 +93,22 @@ only reached when a new press finds every slot occupied:
   after a reboot without a trusted clock the age is unknown and the entry is
   **not** evictable;
 - never a dictation (ORBAUD03) segment, never an entry that was not uploaded,
-  never anything younger than the bound; if no entry qualifies the new press
-  fails with "Couldn't save" exactly as a full store did before;
+  never anything younger than the bound;
 - every eviction is logged (`Orbit Lite: evicted the oldest
   uploaded-awaiting-receipt capture …`).
 
 This fallback is a deliberate, bounded loss: a note that the Lite gateway
 received at least 30 minutes earlier may be erased to make room for a new one.
+
+If no retained slot qualifies for that bounded eviction, authenticated Lite
+does not erase any journal data and does not enter a permanent "Couldn't save"
+loop. One ordinary Talk capture may instead reuse the recorder's existing
+bounded RAM replay buffer and stream directly to the current Lite socket. It is
+explicitly marked Live-only: no local-save sound or durable-copy claim is made,
+upload cannot create an awaiting marker, dictation is excluded, and a second
+capture fails closed while the first RAM replay is still owned by the uploader.
+The original four slots remain byte-for-byte unchanged. Full-gateway and
+offline behavior retain the durable-journal requirement.
 
 ### Dictation on lite
 
