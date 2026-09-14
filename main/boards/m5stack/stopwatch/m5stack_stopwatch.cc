@@ -255,10 +255,9 @@ private:
     lv_obj_t* crest_star_ = nullptr;
     lv_obj_t* crest_caption_ = nullptr;
     lv_obj_t* compact_timer_layer_ = nullptr;
+    lv_obj_t* compact_timer_arc_ = nullptr;
     lv_obj_t* compact_timer_name_ = nullptr;
     lv_obj_t* compact_timer_remaining_ = nullptr;
-    lv_obj_t* compact_timer_status_ = nullptr;
-    lv_obj_t* compact_timer_accent_ = nullptr;
     lv_obj_t* dictation_panel_ = nullptr;
     lv_obj_t* dictation_status_ = nullptr;
     lv_obj_t* dictation_action_ = nullptr;
@@ -552,47 +551,35 @@ private:
         lv_obj_set_style_bg_opa(compact_timer_layer_, LV_OPA_COVER, 0);
         lv_obj_remove_flag(compact_timer_layer_, LV_OBJ_FLAG_SCROLLABLE);
 
-        auto* card = lv_obj_create(compact_timer_layer_);
-        lv_obj_set_size(card, 306, 184);
-        lv_obj_center(card);
-        lv_obj_set_style_radius(card, 28, 0);
-        lv_obj_set_style_bg_color(card, lv_color_hex(0x171613), 0);
-        lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_width(card, 2, 0);
-        lv_obj_set_style_border_color(card, lv_color_hex(0x2B2923), 0);
-        lv_obj_set_style_pad_all(card, 0, 0);
-        lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_remove_flag(card, LV_OBJ_FLAG_CLICKABLE);
+        compact_timer_arc_ = lv_arc_create(compact_timer_layer_);
+        lv_obj_set_size(compact_timer_arc_, 326, 326);
+        lv_obj_center(compact_timer_arc_);
+        lv_arc_set_rotation(compact_timer_arc_, 270);
+        lv_arc_set_bg_angles(compact_timer_arc_, 0, 360);
+        lv_arc_set_range(compact_timer_arc_, 0, 1000);
+        lv_arc_set_value(compact_timer_arc_, 1000);
+        lv_obj_remove_style(compact_timer_arc_, nullptr, LV_PART_KNOB);
+        lv_obj_remove_flag(compact_timer_arc_, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_arc_width(compact_timer_arc_, 6, LV_PART_MAIN);
+        lv_obj_set_style_arc_width(compact_timer_arc_, 10, LV_PART_INDICATOR);
+        lv_obj_set_style_arc_color(compact_timer_arc_, lv_color_hex(kOrbitTrack), LV_PART_MAIN);
+        lv_obj_set_style_arc_color(compact_timer_arc_, lv_color_hex(kOrbitColors[0]),
+                                   LV_PART_INDICATOR);
 
-        compact_timer_name_ = lv_label_create(card);
-        lv_obj_set_width(compact_timer_name_, 254);
+        compact_timer_name_ = lv_label_create(compact_timer_layer_);
+        lv_obj_set_width(compact_timer_name_, 238);
         lv_obj_set_style_text_font(compact_timer_name_, &font_noto_sans_basic_30_4, 0);
         lv_obj_set_style_text_color(compact_timer_name_, lv_color_hex(kOrbitColors[0]), 0);
-        lv_obj_set_style_text_align(compact_timer_name_, LV_TEXT_ALIGN_LEFT, 0);
+        lv_obj_set_style_text_align(compact_timer_name_, LV_TEXT_ALIGN_CENTER, 0);
         lv_label_set_long_mode(compact_timer_name_, LV_LABEL_LONG_DOT);
-        lv_obj_align(compact_timer_name_, LV_ALIGN_TOP_LEFT, 24, 22);
+        lv_obj_align(compact_timer_name_, LV_ALIGN_CENTER, 0, -34);
 
-        compact_timer_remaining_ = lv_label_create(card);
-        lv_obj_set_width(compact_timer_remaining_, 254);
+        compact_timer_remaining_ = lv_label_create(compact_timer_layer_);
+        lv_obj_set_width(compact_timer_remaining_, 238);
         lv_obj_set_style_text_font(compact_timer_remaining_, &font_noto_sans_basic_30_4, 0);
-        lv_obj_set_style_text_color(compact_timer_remaining_, lv_color_hex(kOrbitColors[0]), 0);
-        lv_obj_set_style_text_align(compact_timer_remaining_, LV_TEXT_ALIGN_LEFT, 0);
-        lv_obj_align(compact_timer_remaining_, LV_ALIGN_TOP_LEFT, 24, 67);
-
-        compact_timer_status_ = lv_label_create(card);
-        lv_obj_set_width(compact_timer_status_, 254);
-        lv_obj_set_style_text_font(compact_timer_status_, &font_noto_sans_basic_16_4, 0);
-        lv_obj_set_style_text_color(compact_timer_status_, lv_color_hex(0xB8B09E), 0);
-        lv_obj_set_style_text_align(compact_timer_status_, LV_TEXT_ALIGN_LEFT, 0);
-        lv_obj_align(compact_timer_status_, LV_ALIGN_TOP_LEFT, 24, 113);
-
-        compact_timer_accent_ = lv_obj_create(card);
-        lv_obj_remove_style_all(compact_timer_accent_);
-        lv_obj_set_size(compact_timer_accent_, 258, 4);
-        lv_obj_set_style_radius(compact_timer_accent_, 2, 0);
-        lv_obj_set_style_bg_color(compact_timer_accent_, lv_color_hex(kOrbitColors[0]), 0);
-        lv_obj_set_style_bg_opa(compact_timer_accent_, LV_OPA_COVER, 0);
-        lv_obj_align(compact_timer_accent_, LV_ALIGN_BOTTOM_MID, 0, -16);
+        lv_obj_set_style_text_color(compact_timer_remaining_, lv_color_hex(kColorCream), 0);
+        lv_obj_set_style_text_align(compact_timer_remaining_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_align(compact_timer_remaining_, LV_ALIGN_CENTER, 0, 18);
 
         SetVisible(compact_timer_layer_, false);
     }
@@ -705,19 +692,17 @@ private:
     }
 
     void RefreshCompactTimerLocked() {
-        if (compact_timer_name_ == nullptr || compact_timer_remaining_ == nullptr ||
-            compact_timer_status_ == nullptr || compact_timer_accent_ == nullptr) {
+        if (compact_timer_arc_ == nullptr || compact_timer_name_ == nullptr ||
+            compact_timer_remaining_ == nullptr) {
             return;
         }
         const int64_t now_ms = EffectiveServerNowMs();
         const ProvisionsTimerSnapshot::Timer* focus = nullptr;
-        std::size_t visible_count = 0;
         for (const auto& timer : timer_snapshot_.timers) {
             if (timer.status != ProvisionsTimerSnapshot::TimerStatus::kActive &&
                 timer.status != ProvisionsTimerSnapshot::TimerStatus::kAttention) {
                 continue;
             }
-            ++visible_count;
             if (focus == nullptr ||
                 (timer.status == ProvisionsTimerSnapshot::TimerStatus::kActive &&
                  focus->status == ProvisionsTimerSnapshot::TimerStatus::kAttention) ||
@@ -728,8 +713,8 @@ private:
 
         std::string name = "Timer";
         std::string remaining = "Syncing";
-        std::string status = "In focus";
         uint32_t color = kOrbitColors[0];
+        int arc_value = 1000;
         if (focus != nullptr) {
             if (!focus->label.empty()) {
                 name = ProvisionsStopWatch::EllipsizeUtf8(focus->label, 18);
@@ -738,18 +723,24 @@ private:
                              (now_ms > 0 && focus->deadline_ms <= now_ms);
             remaining = due ? "Due"
                             : ProvisionsStopwatchOrbit::FormatRemaining(focus->deadline_ms, now_ms);
-            status = due ? "Due" : "In focus";
             color = due ? kColorAmber : kOrbitColors[0];
+            if (due) {
+                arc_value = 0;
+            } else {
+                for (const auto& slot : orbit_slot_board_.slots()) {
+                    if (slot.occupied && slot.timer.id == focus->id) {
+                        arc_value = static_cast<int>(
+                            ProvisionsStopwatchOrbit::RemainingFraction(slot, now_ms) * 1000.0F);
+                        break;
+                    }
+                }
+            }
         }
-        if (visible_count > 1) {
-            status += "  +" + std::to_string(visible_count - 1) + " more";
-        }
+        lv_arc_set_value(compact_timer_arc_, arc_value);
         lv_label_set_text(compact_timer_name_, name.c_str());
         lv_label_set_text(compact_timer_remaining_, remaining.c_str());
-        lv_label_set_text(compact_timer_status_, status.c_str());
         lv_obj_set_style_text_color(compact_timer_name_, lv_color_hex(color), 0);
-        lv_obj_set_style_text_color(compact_timer_remaining_, lv_color_hex(color), 0);
-        lv_obj_set_style_bg_color(compact_timer_accent_, lv_color_hex(color), 0);
+        lv_obj_set_style_arc_color(compact_timer_arc_, lv_color_hex(color), LV_PART_INDICATOR);
     }
 
     void SetReplyLayoutLocked(bool visible) {
