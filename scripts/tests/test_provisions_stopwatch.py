@@ -159,7 +159,11 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn('#include "crest_asset.h"', source)
         self.assertIn('#include "crest_motion.h"', source)
         self.assertIn("CreateCrestUiLocked(screen)", source)
-        self.assertIn("SetVisible(crest_layer_, show_normal || show_reply)", source)
+        self.assertIn("CreateCompactTimerUiLocked(screen)", source)
+        self.assertIn(
+            "SetVisible(crest_layer_, (show_normal || show_reply) && !show_compact_timer)",
+            source,
+        )
         self.assertIn("void SetDictationScreen(bool visible", source)
         self.assertIn("SetVisible(dictation_panel_, visible)", source)
         self.assertIn(
@@ -172,10 +176,14 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("void ResetTimerSnapshot", source)
         self.assertIn("bool SilenceTimerAlarm", source)
         self.assertIn("RegisterProvisionsTimerSnapshotCallback", source)
-        self.assertIn("crest_timer_ring_ = lv_arc_create(crest_layer_)", source)
-        self.assertIn("OrbitCrest::TimerRingOpacity(now, false)", source)
+        self.assertIn("compact_timer_layer_ = lv_obj_create(screen)", source)
+        self.assertIn("compact_timer_name_ = lv_label_create(card)", source)
+        self.assertIn("compact_timer_remaining_ = lv_label_create(card)", source)
+        self.assertIn('std::string status = "In focus"', source)
+        self.assertIn('if (!focus->label.empty())', source)
+        self.assertIn("show_compact_timer", source)
         self.assertIn("const bool active = !text.empty()", source)
-        self.assertIn("crest_timer_text_value_.c_str()", source)
+        self.assertNotIn("crest_timer_ring_", source)
         self.assertNotIn("lv_obj_t* crest_timer_text_", source)
 
     def test_provisions_screen_is_branded_and_reply_capable(self):

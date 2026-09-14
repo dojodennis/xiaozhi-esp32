@@ -85,11 +85,6 @@ int main() {
     assert(Rings(State::Listening, 0, 0, true).radii == Rings(State::Listening, 999, 1, true).radii);
     assert(AudioLevel(99, 0) == 0 && AudioLevel(32768, 121) == 0);
     assert(AudioLevel(32768, 1) == 1);
-    assert(kTimerRingRadius + 2 <= kSafeRadius);
-    const auto timer_low = TimerRingOpacity(0, false);
-    const auto timer_high = TimerRingOpacity(1400, false);
-    assert(timer_low < timer_high);
-    assert(TimerRingOpacity(0, true) == TimerRingOpacity(1400, true));
     int16_t pcm[] = {-32768, 32767, 0, -1000};
     int16_t original[4]; std::memcpy(original, pcm, sizeof pcm);
     AudioMeter meter;
