@@ -52,7 +52,7 @@ class ProvisionsTimerDismissalTests(unittest.TestCase):
         self.assertIn("Application::GetInstance().DismissDueTimers()", board)
         self.assertNotIn("timer.acknowledge", board)
 
-    def test_touch_dismisses_only_an_active_ringing_timer(self):
+    def test_touch_dismisses_an_alarm_or_expands_a_running_timer(self):
         board = BOARD.read_text(encoding="utf-8")
         touch = TOUCH.read_text(encoding="utf-8")
 
@@ -68,11 +68,12 @@ class ProvisionsTimerDismissalTests(unittest.TestCase):
         touch_init = board.split("void InitializeTouch()", 1)[1].split(
             "void InitializeI2c()", 1
         )[0]
-        self.assertIn("if (!self->display_->HasTimerAlarm())", touch_init)
         self.assertIn("pressed && !self->touch_was_pressed_", touch_init)
         self.assertIn("touch_dismiss_queued_.exchange(true)", touch_init)
         self.assertIn("Application::GetInstance().Schedule", touch_init)
+        self.assertIn("self->display_->HasTimerAlarm()", touch_init)
         self.assertIn("display_->DismissRingingTimers()", touch_init)
+        self.assertIn("display_->ExpandTimerFace()", touch_init)
         self.assertNotIn("SilenceTimerAlarm()", touch_init)
 
         # Match M5Stack's CST820 frame: status begins at 0x00, finger count is

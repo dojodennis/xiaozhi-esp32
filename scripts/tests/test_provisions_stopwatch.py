@@ -175,7 +175,8 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("crest_timer_ring_ = lv_arc_create(crest_layer_)", source)
         self.assertIn("OrbitCrest::TimerRingOpacity(now, false)", source)
         self.assertIn("const bool active = !text.empty()", source)
-        self.assertNotIn("crest_timer_text_", source)
+        self.assertIn("crest_timer_text_value_.c_str()", source)
+        self.assertNotIn("lv_obj_t* crest_timer_text_", source)
 
     def test_provisions_screen_is_branded_and_reply_capable(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
@@ -340,24 +341,26 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("SetVisible(orbit_service_arc_, service != nullptr)", service)
         self.assertIn("kOrbitService", source)
 
-    def test_a_running_timer_keeps_the_dial_as_the_resting_face(self):
+    def test_a_running_timer_stays_compact_until_the_chef_expands_it(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
         gate = source.split("bool ShouldShowOrbitLocked() const {", 1)[1].split(
             "bool HasLiveTimerLocked", 1)[0]
-        self.assertIn("!timer_face_put_away_ && HasLiveTimerLocked()", gate)
+        self.assertNotIn("HasLiveTimerLocked()", gate)
+        self.assertIn("return false", gate)
         live = source.split("bool HasLiveTimerLocked() const {", 1)[1].split("\n    }", 1)[0]
         self.assertIn("TimerStatus::kActive", live)
         self.assertIn("TimerStatus::kAttention", live)
+        expand = source.split("bool ExpandTimerFace()", 1)[1].split("\n    }", 1)[0]
+        self.assertIn("!crest_timer_active_ || !HasLiveTimerLocked()", expand)
+        self.assertIn("kTimerFaceIdleUs", expand)
         toggle = source.split("void ToggleTimerFace()", 1)[1].split("\n    }", 1)[0]
-        self.assertIn("timer_face_put_away_ = showing", toggle)
-        reset = source.split("void ResetTimerSnapshot()", 1)[1].split("\n    }", 1)[0]
-        self.assertIn("timer_face_put_away_ = false", reset)
+        self.assertIn("const bool showing = TimerFaceForced()", toggle)
 
-    def test_provisions_new_timer_brings_dial_forward_over_reply(self):
+    def test_provisions_new_timer_wakes_the_compact_crest(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
         apply = source.split("void ApplyTimerSnapshot", 1)[1].split("void ResetTimerSnapshot", 1)[0]
         self.assertIn("announced_timer_ids_.push_back(timer.id)", apply)
-        self.assertIn("timer_face_until_us_.store(esp_timer_get_time() + kTimerFaceIdleUs)", apply)
+        self.assertIn("timer_face_until_us_.store(0)", apply)
         self.assertIn("new_timer_wake_.store(true)", apply)
         self.assertIn("visible && !TimerFaceForced()", source)
         gate = source.split("bool ShouldShowOrbitLocked() const {", 1)[1].split("bool TimerFaceForced", 1)[0]

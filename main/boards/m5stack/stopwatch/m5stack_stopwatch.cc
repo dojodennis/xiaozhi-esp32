@@ -269,12 +269,14 @@ private:
     uint32_t crest_result_hold_ms_ = 0;
     const char* crest_result_caption_ = "";
     const char* crest_displayed_caption_ = nullptr;
+    std::string crest_displayed_dynamic_caption_;
     bool crest_reply_received_ = false;
     bool crest_speech_seen_ = false;
     bool crest_error_ring_geometry_ = false;
     bool dictation_visible_ = false;
     std::string dictation_status_text_;
     std::string dictation_action_text_;
+    std::string crest_timer_text_value_;
     bool crest_timer_active_ = false;
     float crest_level_ = 0;
     esp_timer_handle_t visual_reset_timer_ = nullptr;
@@ -308,8 +310,6 @@ private:
     lv_obj_t* orbit_service_arc_ = nullptr;
     std::string orbit_service_id_;
     int64_t orbit_service_first_seen_ms_ = 0;
-    // The chord put the timer face away while timers are still running.
-    bool timer_face_put_away_ = false;
     std::atomic<bool> new_timer_wake_{false};
     std::function<void()> timer_dismiss_callback_;
     std::function<void(bool)> timer_alarm_output_callback_;
@@ -426,12 +426,12 @@ private:
             lv_obj_set_style_arc_color(ring, lv_color_hex(crest_frame_.color), LV_PART_MAIN);
             lv_obj_set_style_arc_opa(ring, crest_frame_.opacity[index], LV_PART_MAIN);
         }
+        const bool show_timer_summary =
+            crest_timer_active_ && (crest_state_ == OrbitCrest::State::Idle ||
+                                    crest_state_ == OrbitCrest::State::Result);
         if (crest_timer_ring_ != nullptr) {
-            const bool show_timer_ring =
-                crest_timer_active_ && (crest_state_ == OrbitCrest::State::Idle ||
-                                        crest_state_ == OrbitCrest::State::Result);
             const lv_opa_t timer_ring_opacity =
-                show_timer_ring
+                show_timer_summary
                     ? static_cast<lv_opa_t>(OrbitCrest::TimerRingOpacity(now, false))
                     : static_cast<lv_opa_t>(LV_OPA_TRANSP);
             lv_obj_set_style_arc_opa(
@@ -447,17 +447,27 @@ private:
             }
             crest_error_ring_geometry_ = error_geometry;
         }
-        const char* text = crest_state_ == OrbitCrest::State::Result
-                               ? crest_result_caption_
-                               : OrbitCrest::Caption(crest_state_);
-        if (crest_displayed_caption_ != text) {
-            lv_label_set_text_static(crest_caption_, text);
-            crest_displayed_caption_ = text;
+        if (show_timer_summary && !crest_timer_text_value_.empty()) {
+            if (crest_displayed_dynamic_caption_ != crest_timer_text_value_) {
+                lv_label_set_text(crest_caption_, crest_timer_text_value_.c_str());
+                crest_displayed_dynamic_caption_ = crest_timer_text_value_;
+                crest_displayed_caption_ = nullptr;
+            }
+        } else {
+            const char* text = crest_state_ == OrbitCrest::State::Result
+                                   ? crest_result_caption_
+                                   : OrbitCrest::Caption(crest_state_);
+            if (crest_displayed_caption_ != text) {
+                lv_label_set_text_static(crest_caption_, text);
+                crest_displayed_caption_ = text;
+                crest_displayed_dynamic_caption_.clear();
+            }
         }
         lv_obj_set_style_text_color(
             crest_caption_,
-            lv_color_hex(crest_state_ == OrbitCrest::State::Error ? OrbitCrest::kAmber
-                                                                  : OrbitCrest::kIvory),
+            lv_color_hex(show_timer_summary ? OrbitCrest::kGold
+                         : crest_state_ == OrbitCrest::State::Error ? OrbitCrest::kAmber
+                                                                    : OrbitCrest::kIvory),
             0);
         if (crest_animation_timer_ && now - crest_transition_ms_ >= OrbitCrest::kTransitionMs &&
             !OrbitCrest::UsesRings(crest_state_) && crest_state_ != OrbitCrest::State::Result &&
@@ -601,9 +611,8 @@ private:
         return timer_snapshot_.server_now_ms + elapsed_ms;
     }
 
-    // A forced face (chord, or a timer just set) comes to the front over the
-    // spoken reply and busy states, the way the dictation screen does; the
-    // resting dial for existing timers still waits for Ready.
+    // An explicitly expanded timer face comes to the front over spoken reply
+    // and busy states; otherwise the compact timer stays on the crest.
     bool ShouldShowOrbitLocked() const {
         if (dictation_visible_) {
             return false;
@@ -614,13 +623,9 @@ private:
         if (receipt_visible_.load()) {
             return false;
         }
-        // A running timer owns the resting face until it is gone or the chef
-        // puts it away with the chord: a countdown that vanishes after 30 s is
-        // not a timer you can trust (Dennis, 12 Sept).
-        if (!timer_face_put_away_ && HasLiveTimerLocked()) {
-            return true;
-        }
-        return orbit_snapshot_received_ && resting_state_.load() == VisualState::kReady;
+        // The crest is the persistent compact timer view. The detailed dial is
+        // shown only after an explicit tap/chord and times out back to the crest.
+        return false;
     }
 
     bool HasLiveTimerLocked() const {
@@ -1832,8 +1837,7 @@ public:
                 }
             }
             if (new_timer) {
-                timer_face_put_away_ = false;
-                timer_face_until_us_.store(esp_timer_get_time() + kTimerFaceIdleUs);
+                timer_face_until_us_.store(0);
                 new_timer_wake_.store(true);
                 SetReplyLayoutLocked(reply_visible_.load());
             }
@@ -1852,7 +1856,6 @@ public:
         {
             DisplayLockGuard lock(this);
             orbit_snapshot_received_ = false;
-            timer_face_put_away_ = false;
             timer_alarm_active_.store(false);
             snapshot_received_monotonic_ms_ = 0;
             galley_session_id_.clear();
@@ -1968,6 +1971,23 @@ public:
     // True once after a snapshot introduced a new timer (board wakes the screen).
     bool ConsumeNewTimerWake() { return new_timer_wake_.exchange(false); }
 
+    // A tap on the compact crest timer opens the full timer dial for one idle
+    // window. A later tick returns to the crest without hiding the countdown.
+    bool ExpandTimerFace() {
+        AlarmOutputChange output_change;
+        {
+            DisplayLockGuard lock(this);
+            if (!crest_timer_active_ || !HasLiveTimerLocked()) {
+                return false;
+            }
+            timer_face_until_us_.store(esp_timer_get_time() + kTimerFaceIdleUs);
+            output_change = RefreshOrbitLocked();
+            SetReplyLayoutLocked(reply_visible_.load());
+        }
+        ApplyAlarmOutputChange(output_change);
+        return true;
+    }
+
     // Talk+blue chord (Application task): show the timer dial even with no
     // timers, so a spoken timer command can follow; a second chord or 30 s idle
     // returns to the normal face. Recording is unaffected by the face.
@@ -1975,8 +1995,7 @@ public:
         AlarmOutputChange output_change;
         {
             DisplayLockGuard lock(this);
-            const bool showing = TimerFaceForced() || (!timer_face_put_away_ && HasLiveTimerLocked());
-            timer_face_put_away_ = showing;
+            const bool showing = TimerFaceForced();
             timer_face_until_us_.store(showing ? 0 : esp_timer_get_time() + kTimerFaceIdleUs);
             output_change = RefreshOrbitLocked();
             SetReplyLayoutLocked(reply_visible_.load());
@@ -2137,8 +2156,9 @@ public:
         if (crest_timer_ring_ == nullptr)
             return;
         const bool active = !text.empty();
-        if (crest_timer_active_ == active)
+        if (crest_timer_active_ == active && crest_timer_text_value_ == text)
             return;
+        crest_timer_text_value_ = text;
         crest_timer_active_ = active;
         if (crest_animation_timer_ != nullptr)
             lv_timer_resume(crest_animation_timer_);
@@ -2349,19 +2369,16 @@ private:
             [](void* arg) {
                 auto* self = static_cast<M5StackStopwatchBoard*>(arg);
                 while (true) {
-                    if (!self->display_->HasTimerAlarm()) {
-                        self->touch_was_pressed_ = false;
-                        vTaskDelay(pdMS_TO_TICKS(100));
-                        continue;
-                    }
-
                     bool pressed = false;
                     if (self->touch_.ReadPressed(pressed)) {
                         if (pressed && !self->touch_was_pressed_ &&
                             !self->touch_dismiss_queued_.exchange(true)) {
                             Application::GetInstance().Schedule([self]() {
                                 self->touch_dismiss_queued_.store(false);
-                                if (self->display_->DismissRingingTimers()) {
+                                const bool handled = self->display_->HasTimerAlarm()
+                                                         ? self->display_->DismissRingingTimers()
+                                                         : self->display_->ExpandTimerFace();
+                                if (handled) {
                                     self->ResetDisplayIdleTimer();
                                 }
                             });
