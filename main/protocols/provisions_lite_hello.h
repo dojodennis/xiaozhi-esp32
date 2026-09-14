@@ -2,12 +2,9 @@
 #define PROVISIONS_LITE_HELLO_H_
 
 // Orbit Lite server hello. The thin gateway answers the unchanged device hello
-// with `"provisions": {"mode": "lite", "selected": []}`; nothing else in the
-// hello is negotiated: no timers_v1 / timer_claim_recovery_v1 / dictation_v1 /
-// audio_capture requirement, no output fence, receipt or grant arming, no
-// session-UUID policy. Audio parameters are taken exactly as stock xiaozhi
-// does. This header depends only on cJSON so the host suite can exercise it
-// against a stub tree.
+// with `"provisions": {"mode": "lite", ...}`. Lite may additionally select
+// timers_v1 for countdown snapshots and local dismissals; it still has no
+// timer-claim recovery, dictation, output fence, receipt or grant arming.
 
 #include <cJSON.h>
 #include <array>
@@ -21,6 +18,7 @@ struct HelloParams {
     std::string session_id;  // may stay empty; lite frames carry no session
     int sample_rate = 24000;
     int frame_duration = 60;
+    bool timers_v1 = false;
 };
 
 enum class HelloResult {
@@ -69,6 +67,9 @@ inline HelloResult ParseLiteHello(const cJSON* root, HelloParams& out) {
     const cJSON* session = cJSON_GetObjectItemCaseSensitive(root, "session_id");
     if (cJSON_IsString(session) && session->valuestring != nullptr)
         params.session_id = session->valuestring;
+
+    params.timers_v1 = cJSON_IsTrue(
+        cJSON_GetObjectItemCaseSensitive(provisions, "timers_v1"));
 
     const cJSON* audio = cJSON_GetObjectItemCaseSensitive(root, "audio_params");
     if (cJSON_IsObject(audio)) {

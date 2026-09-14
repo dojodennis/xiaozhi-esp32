@@ -1055,9 +1055,9 @@ void Application::InitializeProtocol() {
         }
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
         if (protocol->IsLiteMode()) {
-            // Orbit Lite has one exact, session-bound capture completion
-            // acknowledgement. Other Lite controls stay deliberately thin;
-            // unknown types are ignored and never close the channel.
+            // Orbit Lite accepts bounded voice controls plus negotiated timer
+            // snapshots/dismissal acknowledgements. Unknown types are ignored
+            // and never close the channel.
             HandleLiteGatewayFrame(root, type->valuestring);
             return;
         }
@@ -1787,6 +1787,29 @@ void Application::FinishLiteTurn() {
 // Socket task. Parses here, renders on the main task.
 void Application::HandleLiteGatewayFrame(const cJSON* root, const char* type) {
     auto display = Board::GetInstance().GetDisplay();
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    if (strcmp(type, "timer") == 0) {
+        auto protocol = GetProtocol();
+        auto action = cJSON_GetObjectItemCaseSensitive(root, "action");
+        if (!protocol || !cJSON_IsString(action)) {
+            ESP_LOGW(TAG, "Ignoring invalid Orbit Lite timer frame");
+            return;
+        }
+        auto* websocket = static_cast<WebsocketProtocol*>(protocol.get());
+        bool accepted = false;
+        if (strcmp(action->valuestring, "dismiss_ack") == 0) {
+            accepted = websocket->TimersNegotiated() &&
+                       timer_dismissals_.OnAck(root, protocol->session_id());
+        } else if (strcmp(action->valuestring, "snapshot") == 0) {
+            accepted = timer_player_.OnJson(root, protocol->session_id(),
+                                            websocket->TimersNegotiated(),
+                                            provisions_physical_press_.id());
+        }
+        if (!accepted)
+            ESP_LOGW(TAG, "Ignoring unsupported Orbit Lite timer frame");
+        return;
+    }
+#endif
     if (strcmp(type, "tts") == 0) {
         auto state = cJSON_GetObjectItem(root, "state");
         if (!cJSON_IsString(state)) {
@@ -1893,7 +1916,7 @@ void Application::HandleLiteGatewayFrame(const cJSON* root, const char* type) {
         });
         return;
     }
-    // Fence, receipt, grant, timer authority, heartbeat: not part of lite.
+    // Fence, receipt, grant and heartbeat: not part of lite.
     ESP_LOGD(TAG, "Ignoring %s frame in Orbit Lite mode", type);
 }
 

@@ -28,10 +28,11 @@ struct cJSON {
     double valuedouble = 0;
     char* string = nullptr;
 };
-enum { cJSON_Number = 8, cJSON_String = 16, cJSON_Object = 64 };
+enum { cJSON_False = 1, cJSON_True = 2, cJSON_Number = 8, cJSON_String = 16, cJSON_Object = 64 };
 inline bool cJSON_IsObject(const cJSON* item) { return item && item->type == cJSON_Object; }
 inline bool cJSON_IsString(const cJSON* item) { return item && item->type == cJSON_String; }
 inline bool cJSON_IsNumber(const cJSON* item) { return item && item->type == cJSON_Number; }
+inline bool cJSON_IsTrue(const cJSON* item) { return item && item->type == cJSON_True; }
 inline cJSON* cJSON_GetObjectItemCaseSensitive(const cJSON* object, const char* key) {
     if (!cJSON_IsObject(object)) return nullptr;
     for (cJSON* child = object->child; child; child = child->next)
@@ -105,6 +106,9 @@ struct Tree {
     cJSON* num(cJSON* parent, const char* key, double value) {
         auto* n = add(parent, node(cJSON_Number, key)); n->valuedouble = value; n->valueint = (int)value; return n;
     }
+    cJSON* boolean(cJSON* parent, const char* key, bool value) {
+        return add(parent, node(value ? cJSON_True : cJSON_False, key));
+    }
 };
 
 // The exact hello the lite gateway sends.
@@ -136,11 +140,15 @@ int main() {
     // No audio_params at all: stock defaults.
     { Tree t; HelloParams p; assert(ParseLiteHello(lite_hello(t, 0, 0, false), p) == HelloResult::kAccepted);
       assert(p.sample_rate == 24000 && p.frame_duration == 60); }
-    // No timers_v1 / timer_claim_recovery_v1 / audio_capture / authenticated /
-    // turn_ids / session UUID are required: the hello above carries none.
+    // No timer-claim recovery / audio_capture / authenticated / turn_ids /
+    // session UUID are required: the hello above carries none.
     // A session_id, when present, is kept verbatim (no UUID policy).
     { Tree t; auto* root = lite_hello(t, 24000, 60); t.str(root, "session_id", "lite-1");
       HelloParams p; assert(ParseLiteHello(root, p) == HelloResult::kAccepted && p.session_id == "lite-1"); }
+    // Timers are independently and explicitly selected in Lite.
+    { Tree t; auto* root = lite_hello(t, 24000, 60); auto* provisions = cJSON_GetObjectItemCaseSensitive(root, "provisions");
+      t.boolean(provisions, "timers_v1", true); HelloParams p;
+      assert(ParseLiteHello(root, p) == HelloResult::kAccepted && p.timers_v1); }
     // Unsupported parameters are refused, never silently resampled to garbage.
     { Tree t; HelloParams p; assert(ParseLiteHello(lite_hello(t, 48000, 60), p) == HelloResult::kBadSampleRate); }
     { Tree t; HelloParams p; assert(ParseLiteHello(lite_hello(t, 24000, 100), p) == HelloResult::kBadFrameDuration); }
@@ -166,11 +174,11 @@ int main() {
         self.assertLess(lite, hello.index("IsCanonicalUuid"))
         self.assertLess(lite, hello.index("output_fence_v1"))
         parse = method(WEBSOCKET, "bool WebsocketProtocol::ParseLiteServerHello(const cJSON* root)")
-        # Only an unsupported audio parameter rejects; a lite hello never fails
-        # for missing features, and the accepted path arms nothing.
+        # Only an unsupported audio parameter rejects; timer snapshots are the
+        # sole optional Lite protocol capability.
         self.assertEqual(parse.count("RejectServerHello("), 1)
         self.assertIn("Invalid lite gateway audio parameters", parse)
-        self.assertIn("timers_enabled_.store(false);", parse)
+        self.assertIn("timers_enabled_.store(params.timers_v1);", parse)
         self.assertIn("dictation_enabled_.store(false);", parse)
         self.assertIn("output_fence_selected_.store(false);", parse)
         self.assertIn("lite_mode_.store(true, std::memory_order_release);", parse)
@@ -385,6 +393,11 @@ class LiteWiringReview(unittest.TestCase):
             self.assertIn(state, handler)
         self.assertIn('strcmp(type, "stt") == 0', handler)
         self.assertIn('strcmp(type, "provisions") == 0', handler)
+        self.assertIn('strcmp(type, "timer") == 0', handler)
+        self.assertIn('strcmp(action->valuestring, "snapshot") == 0', handler)
+        self.assertIn("timer_player_.OnJson", handler)
+        self.assertIn('strcmp(action->valuestring, "dismiss_ack") == 0', handler)
+        self.assertIn("timer_dismissals_.OnAck", handler)
         self.assertIn('strcmp(state->valuestring, "capture_consumed") == 0', handler)
         self.assertIn("ParseLiteCaptureConsumed(root, protocol->session_id(), receipt)", handler)
         # Nothing in the lite handler can close the channel or alert.

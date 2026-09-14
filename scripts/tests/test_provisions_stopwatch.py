@@ -127,12 +127,10 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("OrbitCrest::output_meter.Observe", source)
         self.assertIn("Es8311AudioCodec::Start();", source)
         self.assertIn(
-            "output_volume() < kDefaultOutputVolume || output_volume() > 100",
+            "output_volume() < kMaximumOutputVolume || output_volume() > 100",
             source,
         )
-        self.assertIn(
-            "SetOutputVolumeForSession(kDefaultOutputVolume)", source
-        )
+        self.assertIn("SetOutputVolumeForSession(kMaximumOutputVolume)", source)
         self.assertIn("it never writes NVS", source)
         self.assertNotIn("Settings settings", source)
         codec_source = (

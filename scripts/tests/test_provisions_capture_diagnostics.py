@@ -16,7 +16,9 @@ class ProvisionsCaptureDiagnosticsTests(unittest.TestCase):
         recorder = (ROOT / "main/provisions_voice_recorder.cc").read_text(encoding="utf-8")
         board = (ROOT / "main/boards/m5stack/stopwatch/m5stack_stopwatch.cc").read_text(encoding="utf-8")
         save = recorder.split("void VoiceRecorder::Save(", 1)[1].split("\n}\n", 1)[0]
-        self.assertIn("DescribeCapture(work.press, ok, work.samples, work.levels, bytes", save)
+        self.assertIn(
+            "DescribeCapture(work.press, ok || live_only, work.samples, work.levels,", save
+        )
         self.assertIn('ESP_LOGI("VoiceRecorder", "%s", line.c_str())', save)
         self.assertIn("NoteTalkPressDown(esp_timer_get_time())", board)
         self.assertNotIn("SetInputGain", recorder)

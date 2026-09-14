@@ -144,10 +144,10 @@ public:
 
     void Start() override {
         Es8311AudioCodec::Start();
-        if (output_volume() < kDefaultOutputVolume || output_volume() > 100) {
-            // Apply the pilot floor after Start() reloads the saved preference.
+        if (output_volume() < kMaximumOutputVolume || output_volume() > 100) {
+            // Start at the safe codec maximum; 90% was too quiet in the galley.
             // This setter updates codec state only; it never writes NVS.
-            SetOutputVolumeForSession(kDefaultOutputVolume);
+            SetOutputVolumeForSession(kMaximumOutputVolume);
         }
     }
 };

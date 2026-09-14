@@ -878,11 +878,9 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
 }
 
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-// Orbit Lite: `provisions.mode == "lite"` selects nothing. No timers_v1 /
-// timer_claim_recovery_v1 / dictation / audio_capture requirement, no output
-// fence, receipt or grant arming, no session-UUID policy. Audio parameters
-// are taken exactly as stock xiaozhi does. Returns true when the hello was a
-// lite hello (accepted or rejected); false hands over to the full negotiation.
+// Orbit Lite: `provisions.mode == "lite"` keeps the thin voice path. It may
+// select timers_v1 for snapshots and local dismissal, but never timer-claim
+// recovery, dictation, output fence, receipt or grant arming.
 bool WebsocketProtocol::ParseLiteServerHello(const cJSON* root) {
     provisions::lite::HelloParams params;
     const auto result = provisions::lite::ParseLiteHello(root, params);
@@ -898,7 +896,7 @@ bool WebsocketProtocol::ParseLiteServerHello(const cJSON* root) {
     server_sample_rate_ = params.sample_rate;
     server_frame_duration_ = params.frame_duration;
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
-    timers_enabled_.store(false);
+    timers_enabled_.store(params.timers_v1);
     dictation_enabled_.store(false);
     {
         // The recorder journals every press under the live capture context and
