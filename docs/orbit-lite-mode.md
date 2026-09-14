@@ -219,4 +219,9 @@ signed 3,280,896-byte application has SHA-256
 verifies with the accepted public-key fingerprint
 `09d1e0fd2dfb13640b8a99fcd7e284b6b24e6a06003bce4e3c72a49004364250`.
 It is prepared for the established application-only `0x020000` installation;
-no device partition has been written yet.
+after the user placed Orbit in download mode, only that signed application was
+written. The write-time digest and independent post-read both match the signed
+artifact. Before/after comparisons prove the partition table, NVS, OTA/PHY
+state, NVS keys and all 32 chunks of the 2 MiB recording journal byte-identical.
+No other partition was written or erased. Orbit remains in download mode until
+the user performs a normal boot for physical acceptance.
