@@ -204,3 +204,19 @@ Motor behavior, microphone capture, 24 kHz ES8311 playback quality and
 interruption latency remain the focused physical acceptance gates. Exact signed
 firmware `7105d4a` and gateway image `orbit-monaco-ba7e00e-amd64` remain the
 rollback pair.
+
+## Vibration-free physical stop candidate — 14 September 2026
+
+Physical testing showed that the timer motor mechanically masked spoken stop
+commands. Firmware `060caab` now records the authoritative ringing state and,
+on a physical Talk press, pauses alarm output before microphone recording can
+begin. The existing bounded hold resumes vibration only if the turn settles
+without stopping the timer.
+
+All 336 host tests and the ESP-IDF 6.0.2 stopwatch build pass. The externally
+signed 3,280,896-byte application has SHA-256
+`0203e060acec595de609b716775adfc5d2560a0aad7cbb2fde1fa395f2308e3b` and
+verifies with the accepted public-key fingerprint
+`09d1e0fd2dfb13640b8a99fcd7e284b6b24e6a06003bce4e3c72a49004364250`.
+It is prepared for the established application-only `0x020000` installation;
+no device partition has been written yet.
