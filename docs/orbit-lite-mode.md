@@ -225,3 +225,21 @@ artifact. Before/after comparisons prove the partition table, NVS, OTA/PHY
 state, NVS keys and all 32 chunks of the 2 MiB recording journal byte-identical.
 No other partition was written or erased. Orbit remains in download mode until
 the user performs a normal boot for physical acceptance.
+
+## Ring-only touch dismissal — 14 September 2026
+
+Firmware `5d91d28` initializes the StopWatch CST820 controller with M5Stack's
+published reset and status-frame protocol. Touch is sampled only while the
+alarm takeover is active. One touch-down immediately clears due timers, stops
+the motor and uses the existing authoritative gateway dismissal callback; a
+screen touch cannot cancel a timer that is only counting down.
+
+All 337 host tests and the ESP-IDF 6.0.2 stopwatch build pass. The signed
+3,280,896-byte application has SHA-256
+`d58e51f4ac7a256d7afeec5722e5f4809d2443d89c33d5e2dd33d35968402579`.
+After confirming target MAC `28:84:85:44:6b:10`, only this application was
+written at `0x020000`. Write-time verification, an independent `verify-flash`
+pass and the complete post-read all match the signed artifact. Before/after
+comparisons prove the partition table, NVS, OTA/PHY state, NVS keys and all 32
+chunks of the 2 MiB recording journal byte-identical. Orbit remains in download
+mode pending normal boot and a physical ringing-timer tap test.
