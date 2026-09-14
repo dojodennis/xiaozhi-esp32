@@ -185,6 +185,11 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertNotIn("compact_timer_status_", source)
         self.assertNotIn("compact_timer_accent_", source)
         self.assertIn('if (!focus->label.empty())', source)
+        self.assertIn(
+            "crest_timer_active_ && !TimerFaceForced()",
+            source,
+        )
+        self.assertNotIn("compact_timer_state", source)
         self.assertIn("show_compact_timer", source)
         self.assertIn("const bool active = !text.empty()", source)
         self.assertNotIn("crest_timer_ring_", source)

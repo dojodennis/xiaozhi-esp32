@@ -756,10 +756,10 @@ private:
         const bool show_orbit =
             display_awake && !show_alarm && !show_reply && ShouldShowOrbitLocked();
         const bool show_normal = display_awake && !show_alarm && !show_reply && !show_orbit;
-        const bool compact_timer_state = crest_state_ == OrbitCrest::State::Idle ||
-                                         crest_state_ == OrbitCrest::State::Result;
-        const bool show_compact_timer = show_normal && !dictation_visible_ &&
-                                        crest_timer_active_ && compact_timer_state;
+        // Once a timer exists its circular countdown is the stable foreground.
+        // Confirmation/result state changes must not alternate it with the crest.
+        const bool show_compact_timer = display_awake && !show_alarm && !dictation_visible_ &&
+                                        crest_timer_active_ && !TimerFaceForced();
         RefreshCompactTimerLocked();
 
         // Keep the legacy objects alive for shared status/timer ownership, but
@@ -2036,8 +2036,8 @@ public:
     // True once after a snapshot introduced a new timer (board wakes the screen).
     bool ConsumeNewTimerWake() { return new_timer_wake_.exchange(false); }
 
-    // A tap on the compact crest timer opens the full timer dial for one idle
-    // window. A later tick returns to the crest without hiding the countdown.
+    // A tap on the compact circular timer opens the full timer dial for one idle
+    // window. A later tick returns to the compact circle without hiding it.
     bool ExpandTimerFace() {
         AlarmOutputChange output_change;
         {
