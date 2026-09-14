@@ -452,6 +452,18 @@ class LiteWiringReview(unittest.TestCase):
         start = method(APPLICATION, "void Application::HandleStartListeningEvent()")
         self.assertLess(start.index("AbortSpeaking(kAbortReasonNone);"), start.index("BeginLocalRecordingOnMain()"))
 
+    def test_physical_stop_quiets_the_alarm_before_recording(self) -> None:
+        service = method(APPLICATION, "void Application::ServiceTimers()")
+        self.assertIn(
+            "provisions_timer_ringing_ = ringing && negotiated && snapshot.session_id == session;",
+            service,
+        )
+        start = method(APPLICATION, "void Application::HandleStartListeningEvent()")
+        pause = start.index("PauseTimerAlarmOutput(true);")
+        self.assertIn("if (provisions_timer_ringing_)", start)
+        self.assertLess(pause, start.index("BeginLocalRecordingOnMain()"))
+        self.assertLess(start.index("alarm_output_held_ = true;"), pause)
+
     def test_actual_reply_watchdog_and_tts_deadline_stay_connected(self) -> None:
         timeout = re.search(r"kProvisionsLiteReplyTimeoutSeconds = (\d+);", APPLICATION)
         self.assertIsNotNone(timeout)

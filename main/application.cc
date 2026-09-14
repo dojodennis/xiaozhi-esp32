@@ -2611,6 +2611,16 @@ void Application::HandleStartListeningEvent() {
     // Perform the heavy work here, outside the button's ESP_TIMER_TASK stack.
     AbortSpeaking(kAbortReasonNone);
     Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+    if (provisions_timer_ringing_) {
+        // A physical stop attempt must not record the vibration motor through
+        // the microphone. Keep the takeover visible, but silence its output
+        // before admitting the first sample and until this turn settles.
+        const int64_t now_us = esp_timer_get_time();
+        alarm_output_held_ = true;
+        alarm_hold_since_us_ = now_us;
+        alarm_hold_until_us_ = now_us + 10LL * 1000 * 1000;
+        Board::GetInstance().GetDisplay()->PauseTimerAlarmOutput(true);
+    }
     if (BeginLocalRecordingOnMain() && manual_listening_requested_.load()) {
         if (GetDeviceState() == kDeviceStateNotifying)
             StopNotification();
@@ -3408,6 +3418,7 @@ void Application::ServiceTimers() {
             break;
         }
     }
+    provisions_timer_ringing_ = ringing && negotiated && snapshot.session_id == session;
     // The alarm player owns the speaker for the whole ring, so the player's own
     // readiness (which requires idle playback) would never let a listening
     // window open. Listening needs the mic and the radio, not the speaker.

@@ -90,7 +90,11 @@ int64_t clock_us=45000000;int restarted=0;
 int64_t esp_timer_get_time(){return clock_us;}
 int esp_timer_stop(void*){return 0;}
 int esp_timer_start_once(void*,int64_t){++restarted;return 0;}
-struct Display{bool saving=true;void SetPowerSaveMode(bool value){saving=value;}};
+struct Display{
+ bool saving=true;bool alarm_paused=false;
+ void SetPowerSaveMode(bool value){saving=value;}
+ void PauseTimerAlarmOutput(bool value){alarm_paused=value;}
+};
 struct Backlight{int restores=0;void RestoreBrightness(){++restores;}};
 struct WifiBoard{void SetPowerSaveLevel(PowerSaveLevel){}};
 struct Board:WifiBoard{
@@ -105,6 +109,8 @@ struct AudioService{void EnableVoiceProcessing(bool){}void EnableWakeWordDetecti
 struct Application{
  static Application& GetInstance(){static Application a;return a;}
  std::atomic<bool> manual_listening_requested_{true};int listening_mode_=0;AudioService audio_service_;
+ bool provisions_timer_ringing_=false,alarm_output_held_=false;
+ int64_t alarm_hold_since_us_=0,alarm_hold_until_us_=0;
  std::vector<std::function<void()>> scheduled;bool begin_allowed=false;
  void Schedule(std::function<void()> fn){scheduled.push_back(fn);}
  void AbortSpeaking(int){}bool BeginLocalRecordingOnMain(){return begin_allowed;}
