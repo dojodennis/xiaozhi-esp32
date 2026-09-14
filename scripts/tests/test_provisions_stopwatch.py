@@ -177,10 +177,18 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("bool SilenceTimerAlarm", source)
         self.assertIn("RegisterProvisionsTimerSnapshotCallback", source)
         self.assertIn("compact_timer_layer_ = lv_obj_create(screen)", source)
+        self.assertIn("compact_service_arc_ = lv_arc_create(compact_timer_layer_)", source)
+        self.assertIn("compact_service_label_ = lv_label_create(compact_timer_layer_)", source)
         self.assertIn("compact_timer_arc_ = lv_arc_create(compact_timer_layer_)", source)
-        self.assertIn("lv_obj_set_size(compact_timer_arc_, 326, 326)", source)
+        self.assertIn("lv_obj_set_size(compact_timer_arc_, 342, 342)", source)
+        self.assertIn("compact_timer_eyebrow_ = lv_label_create(compact_timer_layer_)", source)
         self.assertIn("compact_timer_name_ = lv_label_create(compact_timer_layer_)", source)
         self.assertIn("compact_timer_remaining_ = lv_label_create(compact_timer_layer_)", source)
+        self.assertIn("compact_timer_hint_ = lv_label_create(compact_timer_layer_)", source)
+        self.assertIn('lv_label_set_text(compact_timer_hint_, "TAP FOR ALL TIMERS")', source)
+        self.assertIn("const bool service_only = focus == nullptr && service != nullptr", source)
+        self.assertIn("SetVisible(compact_timer_arc_, !service_only)", source)
+        self.assertIn('"SERVICE  " +', source)
         self.assertNotIn("auto* card = lv_obj_create(compact_timer_layer_)", source)
         self.assertNotIn("compact_timer_status_", source)
         self.assertNotIn("compact_timer_accent_", source)
@@ -356,6 +364,7 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertNotIn("kColorAmber", refresh)
         service = source.split("void RefreshServiceRingLocked", 1)[1].split("\n    }", 1)[0]
         self.assertIn("SetVisible(orbit_service_arc_, service != nullptr)", service)
+        self.assertIn("ServiceArcValueLocked(service, now_ms)", service)
         self.assertIn("kOrbitService", source)
 
     def test_a_running_timer_stays_compact_until_the_chef_expands_it(self):

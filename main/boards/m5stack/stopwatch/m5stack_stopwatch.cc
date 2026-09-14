@@ -255,9 +255,13 @@ private:
     lv_obj_t* crest_star_ = nullptr;
     lv_obj_t* crest_caption_ = nullptr;
     lv_obj_t* compact_timer_layer_ = nullptr;
+    lv_obj_t* compact_service_arc_ = nullptr;
+    lv_obj_t* compact_service_label_ = nullptr;
     lv_obj_t* compact_timer_arc_ = nullptr;
+    lv_obj_t* compact_timer_eyebrow_ = nullptr;
     lv_obj_t* compact_timer_name_ = nullptr;
     lv_obj_t* compact_timer_remaining_ = nullptr;
+    lv_obj_t* compact_timer_hint_ = nullptr;
     lv_obj_t* dictation_panel_ = nullptr;
     lv_obj_t* dictation_status_ = nullptr;
     lv_obj_t* dictation_action_ = nullptr;
@@ -551,8 +555,34 @@ private:
         lv_obj_set_style_bg_opa(compact_timer_layer_, LV_OPA_COVER, 0);
         lv_obj_remove_flag(compact_timer_layer_, LV_OBJ_FLAG_SCROLLABLE);
 
+        // Service is a separate, always-gold instrument around the cooking
+        // timer. It deliberately never becomes a card or consumes a timer
+        // colour, matching the app's visual hierarchy.
+        compact_service_arc_ = lv_arc_create(compact_timer_layer_);
+        lv_obj_set_size(compact_service_arc_, 446, 446);
+        lv_obj_center(compact_service_arc_);
+        lv_arc_set_rotation(compact_service_arc_, 270);
+        lv_arc_set_bg_angles(compact_service_arc_, 0, 360);
+        lv_arc_set_range(compact_service_arc_, 0, 1000);
+        lv_arc_set_value(compact_service_arc_, 1000);
+        lv_obj_remove_style(compact_service_arc_, nullptr, LV_PART_KNOB);
+        lv_obj_remove_flag(compact_service_arc_, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_arc_width(compact_service_arc_, 5, LV_PART_MAIN);
+        lv_obj_set_style_arc_width(compact_service_arc_, 9, LV_PART_INDICATOR);
+        lv_obj_set_style_arc_color(compact_service_arc_, lv_color_hex(kOrbitTrack), LV_PART_MAIN);
+        lv_obj_set_style_arc_color(compact_service_arc_, lv_color_hex(kOrbitService),
+                                   LV_PART_INDICATOR);
+
+        compact_service_label_ = lv_label_create(compact_timer_layer_);
+        lv_obj_set_width(compact_service_label_, 260);
+        lv_obj_set_style_text_font(compact_service_label_, &font_noto_sans_basic_16_4, 0);
+        lv_obj_set_style_text_color(compact_service_label_, lv_color_hex(kOrbitService), 0);
+        lv_obj_set_style_text_align(compact_service_label_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_letter_space(compact_service_label_, 2, 0);
+        lv_obj_align(compact_service_label_, LV_ALIGN_CENTER, 0, -197);
+
         compact_timer_arc_ = lv_arc_create(compact_timer_layer_);
-        lv_obj_set_size(compact_timer_arc_, 326, 326);
+        lv_obj_set_size(compact_timer_arc_, 342, 342);
         lv_obj_center(compact_timer_arc_);
         lv_arc_set_rotation(compact_timer_arc_, 270);
         lv_arc_set_bg_angles(compact_timer_arc_, 0, 360);
@@ -566,20 +596,39 @@ private:
         lv_obj_set_style_arc_color(compact_timer_arc_, lv_color_hex(kOrbitColors[0]),
                                    LV_PART_INDICATOR);
 
+        compact_timer_eyebrow_ = lv_label_create(compact_timer_layer_);
+        lv_obj_set_width(compact_timer_eyebrow_, 238);
+        lv_obj_set_style_text_font(compact_timer_eyebrow_, &font_noto_sans_basic_16_4, 0);
+        lv_obj_set_style_text_color(compact_timer_eyebrow_, lv_color_hex(kColorGold), 0);
+        lv_obj_set_style_text_align(compact_timer_eyebrow_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_letter_space(compact_timer_eyebrow_, 3, 0);
+        lv_label_set_text(compact_timer_eyebrow_, "TIMER");
+        lv_obj_align(compact_timer_eyebrow_, LV_ALIGN_CENTER, 0, -83);
+
         compact_timer_name_ = lv_label_create(compact_timer_layer_);
-        lv_obj_set_width(compact_timer_name_, 238);
+        lv_obj_set_width(compact_timer_name_, 270);
         lv_obj_set_style_text_font(compact_timer_name_, &font_noto_sans_basic_30_4, 0);
         lv_obj_set_style_text_color(compact_timer_name_, lv_color_hex(kOrbitColors[0]), 0);
         lv_obj_set_style_text_align(compact_timer_name_, LV_TEXT_ALIGN_CENTER, 0);
         lv_label_set_long_mode(compact_timer_name_, LV_LABEL_LONG_DOT);
-        lv_obj_align(compact_timer_name_, LV_ALIGN_CENTER, 0, -34);
+        lv_obj_align(compact_timer_name_, LV_ALIGN_CENTER, 0, -38);
 
         compact_timer_remaining_ = lv_label_create(compact_timer_layer_);
-        lv_obj_set_width(compact_timer_remaining_, 238);
+        lv_obj_set_width(compact_timer_remaining_, 280);
         lv_obj_set_style_text_font(compact_timer_remaining_, &font_noto_sans_basic_30_4, 0);
         lv_obj_set_style_text_color(compact_timer_remaining_, lv_color_hex(kColorCream), 0);
         lv_obj_set_style_text_align(compact_timer_remaining_, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_align(compact_timer_remaining_, LV_ALIGN_CENTER, 0, 18);
+        lv_obj_set_style_text_letter_space(compact_timer_remaining_, 3, 0);
+        lv_obj_align(compact_timer_remaining_, LV_ALIGN_CENTER, 0, 15);
+
+        compact_timer_hint_ = lv_label_create(compact_timer_layer_);
+        lv_obj_set_width(compact_timer_hint_, 270);
+        lv_obj_set_style_text_font(compact_timer_hint_, &font_noto_sans_basic_16_4, 0);
+        lv_obj_set_style_text_color(compact_timer_hint_, lv_color_hex(0x8B877C), 0);
+        lv_obj_set_style_text_align(compact_timer_hint_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_letter_space(compact_timer_hint_, 1, 0);
+        lv_label_set_text(compact_timer_hint_, "TAP FOR ALL TIMERS");
+        lv_obj_align(compact_timer_hint_, LV_ALIGN_CENTER, 0, 72);
 
         SetVisible(compact_timer_layer_, false);
     }
@@ -692,15 +741,22 @@ private:
     }
 
     void RefreshCompactTimerLocked() {
-        if (compact_timer_arc_ == nullptr || compact_timer_name_ == nullptr ||
-            compact_timer_remaining_ == nullptr) {
+        if (compact_service_arc_ == nullptr || compact_service_label_ == nullptr ||
+            compact_timer_arc_ == nullptr || compact_timer_eyebrow_ == nullptr ||
+            compact_timer_name_ == nullptr || compact_timer_remaining_ == nullptr ||
+            compact_timer_hint_ == nullptr) {
             return;
         }
         const int64_t now_ms = EffectiveServerNowMs();
         const ProvisionsTimerSnapshot::Timer* focus = nullptr;
+        const ProvisionsTimerSnapshot::Timer* service = nullptr;
         for (const auto& timer : timer_snapshot_.timers) {
             if (timer.status != ProvisionsTimerSnapshot::TimerStatus::kActive &&
                 timer.status != ProvisionsTimerSnapshot::TimerStatus::kAttention) {
+                continue;
+            }
+            if (service == nullptr && IsServiceLabel(timer.label)) {
+                service = &timer;
                 continue;
             }
             if (focus == nullptr ||
@@ -710,6 +766,26 @@ private:
                 focus = &timer;
             }
         }
+
+        const bool service_only = focus == nullptr && service != nullptr;
+        if (service_only) {
+            focus = service;
+        }
+        SetVisible(compact_service_arc_, service != nullptr);
+        SetVisible(compact_service_label_, service != nullptr && !service_only);
+        if (service != nullptr) {
+            lv_arc_set_value(compact_service_arc_, ServiceArcValueLocked(service, now_ms));
+            const bool service_due =
+                service->status == ProvisionsTimerSnapshot::TimerStatus::kAttention ||
+                (now_ms > 0 && service->deadline_ms <= now_ms);
+            const std::string service_text =
+                service_due
+                    ? "SERVICE NOW"
+                    : "SERVICE  " +
+                          ProvisionsStopwatchOrbit::FormatRemaining(service->deadline_ms, now_ms);
+            lv_label_set_text(compact_service_label_, service_text.c_str());
+        }
+        SetVisible(compact_timer_arc_, !service_only);
 
         std::string name = "Timer";
         std::string remaining = "Syncing";
@@ -723,12 +799,15 @@ private:
                              (now_ms > 0 && focus->deadline_ms <= now_ms);
             remaining = due ? "Due"
                             : ProvisionsStopwatchOrbit::FormatRemaining(focus->deadline_ms, now_ms);
-            color = due ? kColorAmber : kOrbitColors[0];
+            color = due ? kColorAmber : (service_only ? kOrbitService : kOrbitColors[0]);
             if (due) {
                 arc_value = 0;
-            } else {
+            } else if (!service_only) {
                 for (const auto& slot : orbit_slot_board_.slots()) {
                     if (slot.occupied && slot.timer.id == focus->id) {
+                        const auto index = static_cast<std::size_t>(
+                            &slot - orbit_slot_board_.slots().data());
+                        color = kOrbitColors[index];
                         arc_value = static_cast<int>(
                             ProvisionsStopwatchOrbit::RemainingFraction(slot, now_ms) * 1000.0F);
                         break;
@@ -741,6 +820,11 @@ private:
         lv_label_set_text(compact_timer_remaining_, remaining.c_str());
         lv_obj_set_style_text_color(compact_timer_name_, lv_color_hex(color), 0);
         lv_obj_set_style_arc_color(compact_timer_arc_, lv_color_hex(color), LV_PART_INDICATOR);
+        lv_label_set_text(compact_timer_eyebrow_, service_only ? "SERVICE" : "TIMER");
+        lv_obj_set_style_text_color(compact_timer_eyebrow_,
+                                    lv_color_hex(service_only ? kOrbitService : kColorGold), 0);
+        lv_label_set_text(compact_timer_hint_, service_only ? "TAP FOR DETAILS"
+                                                            : "TAP FOR ALL TIMERS");
     }
 
     void SetReplyLayoutLocked(bool visible) {
@@ -1010,13 +1094,9 @@ private:
         return true;
     }
 
-    void RefreshServiceRingLocked(const ProvisionsTimerSnapshot::Timer* service, int64_t now_ms) {
-        if (orbit_service_arc_ == nullptr) {
-            return;
-        }
-        SetVisible(orbit_service_arc_, service != nullptr);
+    int ServiceArcValueLocked(const ProvisionsTimerSnapshot::Timer* service, int64_t now_ms) {
         if (service == nullptr) {
-            return;
+            return 0;
         }
         ProvisionsStopwatchOrbit::Slot slot;
         slot.occupied = true;
@@ -1029,11 +1109,21 @@ private:
         }
         const bool due = service->status == ProvisionsTimerSnapshot::TimerStatus::kAttention ||
                          service->deadline_ms <= now_ms;
-        const int value =
-            due ? 0
-                : static_cast<int>(ProvisionsStopwatchOrbit::RemainingFraction(slot, now_ms) *
-                                   1000.0F);
-        lv_arc_set_value(orbit_service_arc_, value);
+        return due
+                   ? 0
+                   : static_cast<int>(ProvisionsStopwatchOrbit::RemainingFraction(slot, now_ms) *
+                                      1000.0F);
+    }
+
+    void RefreshServiceRingLocked(const ProvisionsTimerSnapshot::Timer* service, int64_t now_ms) {
+        if (orbit_service_arc_ == nullptr) {
+            return;
+        }
+        SetVisible(orbit_service_arc_, service != nullptr);
+        if (service == nullptr) {
+            return;
+        }
+        lv_arc_set_value(orbit_service_arc_, ServiceArcValueLocked(service, now_ms));
     }
 
     void CreateOrbitUiLocked(lv_obj_t* screen) {
