@@ -2792,6 +2792,10 @@ public:
             ioe_.digitalWrite(IOE_PIN_MOTOR, active ? HIGH : LOW);
             if (active) {
                 ResetDisplayIdleTimer();
+                Application::GetInstance().GetAudioService().PlayLocalFeedback(
+                    Lang::Sounds::OGG_EXCLAMATION);
+            } else {
+                Application::GetInstance().GetAudioService().CancelLocalFeedback();
             }
         });
 #endif

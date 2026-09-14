@@ -63,6 +63,17 @@ class ProvisionsTimerSnapshotTests(unittest.TestCase):
             "RegisterProvisionsTimerSnapshotCallback", 1
         )[0]
         self.assertIn("active ? HIGH : LOW", alarm_output)
+        self.assertIn("PlayLocalFeedback", alarm_output)
+        self.assertIn("OGG_EXCLAMATION", alarm_output)
+        self.assertIn("CancelLocalFeedback", alarm_output)
+
+        alarm_listening = application.split("void Application::ServiceAlarmListening", 1)[
+            1
+        ].split("void Application::NoteTalkPressDown", 1)[0]
+        self.assertIn("kAnnouncementGraceUs = 4LL * 1000 * 1000", alarm_listening)
+        self.assertIn(
+            "alarm_listen_next_us_ = now_us + kAnnouncementGraceUs", alarm_listening
+        )
 
     @unittest.skipUnless(
         shutil.which("c++") and shutil.which("cc"),

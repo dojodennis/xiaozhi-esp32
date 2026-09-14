@@ -3442,13 +3442,16 @@ void Application::ServiceTimers() {
 }
 
 // Hands-free stop. While a timer rings, open a short listening window so the
-// chef can say "stop" without touching the ring: three windows of 3 s, six
+// chef can say "stop" without touching the ring: six windows of 3 s, six
 // seconds apart, then silence — a ring that listens for the whole alarm would
 // hold the radio at full clock and fill the capture slots with kitchen noise.
+// The first window waits for the local chime and spoken timer name; otherwise
+// StartListening aborts that announcement before its first audio packet arrives.
 // The motor is quiet for the duration; a press still works throughout.
 void Application::ServiceAlarmListening(bool ringing, bool ready, int64_t now_us) {
     constexpr int64_t kWindowUs = 3LL * 1000 * 1000;
     constexpr int64_t kSpacingUs = 6LL * 1000 * 1000;
+    constexpr int64_t kAnnouncementGraceUs = 4LL * 1000 * 1000;
     constexpr int kMaxWindows = 6;
     // After the window closes the ring stays quiet while the stop is heard and
     // settled: on 13 Sept that took 5.4 s, and resuming after the 3 s window
@@ -3494,6 +3497,10 @@ void Application::ServiceAlarmListening(bool ringing, bool ready, int64_t now_us
         alarm_listen_next_us_ = 0;
         alarm_listen_blocked_logged_ = false;
         alarm_listen_press_.store(0);
+        return;
+    }
+    if (alarm_listen_attempts_ == 0 && alarm_listen_next_us_ == 0) {
+        alarm_listen_next_us_ = now_us + kAnnouncementGraceUs;
         return;
     }
     if (open_press != 0 || alarm_output_held_ || alarm_listen_attempts_ >= kMaxWindows)
