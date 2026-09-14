@@ -172,6 +172,10 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("void ResetTimerSnapshot", source)
         self.assertIn("bool SilenceTimerAlarm", source)
         self.assertIn("RegisterProvisionsTimerSnapshotCallback", source)
+        self.assertIn("crest_timer_ring_ = lv_arc_create(crest_layer_)", source)
+        self.assertIn("OrbitCrest::TimerRingOpacity(now, false)", source)
+        self.assertIn("const bool active = !text.empty()", source)
+        self.assertNotIn("crest_timer_text_", source)
 
     def test_provisions_screen_is_branded_and_reply_capable(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")

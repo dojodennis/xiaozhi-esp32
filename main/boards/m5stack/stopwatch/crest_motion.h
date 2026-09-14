@@ -12,6 +12,7 @@ namespace OrbitCrest {
 
 constexpr int kDisplaySize = 466;
 constexpr int kSafeRadius = 201;
+constexpr int kTimerRingRadius = 198;
 constexpr int kTransitionMs = 360;
 constexpr int kResultHoldMs = 4000;
 constexpr uint32_t kIvory = 0xE8E0D2;
@@ -35,6 +36,13 @@ inline uint8_t Opacity(float value) {
 }
 
 inline float RaisedCosine(float cycles) { return 0.5F - 0.5F * std::cos(2.0F * kPi * cycles); }
+
+inline uint8_t TimerRingOpacity(uint32_t elapsed_ms, bool reduced_motion) {
+    if (reduced_motion)
+        return Opacity(0.62F);
+    const float time = static_cast<float>(elapsed_ms) / 1000.0F;
+    return Opacity(0.30F + 0.48F * RaisedCosine(time / 2.8F));
+}
 
 inline float SmootherStep(float phase) {
     phase = std::clamp(phase, 0.0F, 1.0F);

@@ -254,7 +254,7 @@ private:
     lv_obj_t* crest_band_ = nullptr;
     lv_obj_t* crest_star_ = nullptr;
     lv_obj_t* crest_caption_ = nullptr;
-    lv_obj_t* crest_timer_text_ = nullptr;
+    lv_obj_t* crest_timer_ring_ = nullptr;
     lv_obj_t* dictation_panel_ = nullptr;
     lv_obj_t* dictation_status_ = nullptr;
     lv_obj_t* dictation_action_ = nullptr;
@@ -275,7 +275,7 @@ private:
     bool dictation_visible_ = false;
     std::string dictation_status_text_;
     std::string dictation_action_text_;
-    std::string crest_timer_text_value_;
+    bool crest_timer_active_ = false;
     float crest_level_ = 0;
     esp_timer_handle_t visual_reset_timer_ = nullptr;
     esp_timer_handle_t reply_scroll_timer_ = nullptr;
@@ -426,6 +426,19 @@ private:
             lv_obj_set_style_arc_color(ring, lv_color_hex(crest_frame_.color), LV_PART_MAIN);
             lv_obj_set_style_arc_opa(ring, crest_frame_.opacity[index], LV_PART_MAIN);
         }
+        if (crest_timer_ring_ != nullptr) {
+            const bool show_timer_ring =
+                crest_timer_active_ && (crest_state_ == OrbitCrest::State::Idle ||
+                                        crest_state_ == OrbitCrest::State::Result);
+            const lv_opa_t timer_ring_opacity =
+                show_timer_ring
+                    ? static_cast<lv_opa_t>(OrbitCrest::TimerRingOpacity(now, false))
+                    : static_cast<lv_opa_t>(LV_OPA_TRANSP);
+            lv_obj_set_style_arc_opa(
+                crest_timer_ring_,
+                timer_ring_opacity,
+                LV_PART_MAIN);
+        }
         const bool error_geometry = crest_state_ == OrbitCrest::State::Error;
         if (error_geometry != crest_error_ring_geometry_) {
             for (auto* ring : crest_rings_) {
@@ -447,7 +460,8 @@ private:
                                                                   : OrbitCrest::kIvory),
             0);
         if (crest_animation_timer_ && now - crest_transition_ms_ >= OrbitCrest::kTransitionMs &&
-            !OrbitCrest::UsesRings(crest_state_) && crest_state_ != OrbitCrest::State::Result) {
+            !OrbitCrest::UsesRings(crest_state_) && crest_state_ != OrbitCrest::State::Result &&
+            !crest_timer_active_) {
             lv_timer_pause(crest_animation_timer_);
         }
     }
@@ -501,14 +515,18 @@ private:
         lv_obj_set_style_text_line_space(crest_caption_, 3, 0);
         lv_label_set_long_mode(crest_caption_, LV_LABEL_LONG_CLIP);
 
-        crest_timer_text_ = lv_label_create(crest_layer_);
-        lv_obj_set_size(crest_timer_text_, 250, 54);
-        lv_obj_align(crest_timer_text_, LV_ALIGN_CENTER, 0, 166);
-        lv_obj_set_style_text_font(crest_timer_text_, &font_noto_sans_basic_16_4, 0);
-        lv_obj_set_style_text_align(crest_timer_text_, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_style_text_color(crest_timer_text_, lv_color_hex(0xcbd5e1), 0);
-        lv_label_set_long_mode(crest_timer_text_, LV_LABEL_LONG_CLIP);
-        lv_label_set_text(crest_timer_text_, "");
+        crest_timer_ring_ = lv_arc_create(crest_layer_);
+        lv_obj_remove_style_all(crest_timer_ring_);
+        lv_obj_set_size(crest_timer_ring_, OrbitCrest::kTimerRingRadius * 2,
+                        OrbitCrest::kTimerRingRadius * 2);
+        lv_obj_center(crest_timer_ring_);
+        lv_obj_set_style_arc_width(crest_timer_ring_, 4, LV_PART_MAIN);
+        lv_obj_set_style_arc_color(crest_timer_ring_, lv_color_hex(OrbitCrest::kGold),
+                                   LV_PART_MAIN);
+        lv_obj_set_style_arc_opa(crest_timer_ring_, LV_OPA_TRANSP, LV_PART_INDICATOR);
+        lv_arc_set_rotation(crest_timer_ring_, 0);
+        lv_arc_set_bg_angles(crest_timer_ring_, 0, 360);
+        lv_obj_remove_flag(crest_timer_ring_, LV_OBJ_FLAG_CLICKABLE);
 
         dictation_panel_ = lv_obj_create(crest_layer_);
         lv_obj_remove_style_all(dictation_panel_);
@@ -2116,10 +2134,15 @@ public:
 
     void SetTimerText(const std::string& text) override {
         DisplayLockGuard lock(this);
-        if (crest_timer_text_ == nullptr || crest_timer_text_value_ == text)
+        if (crest_timer_ring_ == nullptr)
             return;
-        crest_timer_text_value_ = text;
-        lv_label_set_text(crest_timer_text_, crest_timer_text_value_.c_str());
+        const bool active = !text.empty();
+        if (crest_timer_active_ == active)
+            return;
+        crest_timer_active_ = active;
+        if (crest_animation_timer_ != nullptr)
+            lv_timer_resume(crest_animation_timer_);
+        RenderCrestLocked();
     }
 
     void SetDictationScreen(bool visible, const std::string& status,
