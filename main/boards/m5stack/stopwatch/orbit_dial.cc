@@ -200,6 +200,54 @@ DialCenter SlotCenter(int index) {
     };
 }
 
+int RawTouchToDisplay(int raw) {
+    const int clamped = std::clamp(raw, 0, kTouchRawMaximum);
+    return (clamped * (kDisplaySize - 1) + kTouchRawMaximum / 2) / kTouchRawMaximum;
+}
+
+int SlotAtPoint(int x, int y) {
+    for (int index = 0; index < kMaximumSlots; ++index) {
+        const auto center = SlotCenter(index);
+        const int dx = x - center.x;
+        const int dy = y - center.y;
+        if (dx * dx + dy * dy <= kSlotHitRadius * kSlotHitRadius) {
+            return index;
+        }
+    }
+    return -1;
+}
+
+int CompactFocusIndex(const std::vector<ProvisionsTimerSnapshot::Timer>& timers,
+                      int service_index, const SlotBoard& board, std::string& pinned_id) {
+    const bool pin_seated =
+        !pinned_id.empty() &&
+        std::any_of(board.slots().begin(), board.slots().end(), [&pinned_id](const Slot& slot) {
+            return slot.occupied && slot.timer.id == pinned_id;
+        });
+    int focus = -1;
+    for (int index = 0; index < static_cast<int>(timers.size()); ++index) {
+        const auto& timer = timers[index];
+        if (index == service_index || !Retained(timer)) {
+            continue;
+        }
+        if (pin_seated && timer.id == pinned_id) {
+            return index;
+        }
+        if (focus < 0) {
+            focus = index;
+            continue;
+        }
+        const auto& current = timers[focus];
+        if ((timer.status == ProvisionsTimerSnapshot::TimerStatus::kActive &&
+             current.status == ProvisionsTimerSnapshot::TimerStatus::kAttention) ||
+            (timer.status == current.status && timer.deadline_ms < current.deadline_ms)) {
+            focus = index;
+        }
+    }
+    pinned_id.clear();
+    return focus;
+}
+
 float RemainingFraction(const Slot& slot, int64_t now_ms) {
     const int64_t total = slot.timer.deadline_ms - slot.first_seen_ms;
     if (total <= 0) {

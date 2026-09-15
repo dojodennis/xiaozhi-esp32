@@ -505,6 +505,287 @@ class ProvisionsTimerSnapshotTests(unittest.TestCase):
             )
             subprocess.run([str(executable)], check=True, cwd=ROOT)
 
+    @unittest.skipUnless(shutil.which("c++"), "host C++ compiler is unavailable")
+    def test_overview_tap_resolves_slots_and_pins_compact_focus(self):
+        test_source = textwrap.dedent(
+            r"""
+            #include "orbit_dial.h"
+
+            #include <cassert>
+            #include <cmath>
+            #include <string>
+            #include <vector>
+
+            using ProvisionsTimerSnapshot::Timer;
+            using ProvisionsTimerSnapshot::TimerStatus;
+            using namespace ProvisionsStopwatchOrbit;
+
+            Timer Make(std::string id, std::string label, int64_t deadline,
+                       TimerStatus status = TimerStatus::kActive) {
+                return Timer{.id = std::move(id), .label = std::move(label),
+                             .deadline_ms = deadline, .status = status};
+            }
+
+            int SlotFor(const SlotBoard& board, const std::string& id) {
+                for (int index = 0; index < kMaximumSlots; ++index) {
+                    if (board.slots()[index].occupied && board.slots()[index].timer.id == id) {
+                        return index;
+                    }
+                }
+                return -1;
+            }
+
+            // Display point -> the CST820 raw point that M5GFX's StopWatch
+            // calibration (0..233 over the panel) would report for it.
+            int RawFor(int display) {
+                return static_cast<int>(std::lround(display * double(kTouchRawMaximum) /
+                                                    double(kDisplaySize - 1)));
+            }
+
+            // What the board does with a tap: map the raw point, resolve, then
+            // pin only an occupied slot.
+            void Tap(const SlotBoard& board, int raw_x, int raw_y, std::string& pinned) {
+                const int slot = SlotAtPoint(RawTouchToDisplay(raw_x), RawTouchToDisplay(raw_y));
+                if (slot >= 0 && board.slots()[slot].occupied) {
+                    pinned = board.slots()[slot].timer.id;
+                }
+            }
+
+            void TapDisplay(const SlotBoard& board, int x, int y, std::string& pinned) {
+                Tap(board, RawFor(x), RawFor(y), pinned);
+            }
+
+            int main() {
+                // Geometry: every slot centre and every point just inside its
+                // hit circle resolves to that slot; the dial centre, the corners
+                // and the gap between rings do not. Hit circles never overlap.
+                constexpr double kPi = 3.14159265358979;
+                for (int index = 0; index < kMaximumSlots; ++index) {
+                    const auto center = SlotCenter(index);
+                    assert(SlotAtPoint(center.x, center.y) == index);
+                    for (int step = 0; step < 16; ++step) {
+                        const double angle = step * kPi / 8.0;
+                        const int reach = kSlotHitRadius - 1;
+                        const int x = center.x + static_cast<int>(std::lround(reach * std::cos(angle)));
+                        const int y = center.y + static_cast<int>(std::lround(reach * std::sin(angle)));
+                        assert(SlotAtPoint(x, y) == index);
+                    }
+                    assert(SlotAtPoint(center.x, center.y - kSlotHitRadius - 2) != index);
+                    const auto next = SlotCenter((index + 1) % kMaximumSlots);
+                    assert(std::hypot(next.x - center.x, next.y - center.y) >
+                           2.0 * kSlotHitRadius);
+                }
+                assert(kSlotHitRadius >= kSlotRadius + 24);
+                assert(SlotAtPoint(kDisplaySize / 2, kDisplaySize / 2) == -1);
+                assert(SlotAtPoint(0, 0) == -1);
+                assert(SlotAtPoint(kDisplaySize - 1, kDisplaySize - 1) == -1);
+                assert(SlotAtPoint(-4095, 4095) == -1);
+
+                // Raw CST820 axis -> panel pixel, as M5GFX calibrates the
+                // StopWatch: 0..233 spans 0..465, rounded, clamped, monotonic.
+                assert(kTouchRawMaximum == 233);
+                assert(RawTouchToDisplay(0) == 0);
+                assert(RawTouchToDisplay(kTouchRawMaximum) == kDisplaySize - 1);
+                assert(RawTouchToDisplay(116) == 232 && RawTouchToDisplay(117) == 233);
+                assert(RawTouchToDisplay(-1) == 0);
+                assert(RawTouchToDisplay(-4095) == 0);
+                assert(RawTouchToDisplay(234) == kDisplaySize - 1);
+                assert(RawTouchToDisplay(4095) == kDisplaySize - 1);
+                for (int raw = 0; raw <= kTouchRawMaximum; ++raw) {
+                    const double exact = raw * double(kDisplaySize - 1) / kTouchRawMaximum;
+                    assert(std::fabs(RawTouchToDisplay(raw) - exact) <= 0.5 + 1e-9);
+                    if (raw > 0) {
+                        const int step = RawTouchToDisplay(raw) - RawTouchToDisplay(raw - 1);
+                        assert(step == 1 || step == 2);
+                    }
+                }
+
+                // The bug this fixes: the raw point for rice's ring (slot 1,
+                // centre 366,157) is about 183,78. Hit-tested unmapped it lands
+                // on pasta's slot 0; mapped it is back on slot 1.
+                assert(SlotCenter(1).x == 366 && SlotCenter(1).y == 157);
+                assert(SlotAtPoint(183, 78) == 0);
+                assert(RawTouchToDisplay(183) == 365 && RawTouchToDisplay(78) == 156);
+                assert(SlotAtPoint(RawTouchToDisplay(183), RawTouchToDisplay(78)) == 1);
+                // Every slot: the half-scale raw centre (both the calibration
+                // inverse and a plain halving) resolves to that slot once mapped,
+                // and never does unmapped; so do raw points near the hit edge.
+                for (int index = 0; index < kMaximumSlots; ++index) {
+                    const auto center = SlotCenter(index);
+                    const int raw_x = RawFor(center.x);
+                    const int raw_y = RawFor(center.y);
+                    assert(SlotAtPoint(RawTouchToDisplay(raw_x), RawTouchToDisplay(raw_y)) == index);
+                    assert(SlotAtPoint(RawTouchToDisplay(center.x / 2),
+                                       RawTouchToDisplay(center.y / 2)) == index);
+                    assert(SlotAtPoint(raw_x, raw_y) != index);
+                    for (int step = 0; step < 16; ++step) {
+                        const double angle = step * kPi / 8.0;
+                        const int reach = kSlotHitRadius - 4;
+                        const int x = center.x + static_cast<int>(std::lround(reach * std::cos(angle)));
+                        const int y = center.y + static_cast<int>(std::lround(reach * std::sin(angle)));
+                        assert(SlotAtPoint(RawTouchToDisplay(RawFor(x)),
+                                           RawTouchToDisplay(RawFor(y))) == index);
+                    }
+                }
+                // Raw dial centre and raw corners stay off every slot.
+                assert(SlotAtPoint(RawTouchToDisplay(116), RawTouchToDisplay(116)) == -1);
+                assert(SlotAtPoint(RawTouchToDisplay(0), RawTouchToDisplay(0)) == -1);
+                assert(SlotAtPoint(RawTouchToDisplay(233), RawTouchToDisplay(233)) == -1);
+
+                // Dennis's report: pasta then rice, both two minutes, pasta first.
+                constexpr int64_t now = 5'000'000;
+                std::vector<Timer> timers = {
+                    Make("service-id", "Service", now + 3'600'000),
+                    Make("pasta-id", "Pasta", now + 120'000),
+                    Make("rice-id", "Rice", now + 125'000),
+                };
+                constexpr int kService = 0;
+                std::vector<Timer> slot_timers(timers.begin() + 1, timers.end());
+                SlotBoard board;
+                board.Update(slot_timers, now);
+                const int pasta_slot = SlotFor(board, "pasta-id");
+                const int rice_slot = SlotFor(board, "rice-id");
+                assert(pasta_slot == 0 && rice_slot == 1);
+
+                // No pin: the soonest running timer, never the service ring.
+                std::string pinned;
+                assert(CompactFocusIndex(timers, kService, board, pinned) == 1);
+
+                // Tap on slot N pins timer N: rice shows rice, pasta shows pasta.
+                Tap(board, 183, 78, pinned);
+                assert(pinned == "rice-id");
+                assert(CompactFocusIndex(timers, kService, board, pinned) == 2);
+                assert(pinned == "rice-id");
+                auto rice_center = SlotCenter(rice_slot);
+                const auto pasta_center = SlotCenter(pasta_slot);
+                TapDisplay(board, pasta_center.x, pasta_center.y, pinned);
+                assert(pinned == "pasta-id");
+                assert(CompactFocusIndex(timers, kService, board, pinned) == 1);
+                TapDisplay(board, rice_center.x + 30, rice_center.y - 30, pinned);
+                assert(pinned == "rice-id");
+                // Tap outside every slot (dial centre) or on an empty slot keeps the focus.
+                TapDisplay(board, kDisplaySize / 2, kDisplaySize / 2, pinned);
+                assert(pinned == "rice-id");
+                int empty_slot = -1;
+                for (int index = 0; index < kMaximumSlots; ++index) {
+                    if (!board.slots()[index].occupied) empty_slot = index;
+                }
+                assert(empty_slot >= 0);
+                const auto empty_center = SlotCenter(empty_slot);
+                TapDisplay(board, empty_center.x, empty_center.y, pinned);
+                assert(pinned == "rice-id");
+                assert(CompactFocusIndex(timers, kService, board, pinned) == 2);
+
+                // A pinned timer that is due stays in focus; the pin outlives
+                // a sooner timer appearing in the same snapshot.
+                timers[2].status = TimerStatus::kAttention;
+                assert(CompactFocusIndex(timers, kService, board, pinned) == 2);
+                timers[2].status = TimerStatus::kActive;
+                timers.push_back(Make("egg-id", "Egg", now + 10'000));
+                assert(CompactFocusIndex(timers, kService, board, pinned) == 2);
+                timers.pop_back();
+
+                // Pin cleared when its timer disappears: back to soonest.
+                std::vector<Timer> without_rice(timers.begin(), timers.begin() + 2);
+                assert(CompactFocusIndex(without_rice, kService, board, pinned) == 1);
+                assert(pinned.empty());
+                // ...and it stays cleared when the id shows up again.
+                assert(CompactFocusIndex(timers, kService, board, pinned) == 1);
+
+                // A pin never selects the service ring, and is dropped if tried.
+                pinned = "service-id";
+                assert(CompactFocusIndex(timers, kService, board, pinned) == 1);
+                assert(pinned.empty());
+
+                // A pinned timer pushed off the six-slot board (extended past
+                // a seventh timer) has no slot colour or counting ring, so the
+                // pin is dropped and the soonest seated timer takes focus.
+                std::vector<Timer> seven;
+                for (int index = 0; index < 7; ++index) {
+                    seven.push_back(Make("t" + std::to_string(index), "T",
+                                         now + 60'000 * (index + 1)));
+                }
+                SlotBoard full;
+                full.Update(seven, now);
+                assert(full.overflow_count() == 1 && SlotFor(full, "t6") < 0);
+                const int t2_slot = SlotFor(full, "t2");
+                assert(t2_slot >= 0);
+                TapDisplay(full, SlotCenter(t2_slot).x, SlotCenter(t2_slot).y, pinned);
+                assert(pinned == "t2");
+                assert(CompactFocusIndex(seven, -1, full, pinned) == 2);
+                seven[2].deadline_ms = now + 600'000;
+                full.Update(seven, now + 1'000);
+                assert(SlotFor(full, "t2") < 0 && SlotFor(full, "t6") >= 0);
+                const int focus = CompactFocusIndex(seven, -1, full, pinned);
+                assert(focus == 0);
+                assert(pinned.empty());
+                assert(SlotFor(full, seven[focus].id) >= 0);
+                // Back on the board later, the dropped pin does not return.
+                seven[2].deadline_ms = now + 150'000;
+                full.Update(seven, now + 2'000);
+                assert(SlotFor(full, "t2") >= 0);
+                assert(CompactFocusIndex(seven, -1, full, pinned) == 0);
+                // A pin that is seated but not in this snapshot is dropped too.
+                pinned = "t3";
+                std::vector<Timer> without_t3 = seven;
+                without_t3.erase(without_t3.begin() + 3);
+                assert(CompactFocusIndex(without_t3, -1, full, pinned) == 0);
+                assert(pinned.empty());
+
+                // Soonest rule unchanged without a pin: running beats due,
+                // earlier deadline wins within a status, ties keep the first.
+                std::vector<Timer> mixed = {
+                    Make("due", "Due", now - 1'000, TimerStatus::kAttention),
+                    Make("later", "Later", now + 90'000),
+                    Make("sooner", "Sooner", now + 30'000),
+                    Make("tie", "Tie", now + 30'000),
+                };
+                SlotBoard mixed_board;
+                mixed_board.Update(mixed, now);
+                assert(CompactFocusIndex(mixed, -1, mixed_board, pinned) == 2);
+                mixed.resize(1);
+                assert(CompactFocusIndex(mixed, -1, mixed_board, pinned) == 0);
+                assert(CompactFocusIndex({}, -1, SlotBoard{}, pinned) == -1);
+                pinned = "gone";
+                assert(CompactFocusIndex({}, -1, SlotBoard{}, pinned) == -1);
+                assert(pinned.empty());
+                return 0;
+            }
+            """
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            temporary = Path(temporary_directory)
+            source = temporary / "orbit_tap_test.cc"
+            executable = temporary / "orbit_tap_test"
+            source.write_text(test_source, encoding="utf-8")
+            (temporary / "sdkconfig.h").write_text(
+                "#define CONFIG_PROVISIONS_GATEWAY_REQUIRED 1\n", encoding="utf-8"
+            )
+            subprocess.run(
+                [
+                    shutil.which("c++"),
+                    "-std=c++17",
+                    "-Wall",
+                    "-Wextra",
+                    "-Werror",
+                    "-fsanitize=address,undefined",
+                    "-fno-omit-frame-pointer",
+                    "-I",
+                    str(temporary),
+                    "-I",
+                    str(ROOT / "main"),
+                    "-I",
+                    str(BOARD_DIR),
+                    str(source),
+                    str(BOARD_DIR / "orbit_dial.cc"),
+                    "-o",
+                    str(executable),
+                ],
+                check=True,
+                cwd=ROOT,
+            )
+            subprocess.run([str(executable)], check=True, cwd=ROOT)
+
 
 if __name__ == "__main__":
     unittest.main()

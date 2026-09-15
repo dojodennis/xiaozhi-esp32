@@ -311,6 +311,9 @@ private:
     };
     std::vector<DismissedTimer> dismissed_timers_;
     std::atomic<int64_t> timer_face_until_us_{0};
+    // Timer id tapped on the overview; the compact face follows it while it
+    // lives. Written and read under the display lock.
+    std::string pinned_timer_id_;
     std::vector<std::string> announced_timer_ids_;
     lv_obj_t* orbit_service_arc_ = nullptr;
     std::string orbit_service_id_;
@@ -748,24 +751,25 @@ private:
             return;
         }
         const int64_t now_ms = EffectiveServerNowMs();
-        const ProvisionsTimerSnapshot::Timer* focus = nullptr;
-        const ProvisionsTimerSnapshot::Timer* service = nullptr;
-        for (const auto& timer : timer_snapshot_.timers) {
-            if (timer.status != ProvisionsTimerSnapshot::TimerStatus::kActive &&
-                timer.status != ProvisionsTimerSnapshot::TimerStatus::kAttention) {
-                continue;
-            }
-            if (service == nullptr && IsServiceLabel(timer.label)) {
-                service = &timer;
-                continue;
-            }
-            if (focus == nullptr ||
-                (timer.status == ProvisionsTimerSnapshot::TimerStatus::kActive &&
-                 focus->status == ProvisionsTimerSnapshot::TimerStatus::kAttention) ||
-                (timer.status == focus->status && timer.deadline_ms < focus->deadline_ms)) {
-                focus = &timer;
+        const auto& timers = timer_snapshot_.timers;
+        int service_index = -1;
+        for (std::size_t index = 0; index < timers.size(); ++index) {
+            if ((timers[index].status == ProvisionsTimerSnapshot::TimerStatus::kActive ||
+                 timers[index].status == ProvisionsTimerSnapshot::TimerStatus::kAttention) &&
+                IsServiceLabel(timers[index].label)) {
+                service_index = static_cast<int>(index);
+                break;
             }
         }
+        // A timer picked on the overview stays in focus while it lives and
+        // keeps a slot; otherwise the soonest running timer. A stale pin is
+        // dropped here, so the ring below always finds the focus's slot.
+        const int focus_index = ProvisionsStopwatchOrbit::CompactFocusIndex(
+            timers, service_index, orbit_slot_board_, pinned_timer_id_);
+        const ProvisionsTimerSnapshot::Timer* service =
+            service_index >= 0 ? &timers[service_index] : nullptr;
+        const ProvisionsTimerSnapshot::Timer* focus =
+            focus_index >= 0 ? &timers[focus_index] : nullptr;
 
         const bool service_only = focus == nullptr && service != nullptr;
         if (service_only) {
@@ -1993,6 +1997,9 @@ public:
             }
             if (new_timer) {
                 timer_face_until_us_.store(0);
+                // The wake returns to the default soonest-first focus, so an
+                // old pick cannot hide a new timer that is due sooner.
+                pinned_timer_id_.clear();
                 new_timer_wake_.store(true);
                 SetReplyLayoutLocked(reply_visible_.load());
             }
@@ -2127,13 +2134,23 @@ public:
     bool ConsumeNewTimerWake() { return new_timer_wake_.exchange(false); }
 
     // A tap on the compact circular timer opens the six-timer overview for one
-    // idle window; a tap on the overview returns to the compact focused timer.
+    // idle window; a tap on the overview returns to the compact face, focused
+    // on the tapped slot's timer or, off the slots, on the current focus.
     // The 30 s idle timeout still closes the overview on its own.
-    bool ToggleTimerFocus() {
+    bool ToggleTimerFocus(int raw_x, int raw_y) {
         AlarmOutputChange output_change;
         {
             DisplayLockGuard lock(this);
-            if (TimerFaceForced()) {
+            // Decide from what was last drawn, not the live clock: the overview
+            // stays up until the next orbit tick even after its deadline, and
+            // a tap on it then must still pick the slot rather than reopen.
+            const bool overview_on_screen = OverviewOnScreenLocked();
+            if (overview_on_screen || TimerFaceForced()) {
+                // Only a slot the chef can actually see is pickable: a forced
+                // overview hidden by sleep, dictation or the alarm just closes.
+                if (overview_on_screen) {
+                    PinTappedSlotLocked(raw_x, raw_y);
+                }
                 timer_face_until_us_.store(0);
             } else if (!crest_timer_active_ || !HasLiveTimerLocked()) {
                 return false;
@@ -2145,6 +2162,31 @@ public:
         }
         ApplyAlarmOutputChange(output_change);
         return true;
+    }
+
+    // Caller holds the display lock. True while the overview layer is drawn:
+    // SetReplyLayoutLocked shows it only when awake, with no alarm, reply or
+    // dictation over it, and SetPowerSaveMode hides it.
+    bool OverviewOnScreenLocked() const {
+        return orbit_layer_ != nullptr && !lv_obj_has_flag(orbit_layer_, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    // Caller holds the display lock and the overview is on screen. The slot
+    // board is what was last drawn, so the pick matches the ring under the finger.
+    // The CST820 point is half resolution; map it onto the panel first.
+    void PinTappedSlotLocked(int raw_x, int raw_y) {
+        const int x = ProvisionsStopwatchOrbit::RawTouchToDisplay(raw_x);
+        const int y = ProvisionsStopwatchOrbit::RawTouchToDisplay(raw_y);
+        const int slot_index = ProvisionsStopwatchOrbit::SlotAtPoint(x, y);
+        ESP_LOGI(TAG, "Overview tap raw=%d,%d display=%d,%d slot=%d", raw_x, raw_y, x, y,
+                 slot_index);
+        if (slot_index < 0) {
+            return;
+        }
+        const auto& slot = orbit_slot_board_.slots()[slot_index];
+        if (slot.occupied) {
+            pinned_timer_id_ = slot.timer.id;
+        }
     }
 
     // Talk+blue chord (Application task): show the timer dial even with no
@@ -2524,14 +2566,18 @@ private:
                 auto* self = static_cast<M5StackStopwatchBoard*>(arg);
                 while (true) {
                     bool pressed = false;
-                    if (self->touch_.ReadPressed(pressed)) {
+                    int x = 0;
+                    int y = 0;
+                    if (self->touch_.ReadPressed(pressed, x, y)) {
+                        // The press-edge point travels by value; display state
+                        // is only touched on the Application task.
                         if (pressed && !self->touch_was_pressed_ &&
                             !self->touch_dismiss_queued_.exchange(true)) {
-                            Application::GetInstance().Schedule([self]() {
+                            Application::GetInstance().Schedule([self, x, y]() {
                                 self->touch_dismiss_queued_.store(false);
                                 const bool handled = self->display_->HasTimerAlarm()
                                                          ? self->display_->DismissRingingTimers()
-                                                         : self->display_->ToggleTimerFocus();
+                                                         : self->display_->ToggleTimerFocus(x, y);
                                 if (handled) {
                                     self->ResetDisplayIdleTimer();
                                 }

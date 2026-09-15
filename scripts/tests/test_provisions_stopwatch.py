@@ -376,7 +376,7 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         live = source.split("bool HasLiveTimerLocked() const {", 1)[1].split("\n    }", 1)[0]
         self.assertIn("TimerStatus::kActive", live)
         self.assertIn("TimerStatus::kAttention", live)
-        expand = source.split("bool ToggleTimerFocus()", 1)[1].split("\n    }\n", 1)[0]
+        expand = source.split("bool ToggleTimerFocus(int raw_x, int raw_y)", 1)[1].split("\n    }\n", 1)[0]
         self.assertIn("!crest_timer_active_ || !HasLiveTimerLocked()", expand)
         self.assertIn("kTimerFaceIdleUs", expand)
         toggle = source.split("void ToggleTimerFace()", 1)[1].split("\n    }", 1)[0]
@@ -385,10 +385,10 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
     def test_a_second_tap_returns_the_overview_to_the_focused_timer(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
         self.assertNotIn("ExpandTimerFace", source)
-        toggle = source.split("bool ToggleTimerFocus()", 1)[1].split("\n    }\n", 1)[0]
+        toggle = source.split("bool ToggleTimerFocus(int raw_x, int raw_y)", 1)[1].split("\n    }\n", 1)[0]
         # First tap (overview not forced) writes the idle deadline; second tap
         # (overview forced) clears it before the live-timer gate can refuse.
-        forced = toggle.index("if (TimerFaceForced())")
+        forced = toggle.index("if (overview_on_screen || TimerFaceForced())")
         clear = toggle.index("timer_face_until_us_.store(0)")
         gate = toggle.index("!crest_timer_active_ || !HasLiveTimerLocked()")
         expand = toggle.index("esp_timer_get_time() + kTimerFaceIdleUs")
@@ -397,9 +397,107 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertLess(gate, expand)
         self.assertIn("return true", toggle)
         touch = source.split("self->touch_dismiss_queued_.store(false);", 1)[1][:400]
-        self.assertLess(touch.index("DismissRingingTimers()"), touch.index("ToggleTimerFocus()"))
+        self.assertLess(touch.index("DismissRingingTimers()"), touch.index("ToggleTimerFocus(x, y)"))
         # The Talk+blue chord keeps its own toggle.
         self.assertIn("display_->ToggleTimerFace()", source)
+
+    def test_an_overview_tap_on_a_slot_pins_that_timer_to_the_compact_face(self):
+        source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
+        toggle = source.split("bool ToggleTimerFocus(int raw_x, int raw_y)", 1)[1].split("\n    }\n", 1)[0]
+        # Pin-and-close vs open is decided from what was last drawn, read once
+        # under the display lock before any branch: an overview still on
+        # screen after its deadline (before the orbit tick hides it) still
+        # pins. Only an overview really on screen picks a slot; a forced one
+        # hidden by sleep, the alarm or dictation just closes.
+        on_screen = toggle.index("const bool overview_on_screen = OverviewOnScreenLocked();")
+        forced = toggle.index("if (overview_on_screen || TimerFaceForced())")
+        visible = toggle.index("if (overview_on_screen) {")
+        pin = toggle.index("PinTappedSlotLocked(raw_x, raw_y)")
+        close = toggle.index("timer_face_until_us_.store(0)")
+        gate = toggle.index("!crest_timer_active_ || !HasLiveTimerLocked()")
+        self.assertLess(on_screen, forced)
+        self.assertLess(forced, visible)
+        self.assertLess(visible, pin)
+        self.assertLess(pin, close)
+        self.assertLess(close, gate)
+        self.assertEqual(toggle.count("TimerFaceForced()"), 1)
+        # The opening tap never pins.
+        self.assertNotIn("PinTappedSlotLocked", toggle[gate:])
+        drawn = source.split("bool OverviewOnScreenLocked() const {", 1)[1].split("\n    }\n", 1)[0]
+        self.assertIn("!lv_obj_has_flag(orbit_layer_, LV_OBJ_FLAG_HIDDEN)", drawn)
+        # The layer's flag is exactly what the layout and power save write.
+        layout = source.split("void SetReplyLayoutLocked(bool visible) {", 1)[1].split(
+            "AlarmOutputChange RefreshOrbitLocked()", 1)[0]
+        self.assertIn("SetVisible(orbit_layer_, show_orbit);", layout)
+        self.assertIn("display_awake && !show_alarm && !show_reply && ShouldShowOrbitLocked()",
+                      layout)
+        power = source.split("void SetPowerSaveMode(bool on) override {", 1)[1].split(
+            "void SetStatus(", 1)[0]
+        self.assertIn("orbit_layer_", power)
+
+        pin_body = source.split("void PinTappedSlotLocked(int raw_x, int raw_y) {", 1)[1].split(
+            "\n    }\n", 1)[0]
+        # The CST820 point is half resolution: map both axes onto the panel
+        # before hit-testing. Resolve against the board that was drawn; a tap
+        # off the slots (or on an empty slot) returns before touching the pin.
+        map_x = pin_body.index("const int x = ProvisionsStopwatchOrbit::RawTouchToDisplay(raw_x);")
+        map_y = pin_body.index("const int y = ProvisionsStopwatchOrbit::RawTouchToDisplay(raw_y);")
+        resolve = pin_body.index("ProvisionsStopwatchOrbit::SlotAtPoint(x, y)")
+        log = pin_body.index(
+            'ESP_LOGI(TAG, "Overview tap raw=%d,%d display=%d,%d slot=%d", raw_x, raw_y, x, y,')
+        miss = pin_body.index("if (slot_index < 0)")
+        assign = pin_body.index("pinned_timer_id_ = slot.timer.id")
+        self.assertLess(map_x, resolve)
+        self.assertLess(map_y, resolve)
+        self.assertLess(resolve, log)
+        self.assertLess(log, miss)
+        self.assertLess(miss, assign)
+        self.assertIn("orbit_slot_board_.slots()[slot_index]", pin_body)
+        self.assertIn("if (slot.occupied)", pin_body[miss:assign])
+        # The log is content-free: no label or id reaches it.
+        self.assertEqual(pin_body.count("ESP_LOG"), 1)
+        self.assertNotIn("label", pin_body)
+
+        # The compact face follows the pin through the pure helper, which drops
+        # a pin whose timer has gone, lost its slot or become the service ring.
+        compact = source.split("void RefreshCompactTimerLocked() {", 1)[1].split(
+            "void SetReplyLayoutLocked", 1)[0]
+        self.assertIn("ProvisionsStopwatchOrbit::CompactFocusIndex(", compact)
+        self.assertIn("timers, service_index, orbit_slot_board_, pinned_timer_id_", compact)
+        self.assertIn("IsServiceLabel(timers[index].label)", compact)
+        self.assertLess(compact.index("service_index = static_cast<int>(index)"),
+                        compact.index("CompactFocusIndex("))
+
+        # A new timer's wake restores the default soonest-first focus.
+        apply = source.split("void ApplyTimerSnapshot", 1)[1].split("void ResetTimerSnapshot", 1)[0]
+        wake = apply.split("if (new_timer) {", 1)[1].split("}", 1)[0]
+        self.assertIn("pinned_timer_id_.clear()", wake)
+
+    def test_touch_task_carries_the_press_point_to_the_application_task(self):
+        source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
+        touch = (BOARD_DIR / "cst820_touch.cc").read_text(encoding="utf-8")
+        header = (BOARD_DIR / "cst820_touch.h").read_text(encoding="utf-8")
+        task = source.split("void InitializeTouch()", 1)[1].split("void InitializeI2c()", 1)[0]
+        read = task.index("self->touch_.ReadPressed(pressed, x, y)")
+        edge = task.index("pressed && !self->touch_was_pressed_")
+        schedule = task.index("Application::GetInstance().Schedule([self, x, y]()")
+        self.assertLess(read, edge)
+        self.assertLess(edge, schedule)
+        # Nothing display-side runs on the touch task itself.
+        self.assertNotIn("display_->", task[:schedule])
+        handler = task[schedule:]
+        self.assertLess(handler.index("HasTimerAlarm()"), handler.index("DismissRingingTimers()"))
+        self.assertLess(handler.index("DismissRingingTimers()"),
+                        handler.index("ToggleTimerFocus(x, y)"))
+
+        self.assertIn("bool ReadPressed(bool& pressed, int& x, int& y);", header)
+        self.assertIn("x = ((frame[3] & 0x0F) << 8) | frame[4];", touch)
+        self.assertIn("y = ((frame[5] & 0x0F) << 8) | frame[6];", touch)
+        # Orientation assumption: touch and panel share one frame.
+        config = (BOARD_DIR / "config.h").read_text(encoding="utf-8")
+        for flag in ("DISPLAY_MIRROR_X            false", "DISPLAY_MIRROR_Y            false",
+                     "DISPLAY_SWAP_XY             false"):
+            self.assertIn(flag, config)
 
     def test_provisions_new_timer_wakes_the_compact_crest(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")

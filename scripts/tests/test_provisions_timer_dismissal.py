@@ -73,7 +73,12 @@ class ProvisionsTimerDismissalTests(unittest.TestCase):
         self.assertIn("Application::GetInstance().Schedule", touch_init)
         self.assertIn("self->display_->HasTimerAlarm()", touch_init)
         self.assertIn("display_->DismissRingingTimers()", touch_init)
-        self.assertIn("display_->ToggleTimerFocus()", touch_init)
+        self.assertIn("display_->ToggleTimerFocus(x, y)", touch_init)
+        # A ringing alarm owns the tap before any overview slot can be picked.
+        handler = touch_init.split("self->touch_dismiss_queued_.store(false);", 1)[1]
+        self.assertLess(handler.index("HasTimerAlarm()"), handler.index("DismissRingingTimers()"))
+        self.assertLess(handler.index("DismissRingingTimers()"),
+                        handler.index("ToggleTimerFocus(x, y)"))
         self.assertNotIn("SilenceTimerAlarm()", touch_init)
 
         # Match M5Stack's CST820 frame: status begins at 0x00, finger count is
@@ -82,6 +87,9 @@ class ProvisionsTimerDismissalTests(unittest.TestCase):
         self.assertIn("const uint8_t finger_count = frame[2]", touch)
         self.assertIn("const uint8_t event = (frame[3] & 0xC0) >> 6", touch)
         self.assertIn("finger_count > 0 && (event == 0 || event == 2)", touch)
+        # The point comes from the same frame (CST816-family layout).
+        self.assertIn("x = ((frame[3] & 0x0F) << 8) | frame[4];", touch)
+        self.assertIn("y = ((frame[5] & 0x0F) << 8) | frame[6];", touch)
 
         self.assertIn('"TAP TO STOP\\nBLUE SILENCES"', board)
         self.assertIn('"TAP TO STOP\\nBLUE CLEARS"', board)

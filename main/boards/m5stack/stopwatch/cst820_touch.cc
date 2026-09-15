@@ -51,7 +51,7 @@ bool StopwatchCst820Touch::Begin(i2c_master_bus_handle_t bus, uint8_t address) {
     return true;
 }
 
-bool StopwatchCst820Touch::ReadPressed(bool& pressed) {
+bool StopwatchCst820Touch::ReadPressed(bool& pressed, int& x, int& y) {
     if (device_ == nullptr) {
         return false;
     }
@@ -66,6 +66,10 @@ bool StopwatchCst820Touch::ReadPressed(bool& pressed) {
     const uint8_t finger_count = frame[2];
     const uint8_t event = (frame[3] & 0xC0) >> 6;
     pressed = finger_count > 0 && (event == 0 || event == 2);
+    // Same layout as the CST816 family: the low nibble of bytes three and five
+    // holds the high coordinate bits, bytes four and six the low byte.
+    x = ((frame[3] & 0x0F) << 8) | frame[4];
+    y = ((frame[5] & 0x0F) << 8) | frame[6];
     return true;
 }
 
