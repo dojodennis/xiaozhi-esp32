@@ -8,6 +8,7 @@ namespace {
 std::mutex mutex_;
 std::array<char, 24> touch_{};
 std::atomic<int> mic_ready_ms_{-1};
+std::atomic<int> pm1_wake_{-1};
 }  // namespace
 void SetTouchProbe(const char* result) {
     if (result == nullptr)
@@ -25,4 +26,6 @@ void NoteMicReadyMs(int milliseconds) {
         mic_ready_ms_.store(milliseconds);
 }
 int MicReadyMs() { return mic_ready_ms_.load(); }
+void SetPm1Wake(uint8_t source) { pm1_wake_.store(source); }
+int Pm1Wake() { return pm1_wake_.load(); }
 }  // namespace provisions::hardware

@@ -2581,6 +2581,25 @@ private:
             return;
         }
 
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        // PM1 latches why it last powered or reset the ESP32-S3 (REG_WAKE_SRC
+        // 0x05, write 0 to clear). Clear it so the next boot reports only its
+        // own cause; 0 after a panic reboot means PM1 was not involved.
+        uint8_t pm1_wake = 0;
+        if (pmic_.getWakeSource(&pm1_wake, M5PM1_CLEAN_ALL) == M5PM1_OK) {
+            provisions::hardware::SetPm1Wake(pm1_wake);
+        }
+#endif
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        // A PWR button long press puts PM1 into its download mode (BOOT_OUT low
+        // plus an ESP reset). BTN_CFG_1 (0x49) LONG_DLY [4:3] defaults to 00 =
+        // 1 s, so holding the button to wake a dark screen lands there. Require
+        // 4 s (11); a short click still resets.
+        if (pmic_.btnSetConfig(M5PM1_BTN_TYPE_LONG, M5PM1_BTN_LONG_PRESS_DELAY_4000MS) != M5PM1_OK) {
+            ESP_LOGW(TAG, "M5PM1 long-press delay not set");
+        }
+#endif
+
         pmic_.setChargeEnable(true);
         pmic_.setBoostEnable(true);
         pmic_.pinMode(PMIC_PIN_CHARGE_STATE, INPUT);

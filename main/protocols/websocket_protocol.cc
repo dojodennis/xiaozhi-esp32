@@ -13,6 +13,7 @@
 #include "provisions_lite_hello.h"
 #endif
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
+#include "provisions_crash_record.h"
 #include "provisions_timers.h"
 #include "provisions_voice_wire.h"
 #endif
@@ -705,16 +706,22 @@ std::string WebsocketProtocol::GetHelloMessage() {
     cJSON_AddItemToObject(root, "features", features);
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     {
-        const auto touch = provisions::hardware::TouchProbe();
-        const int mic_ready = provisions::hardware::MicReadyMs();
-        if (!touch.empty() || mic_ready >= 0) {
-            cJSON* facts = cJSON_AddObjectToObject(root, "hardware");
-            if (facts != nullptr) {
-                if (!touch.empty())
-                    cJSON_AddStringToObject(facts, "touch", touch.c_str());
-                if (mic_ready >= 0)
-                    cJSON_AddNumberToObject(facts, "mic_ready_ms", mic_ready);
-            }
+        // Always present: every boot reports why it started. The gateway
+        // rejects unknown keys, so its allowlist must ship before new ones.
+        cJSON* facts = cJSON_AddObjectToObject(root, "hardware");
+        if (facts != nullptr) {
+            const auto touch = provisions::hardware::TouchProbe();
+            const int mic_ready = provisions::hardware::MicReadyMs();
+            if (!touch.empty())
+                cJSON_AddStringToObject(facts, "touch", touch.c_str());
+            if (mic_ready >= 0)
+                cJSON_AddNumberToObject(facts, "mic_ready_ms", mic_ready);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+            const int pm1_wake = provisions::hardware::Pm1Wake();
+            if (pm1_wake >= 0 && pm1_wake <= 255)
+                cJSON_AddNumberToObject(facts, "pm1_wake", pm1_wake);
+            provisions::crash::AddHelloFacts(facts);
+#endif
         }
     }
 #endif

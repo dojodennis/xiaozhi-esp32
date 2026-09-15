@@ -34,7 +34,11 @@
                 "CONFIG_APP_ANTI_ROLLBACK=n",
                 "CONFIG_PROVISIONS_LOCAL_CAPTURE=y",
                 "CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO=n",
-                "CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH=y"
+                "CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH=y",
+                "CONFIG_ESP_TASK_WDT_PANIC=y",
+                "CONFIG_ESP_TASK_WDT_TIMEOUT_S=60",
+                "CONFIG_HEAP_POISONING_LIGHT=y",
+                "CONFIG_COMPILER_STACK_CHECK_MODE_NORM=y"
             ]
         }
     ]

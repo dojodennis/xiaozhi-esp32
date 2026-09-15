@@ -8,6 +8,9 @@
 #include <freertos/task.h>
 
 #include "application.h"
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+#include "provisions_crash_record.h"
+#endif
 
 #define TAG "main"
 
@@ -27,6 +30,11 @@ extern "C" void app_main(void)
 #endif
     }
     ESP_ERROR_CHECK(ret);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    // Before anything else can crash again: persist the last panic record and
+    // this boot's reset reason for the gateway hello.
+    provisions::crash::CaptureAtBoot();
+#endif
 
     // Initialize and run the application
     auto& app = Application::GetInstance();

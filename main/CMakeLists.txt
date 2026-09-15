@@ -910,7 +910,8 @@ if(PROVISIONS_STOPWATCH_PROFILE)
             "provisions_voice_wire.cc" "protocols/provisions_websocket.cc"
             "provisions_timers.cc" "provisions_timer_store.cc" "provisions_timer_player.cc"
             "provisions_timer_dial_link.cc" "provisions_timer_dismissal.cc"
-            "provisions_hardware_facts.cc")
+            "provisions_hardware_facts.cc" "provisions_crash_record.cc")
+        set(PROVISIONS_CRASH_RECORD ON)
     endif()
 endif()
 
@@ -1186,6 +1187,16 @@ idf_component_register(SRCS ${SOURCES}
                         xiaozhi-fonts
                         ${MAIN_PRIV_REQUIRES_EXTRA}
                     )
+
+# The crash record wraps the IDF panic handler. panic_handler.c calls
+# esp_panic_handler, which is defined in a different object (panic.c), so the
+# linker routes that call through __wrap_esp_panic_handler.
+if(PROVISIONS_CRASH_RECORD AND NOT CMAKE_BUILD_EARLY_EXPANSION)
+    if(CONFIG_BT_LE_CONTROLLER_LOG_WRAP_PANIC_HANDLER_ENABLE)
+        message(FATAL_ERROR "The BLE controller log already wraps esp_panic_handler")
+    endif()
+    target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=esp_panic_handler")
+endif()
 
 # Use target_compile_definitions to define the reported board identity
 # If BOARD_NAME is empty, use BOARD_TYPE
