@@ -376,11 +376,30 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         live = source.split("bool HasLiveTimerLocked() const {", 1)[1].split("\n    }", 1)[0]
         self.assertIn("TimerStatus::kActive", live)
         self.assertIn("TimerStatus::kAttention", live)
-        expand = source.split("bool ExpandTimerFace()", 1)[1].split("\n    }", 1)[0]
+        expand = source.split("bool ToggleTimerFocus()", 1)[1].split("\n    }\n", 1)[0]
         self.assertIn("!crest_timer_active_ || !HasLiveTimerLocked()", expand)
         self.assertIn("kTimerFaceIdleUs", expand)
         toggle = source.split("void ToggleTimerFace()", 1)[1].split("\n    }", 1)[0]
         self.assertIn("const bool showing = TimerFaceForced()", toggle)
+
+    def test_a_second_tap_returns_the_overview_to_the_focused_timer(self):
+        source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
+        self.assertNotIn("ExpandTimerFace", source)
+        toggle = source.split("bool ToggleTimerFocus()", 1)[1].split("\n    }\n", 1)[0]
+        # First tap (overview not forced) writes the idle deadline; second tap
+        # (overview forced) clears it before the live-timer gate can refuse.
+        forced = toggle.index("if (TimerFaceForced())")
+        clear = toggle.index("timer_face_until_us_.store(0)")
+        gate = toggle.index("!crest_timer_active_ || !HasLiveTimerLocked()")
+        expand = toggle.index("esp_timer_get_time() + kTimerFaceIdleUs")
+        self.assertLess(forced, clear)
+        self.assertLess(clear, gate)
+        self.assertLess(gate, expand)
+        self.assertIn("return true", toggle)
+        touch = source.split("self->touch_dismiss_queued_.store(false);", 1)[1][:400]
+        self.assertLess(touch.index("DismissRingingTimers()"), touch.index("ToggleTimerFocus()"))
+        # The Talk+blue chord keeps its own toggle.
+        self.assertIn("display_->ToggleTimerFace()", source)
 
     def test_provisions_new_timer_wakes_the_compact_crest(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")

@@ -73,7 +73,7 @@ class ProvisionsTimerDismissalTests(unittest.TestCase):
         self.assertIn("Application::GetInstance().Schedule", touch_init)
         self.assertIn("self->display_->HasTimerAlarm()", touch_init)
         self.assertIn("display_->DismissRingingTimers()", touch_init)
-        self.assertIn("display_->ExpandTimerFace()", touch_init)
+        self.assertIn("display_->ToggleTimerFocus()", touch_init)
         self.assertNotIn("SilenceTimerAlarm()", touch_init)
 
         # Match M5Stack's CST820 frame: status begins at 0x00, finger count is

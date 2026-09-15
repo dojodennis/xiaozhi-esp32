@@ -2126,16 +2126,20 @@ public:
     // True once after a snapshot introduced a new timer (board wakes the screen).
     bool ConsumeNewTimerWake() { return new_timer_wake_.exchange(false); }
 
-    // A tap on the compact circular timer opens the full timer dial for one idle
-    // window. A later tick returns to the compact circle without hiding it.
-    bool ExpandTimerFace() {
+    // A tap on the compact circular timer opens the six-timer overview for one
+    // idle window; a tap on the overview returns to the compact focused timer.
+    // The 30 s idle timeout still closes the overview on its own.
+    bool ToggleTimerFocus() {
         AlarmOutputChange output_change;
         {
             DisplayLockGuard lock(this);
-            if (!crest_timer_active_ || !HasLiveTimerLocked()) {
+            if (TimerFaceForced()) {
+                timer_face_until_us_.store(0);
+            } else if (!crest_timer_active_ || !HasLiveTimerLocked()) {
                 return false;
+            } else {
+                timer_face_until_us_.store(esp_timer_get_time() + kTimerFaceIdleUs);
             }
-            timer_face_until_us_.store(esp_timer_get_time() + kTimerFaceIdleUs);
             output_change = RefreshOrbitLocked();
             SetReplyLayoutLocked(reply_visible_.load());
         }
@@ -2527,7 +2531,7 @@ private:
                                 self->touch_dismiss_queued_.store(false);
                                 const bool handled = self->display_->HasTimerAlarm()
                                                          ? self->display_->DismissRingingTimers()
-                                                         : self->display_->ExpandTimerFace();
+                                                         : self->display_->ToggleTimerFocus();
                                 if (handled) {
                                     self->ResetDisplayIdleTimer();
                                 }
