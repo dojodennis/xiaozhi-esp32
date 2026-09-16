@@ -2450,6 +2450,7 @@ bool Application::BeginLocalRecordingOnMain() {
         if (!recorder->CanDictate(press, dictation_assignment_proof_, captured_ms)) {
             if (!recorder->DictationPreparing(press))
                 FenceDictationThrough(press);
+            PlaySound(Lang::Sounds::OGG_POPUP);
             return false;
         }
         began = recorder->BeginDictation(press, captured_ms);

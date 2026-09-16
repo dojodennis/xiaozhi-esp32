@@ -594,6 +594,7 @@ struct WebsocketProtocol {
 struct Display {bool visible=false;std::string status,action;void SetStatus(const char* s){status=s?s:"";}void SetDictationScreen(bool v,const std::string& s,const std::string& a){visible=v;status=s;action=a;}};
 struct Board {Display display;static Board& GetInstance(){static Board board;return board;}Display* GetDisplay(){return &display;}};
 int64_t DictationNow(bool trusted){return trusted?1788712345678LL:0;}
+namespace Lang { namespace Sounds { constexpr const char* OGG_POPUP="OGG_POPUP"; } }
 
 struct AudioService {
  std::atomic<uint32_t> local_physical_boundary_{0},local_recording_press_{0},local_output_boundary_{0},local_prepared_press_{0},local_input_press_{0};
@@ -612,10 +613,12 @@ struct Application {
  bool provisions_recording_was_dictation_=false,dictation_has_assignment_proof_=true;VoiceId dictation_assignment_proof_=context().conversation_id;
  std::atomic<bool> provisions_network_busy_{false},provisions_response_pending_{false};
  int64_t dictation_next_receipt_us_=0,dictation_last_send_us_=0;std::string dictation_sent_control_;
+ std::vector<std::string> sounds;
  struct TimerPlayer{bool fenced=false;bool Fenced(){return fenced;}}timer_player_;
  std::shared_ptr<WebsocketProtocol> GetProtocol(){return protocol;}int GetDeviceState(){return state;}void SetDeviceState(int value){state=value;}
  const char* GetProvisionsIdleStatus() const{return "Ready";}
  bool IsLiteMode()const{return protocol&&protocol->IsLiteMode();}
+ void PlaySound(const std::string_view& s){sounds.emplace_back(std::string(s));}
  void Schedule(std::function<void()> fn){fn();}void HandleVoiceRecordingResult(VoiceRecorder::Result,uint32_t){assert(false);}
  void StartListening();void StopListening();bool BeginLocalRecordingOnMain();void EndLocalRecordingOnMain();void ToggleDictationScreen();void DictationButton();void CloseDictationInputOnMain();void ServiceDictation();void HandleDictationControlOnMain();
  __FENCE__
@@ -801,6 +804,35 @@ void dictation_physical_cases(){
  }
  join();std::cout<<"Physical dictation entry/exit, queued release, ACK edge and cap fences passed\n";
 }
+
+void dictation_reviewed_unfinished_refuses_start(){
+ fresh();
+ {
+  Application app;auto& recorder=*app.provisions_recorder_;initialize(recorder);authorize(recorder);
+  assert(recorder.RequestDictationControl(dictation::Action::Start));drain();
+  dictation_ack(recorder,dictation::State::Open);
+  begin_dictation(recorder,1);int16_t pcm[160]{};assert(recorder.Append(1,pcm,160,1));
+  recorder.Release(1);drain();
+  assert(recorder.PendingCount()==1);
+  assert(recorder.RequestDictationControl(dictation::Action::Stop));drain();
+  dictation_ack(recorder,dictation::State::Stopped);
+  assert(recorder.RequestDictationControl(dictation::Action::Receipt));drain();
+  dictation_ack(recorder,dictation::State::Reviewed);
+  assert(recorder.DictationRecord().state==dictation::State::Reviewed);
+  assert(recorder.PendingCount()==1&&!recorder.DictationRecord().segments[0].terminal);
+  app.ToggleDictationScreen();app.CloseDictationInputOnMain();app.ServiceDictation();
+  assert(Board::GetInstance().display.action=="Wait");
+  assert(Board::GetInstance().display.status.find("Clip still sending")!=std::string::npos);
+  const auto sent=app.protocol->controls.size();
+  app.HandleDictationControlOnMain();drain();
+  assert(app.protocol->controls.size()==sent);
+  assert(!app.sounds.empty());
+  app.dictation_authorization_seen_=recorder.DictationAuthorization();
+  app.StartListening();assert(!app.BeginLocalRecordingOnMain());
+  assert(app.sounds.size()>=2);
+ }
+ join();std::cout<<"Reviewed session with an unfinished clip refuses Start and yellow\n";
+}
 """
 app_source = (ROOT / 'main/application.cc').read_text()
 start = app_source.index('callbacks.on_recording_audio = ')
@@ -817,7 +849,7 @@ PHYSICAL = PHYSICAL.replace('__AUDIO_METHODS__', '\n'.join(method('main/audio/au
 PHYSICAL = PHYSICAL.replace('__APP_METHODS__', '\n'.join([
     *[method('main/application.cc', signature) for signature in ('void Application::StartListening()', 'void Application::StopListening()', 'bool Application::BeginLocalRecordingOnMain()', 'void Application::EndLocalRecordingOnMain()')],
     *[method('main/provisions_dictation_application.cc', signature) for signature in ('void Application::ToggleDictationScreen()', 'void Application::DictationButton()', 'void Application::CloseDictationInputOnMain()', 'void Application::HandleDictationControlOnMain()', 'void Application::ServiceDictation()')]]))
-WORKER = WORKER.replace('int main(){', PHYSICAL + '\nint main(){').replace('dictation_cases();}', 'dictation_cases();dictation_physical_cases();dictation_main_consumer_cases();dictation_reassignment_cases();}')
+WORKER = WORKER.replace('int main(){', PHYSICAL + '\nint main(){').replace('dictation_cases();}', 'dictation_cases();dictation_physical_cases();dictation_main_consumer_cases();dictation_reassignment_cases();dictation_reviewed_unfinished_refuses_start();}')
 
 
 class VoiceRecorderReviewTests(unittest.TestCase):

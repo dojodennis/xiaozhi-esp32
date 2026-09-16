@@ -1,6 +1,7 @@
 #include "application.h"
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
 #include <sys/time.h>
+#include "assets/lang_config.h"
 #include "board.h"
 #include "display.h"
 #include "websocket_protocol.h"
@@ -60,6 +61,17 @@ void Application::HandleDictationControlOnMain() {
     auto* websocket = protocol ? static_cast<WebsocketProtocol*>(protocol.get()) : nullptr;
     const bool negotiated =
         websocket && websocket->DictationNegotiated() && websocket->GetCaptureContext(context);
+    auto start_blocked = [&] {
+        if (r.state == State::Reviewed && recorder->PendingCount() != 0)
+            return true;
+        if (r.state == State::Reviewed || r.state == State::Empty) {
+            for (uint32_t i = 0; i < r.count; ++i) {
+                if (!r.segments[i].terminal)
+                    return true;
+            }
+        }
+        return false;
+    };
     if (r.id != provisions::VoiceId{} && !recorder->MatchesConversation(r.conversation_id)) {
         // A fresh Start may retire only a positively empty acknowledged journal.
         // Never strand it by queuing an old-assignment Stop under the new scope.
@@ -67,6 +79,8 @@ void Application::HandleDictationControlOnMain() {
             provisions_recording_started_press_ == 0 && audio_service_.IsLocalInputIdle() &&
             !timer_player_.Fenced())
             recorder->RequestEmptyDictationReplacement(context.conversation_id);
+        else
+            PlaySound(Lang::Sounds::OGG_POPUP);
         return;
     }
     if (r.pending == Action::Start || r.pending == Action::Resume ||
@@ -75,16 +89,20 @@ void Application::HandleDictationControlOnMain() {
         return;
     }
     if (r.pending != Action::None || recorder->DictationBusy() || recorder->DictationFaulted() ||
-        timer_player_.Fenced())
+        timer_player_.Fenced()) {
+        PlaySound(Lang::Sounds::OGG_POPUP);
         return;
-    if (!negotiated)
+    }
+    if (!negotiated || !recorder->MatchesConversation(context.conversation_id)) {
+        PlaySound(Lang::Sounds::OGG_POPUP);
         return;
-    if (!recorder->MatchesConversation(context.conversation_id))
-        return;
-    if (r.state == State::Empty || (r.state == State::Reviewed && recorder->PendingCount() == 0))
+    }
+    if (r.state == State::Empty || (r.state == State::Reviewed && !start_blocked()))
         recorder->RequestDictationControl(Action::Start);
     else if (r.state == State::Stopped && context.conversation_id == r.conversation_id)
         recorder->RequestDictationControl(Action::Resume);
+    else
+        PlaySound(Lang::Sounds::OGG_POPUP);
 }
 void Application::ServiceDictation() {
     auto recorder = std::atomic_load(&provisions_recorder_);
@@ -124,6 +142,17 @@ void Application::ServiceDictation() {
     }
     const auto r = recorder->DictationRecord();
     using namespace provisions::dictation;
+    auto start_blocked = [&] {
+        if (r.state == State::Reviewed && recorder->PendingCount() != 0)
+            return true;
+        if (r.state == State::Reviewed || r.state == State::Empty) {
+            for (uint32_t i = 0; i < r.count; ++i) {
+                if (!r.segments[i].terminal)
+                    return true;
+            }
+        }
+        return false;
+    };
     const int64_t now_ms = DictationNow(has_server_time_.load());
     if (r.state == State::Open && now_ms > 0 && now_ms >= r.expires_ms &&
         dictation_screen_.load() && manual_listening_requested_.load()) {
@@ -163,7 +192,7 @@ void Application::ServiceDictation() {
     else if (r.pending == Action::None && r.state == State::Stopped)
         action = "Resume";
     else if (r.pending == Action::None && (r.state == State::Empty || r.state == State::Reviewed))
-        action = "Start";
+        action = start_blocked() ? "Wait" : "Start";
     std::string status;
     if (foreign)
         status = replace_empty ? "Assignment changed - ready to start"
@@ -177,7 +206,7 @@ void Application::ServiceDictation() {
     else if (r.state == State::Empty)
         status = negotiated ? "Ready to start" : "Connect to start";
     else if (r.state == State::Reviewed)
-        status = "Reviewed";
+        status = start_blocked() ? "Clip still sending - wait" : "Reviewed";
     else if (!now_ms || now_ms >= r.expires_ms)
         status = "Waiting for current session";
     else if (recorder->PendingCount() >= provisions::VoiceOutbox::kSlots)

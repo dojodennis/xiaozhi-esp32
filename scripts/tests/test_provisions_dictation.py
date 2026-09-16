@@ -104,6 +104,8 @@ class DictationTests(unittest.TestCase):
         self.assertIn("dictation_was_visible && !dictation_visible", service)
         self.assertIn("GetDeviceState() == kDeviceStateIdle", service)
         self.assertIn("SetStatus(GetProvisionsIdleStatus())", service)
+        self.assertIn("Clip still sending - wait", service)
+        self.assertIn('start_blocked() ? "Wait" : "Start"', service)
 
     def test_actual_journal_nvs_and_wire(self):
         cjson = ROOT / 'managed_components/espressif__cjson/cJSON'
