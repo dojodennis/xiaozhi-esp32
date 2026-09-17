@@ -206,6 +206,12 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("void ResetTimerSnapshot", source)
         self.assertIn("bool SilenceTimerAlarm", source)
         self.assertIn("RegisterProvisionsTimerSnapshotCallback", source)
+        self.assertIn("OrbitCrest::kDashSlots", source)
+        self.assertIn("ApplyCrestFrameLocked", source)
+        motion = (BOARD_DIR / "crest_motion.h").read_text(encoding="utf-8")
+        self.assertIn("kPttYellow = 0xF2C84B", motion)
+        self.assertIn("kTeal = 0x4ECDC4", motion)
+        self.assertIn("Working and Speaking stay in the same yellow family", motion)
 
     def test_provisions_screen_is_branded_and_reply_capable(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
@@ -280,7 +286,9 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("IsClockStatus(status)", source)
         self.assertIn('.name = "stopwatch_visual_reset"', source)
         self.assertIn("receipt_visible_.store(true)", source)
-        self.assertIn("receipt_visible_.load() && state != VisualState::kListening", source)
+        self.assertIn("state == VisualState::kListening || state == VisualState::kWorking ||", source)
+        self.assertIn("state == VisualState::kSpeaking", source)
+        self.assertIn("Keep the Working/Speaking", source)
         self.assertIn("ApplyVisualStateLocked(resting_state_.load())", source)
         self.assertNotIn("ApplyVisualState(self->resting_state_.load())", source)
         self.assertIn("Lang::Strings::CHECKING_NEW_VERSION", source)
