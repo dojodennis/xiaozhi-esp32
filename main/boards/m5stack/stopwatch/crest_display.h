@@ -20,7 +20,7 @@ class OrbitCrestDisplay final : public SpiLcdDisplay {
     lv_obj_t* dictation_action_ = nullptr;
     bool dictation_visible_ = false;
     std::string dictation_status_text_, dictation_action_text_;
-    std::array<lv_obj_t*, 3> rings_{};
+    std::array<lv_obj_t*, OrbitCrest::kDashSlots> rings_{};
     lv_timer_t* animation_timer_ = nullptr;
     State state_ = State::Boot;
     OrbitCrest::Frame frame_;
@@ -34,6 +34,7 @@ class OrbitCrestDisplay final : public SpiLcdDisplay {
     const char* result_caption_ = "";  // allowlisted literals only, never transcript
     const char* displayed_caption_ = nullptr;
     bool reply_received_ = false;
+    bool result_layout_ = false;
     bool power_save_ = false;
     bool speech_seen_ = false;
     float level_ = 0;
@@ -129,49 +130,65 @@ class OrbitCrestDisplay final : public SpiLcdDisplay {
             speech_seen_ = true;
         }
 
-        OrbitCrest::Frame target;
-        if (OrbitCrest::UsesRings(state_)) {
-            target = OrbitCrest::Rings(state_, state_ == State::Speaking ? speech_clock_ms_ : now,
-                                       level_, kReducedMotion);
-        } else if (state_ == State::Result || state_ == State::Error || state_ == State::Boot ||
-                   state_ == State::Connecting) {
-            target.band_opacity = 0;
-            if (state_ == State::Error) {
-                target.color = OrbitCrest::kAmber;
-                target.opacity[1] = 180;
-            }
-        }
+        const uint32_t motion_ms =
+            state_ == State::Speaking ? speech_clock_ms_ : now - transition_ms_;
+        const OrbitCrest::Frame target =
+            OrbitCrest::Face(state_, motion_ms, level_, kReducedMotion);
         frame_ =
             OrbitCrest::Transition(transition_from_, target, now - transition_ms_, kReducedMotion);
         lv_obj_set_style_image_opa(band_, frame_.band_opacity, 0);
         lv_obj_set_style_image_opa(star_, frame_.star_opacity, 0);
-        for (int index = 0; index < 3; ++index) {
+        const int diameter = frame_.radius * 2;
+        for (int index = 0; index < OrbitCrest::kDashSlots; ++index) {
             auto* ring = rings_[index];
-            const int diameter = frame_.radii[index] * 2;
+            const auto slot = OrbitCrest::Slot(frame_, index);
+            if (!slot.visible) {
+                lv_obj_set_style_arc_opa(ring, LV_OPA_TRANSP, LV_PART_MAIN);
+                continue;
+            }
             lv_obj_set_size(ring, diameter, diameter);
             lv_obj_center(ring);
+            lv_obj_set_style_arc_width(ring, frame_.width, LV_PART_MAIN);
+            lv_obj_set_style_arc_rounded(ring, true, LV_PART_MAIN);
             lv_obj_set_style_arc_color(ring, lv_color_hex(frame_.color), LV_PART_MAIN);
-            lv_obj_set_style_arc_opa(ring, frame_.opacity[index], LV_PART_MAIN);
-            lv_arc_set_rotation(ring, state_ == State::Error ? 270 : 0);
-            lv_arc_set_bg_angles(ring, state_ == State::Error ? 12 : 0,
-                                 state_ == State::Error ? 348 : 360);
+            lv_obj_set_style_arc_opa(ring, frame_.opacity, LV_PART_MAIN);
+            lv_arc_set_rotation(ring, slot.rotation_deg);
+            lv_arc_set_bg_angles(ring, 0, slot.span_deg);
         }
         const char* text = state_ == State::Result ? result_caption_ : OrbitCrest::Caption(state_);
         if (kReducedMotion && state_ == State::Listening)
             text = "Listening";
         if (kReducedMotion && state_ == State::Speaking)
             text = "Speaking";
+        const bool result_layout = state_ == State::Result && text && text[0];
+        if (result_layout != result_layout_) {
+            result_layout_ = result_layout;
+            if (result_layout) {
+                lv_obj_set_size(caption_, 420, 168);
+                lv_obj_align(caption_, LV_ALIGN_CENTER, 0, 0);
+                lv_obj_set_style_text_letter_space(caption_, 4, 0);
+                lv_obj_set_style_text_line_space(caption_, 16, 0);
+                if (timers_)
+                    lv_obj_add_flag(timers_, LV_OBJ_FLAG_HIDDEN);
+            } else {
+                lv_obj_set_size(caption_, 320, 80);
+                lv_obj_align(caption_, LV_ALIGN_CENTER, 0, 0);
+                lv_obj_set_style_text_letter_space(caption_, 1, 0);
+                lv_obj_set_style_text_line_space(caption_, 6, 0);
+                if (timers_)
+                    lv_obj_remove_flag(timers_, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
         if (displayed_caption_ != text) {
             lv_label_set_text_static(caption_, text);
             displayed_caption_ = text;
         }
         lv_obj_set_style_text_color(
-            caption_,
-            lv_color_hex(state_ == State::Error ? OrbitCrest::kAmber : OrbitCrest::kIvory), 0);
+            caption_, lv_color_hex(state_ == State::Error ? OrbitCrest::kAmber : 0xFFFFFF), 0);
         // Only the active motion/receipt owns a timer. Idle has zero animation
         // wakeups; power-save pauses it even during an interrupted transition.
         if (animation_timer_ && now - transition_ms_ >= OrbitCrest::kTransitionMs &&
-            !OrbitCrest::UsesRings(state_) && state_ != State::Result) {
+            !OrbitCrest::UsesRings(state_)) {
             lv_timer_pause(animation_timer_);
         }
     }
@@ -222,7 +239,11 @@ public:
         for (auto*& ring : rings_) {
             ring = lv_arc_create(face_);
             lv_obj_remove_style_all(ring);
-            lv_obj_set_style_arc_width(ring, 3, LV_PART_MAIN);
+            lv_obj_set_size(ring, OrbitCrest::kRingRadius * 2, OrbitCrest::kRingRadius * 2);
+            lv_obj_center(ring);
+            lv_obj_set_style_arc_width(ring, 6, LV_PART_MAIN);
+            lv_obj_set_style_arc_rounded(ring, true, LV_PART_MAIN);
+            lv_obj_set_style_arc_opa(ring, LV_OPA_TRANSP, LV_PART_MAIN);
             lv_obj_set_style_arc_opa(ring, LV_OPA_TRANSP, LV_PART_INDICATOR);
             lv_obj_remove_flag(ring, LV_OBJ_FLAG_CLICKABLE);
         }
@@ -237,11 +258,12 @@ public:
             lv_obj_set_style_image_recolor_opa(mark, LV_OPA_COVER, 0);
         }
         caption_ = lv_label_create(face_);
-        lv_obj_set_size(caption_, 280, 74);
-        lv_obj_align(caption_, LV_ALIGN_CENTER, 0, 97);
+        lv_obj_set_size(caption_, 320, 80);
+        lv_obj_align(caption_, LV_ALIGN_CENTER, 0, 0);
         lv_obj_set_style_text_font(caption_, &font_noto_sans_basic_30_4, 0);
         lv_obj_set_style_text_align(caption_, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_style_text_line_space(caption_, 3, 0);
+        lv_obj_set_style_text_letter_space(caption_, 1, 0);
+        lv_obj_set_style_text_line_space(caption_, 6, 0);
         lv_label_set_long_mode(caption_, LV_LABEL_LONG_CLIP);
         timers_ = lv_label_create(face_);
         lv_obj_set_size(timers_, 250, 54);
@@ -361,7 +383,9 @@ public:
         // No transcript text is retained, rendered, logged or written to flash.
         reply_received_ = true;
         reply_started_ms_ = NowMs();
-        if (state_ == State::Idle || state_ == State::Result) {
+        if (state_ == State::Listening || state_ == State::Thinking || state_ == State::Speaking) {
+            result_caption_ = "Reply received";
+        } else if (state_ == State::Idle || state_ == State::Result) {
             if (!result_caption_[0])
                 result_caption_ = "Reply received";
             result_started_ms_ = NowMs();

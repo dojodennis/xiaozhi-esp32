@@ -1,7 +1,6 @@
 #pragma once
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -14,20 +13,36 @@ constexpr int kDisplaySize = 466;
 constexpr int kSafeRadius = 201;
 constexpr int kTransitionMs = 360;
 constexpr int kResultHoldMs = 4000;
+constexpr int kDashSlots = 8;
+constexpr int kRingRadius = 140;
 constexpr uint32_t kIvory = 0xE8E0D2;
 constexpr uint32_t kGold = 0xC5A46D;
 constexpr uint32_t kAmber = 0xD7A45B;
+// Calm Ready ring. PTT stages stay in the yellow family from the moodboard;
+// Working/Speaking must never fall back to teal or ivory.
+constexpr uint32_t kTeal = 0x4ECDC4;
+constexpr uint32_t kPttYellow = 0xF2C84B;
 constexpr float kPi = 3.14159265359F;
 constexpr uint8_t kActiveStarOpacity = 224;
 
 enum class State { Boot, Connecting, Idle, Listening, Thinking, Speaking, Error, Result };
 
 struct Frame {
-    std::array<int, 3> radii{120, 154, 184};
-    std::array<uint8_t, 3> opacity{0, 0, 0};
+    int radius = kRingRadius;
+    int width = 6;
+    uint8_t opacity = 0;
     uint8_t band_opacity = 255;
     uint8_t star_opacity = 255;
     uint32_t color = kIvory;
+    uint8_t dash_count = 1;
+    uint16_t dash_span_deg = 360;
+    int16_t rotation_deg = 0;
+};
+
+struct DashSlot {
+    bool visible = false;
+    int rotation_deg = 0;
+    uint16_t span_deg = 360;
 };
 
 inline uint8_t Opacity(float value) {
@@ -57,14 +72,26 @@ inline bool UsesRings(State state) {
     return state == State::Listening || state == State::Thinking || state == State::Speaking;
 }
 
+inline bool IsPttYellow(uint32_t color) {
+    const int red = static_cast<int>((color >> 16) & 0xFF);
+    const int green = static_cast<int>((color >> 8) & 0xFF);
+    const int blue = static_cast<int>(color & 0xFF);
+    return red > 180 && green > 140 && blue < 120 && red >= green && green > blue + 40;
+}
+
+inline bool IsTeal(uint32_t color) {
+    const int red = static_cast<int>((color >> 16) & 0xFF);
+    const int green = static_cast<int>((color >> 8) & 0xFF);
+    const int blue = static_cast<int>(color & 0xFF);
+    return green > 140 && blue > 140 && red < green && red < blue;
+}
+
 inline const char* Caption(State state) {
     switch (state) {
         case State::Boot:
             return "Starting";
         case State::Connecting:
             return "Connecting";
-        case State::Thinking:
-            return "Thinking";
         case State::Error:
             return "Please try again";
         default:
@@ -116,53 +143,100 @@ inline float AudioLevel(uint32_t mean_absolute, uint32_t age_ms) {
     return std::sqrt(std::min(above_floor / 6000.0F, 1.0F));
 }
 
-inline Frame Rings(State state, uint32_t elapsed_ms, float level, bool reduced_motion) {
+inline Frame QuietRing(uint32_t color, int width, uint8_t opacity) {
     Frame frame;
-    // Keep the exact center star as a quiet visual anchor. The outer crest
-    // band alone yields to three fixed circles; their geometry never changes
-    // while LVGL is painting the active face.
     frame.band_opacity = 0;
-    frame.star_opacity = kActiveStarOpacity;
+    frame.star_opacity = 0;
+    frame.color = color;
+    frame.radius = kRingRadius;
+    frame.width = width;
+    frame.opacity = opacity;
+    frame.dash_count = 1;
+    frame.dash_span_deg = 360;
+    frame.rotation_deg = 0;
+    return frame;
+}
+
+inline Frame Rings(State state, uint32_t elapsed_ms, float level, bool reduced_motion) {
     level = std::clamp(level, 0.0F, 1.0F);
-    frame.color = state == State::Listening ? kGold : kIvory;
     const float time = static_cast<float>(elapsed_ms) / 1000.0F;
 
-    if (reduced_motion) {
-        if (state == State::Thinking) {
-            frame.opacity = {0, 0, Opacity(0.58F)};
-        } else if (state == State::Speaking) {
-            frame.opacity = {0, Opacity(0.58F), Opacity(0.42F)};
-        } else {
-            frame.opacity = {Opacity(0.68F), Opacity(0.52F), Opacity(0.38F)};
-        }
+    if (state == State::Idle)
+        return QuietRing(kTeal, 6, Opacity(0.82F));
+    if (state == State::Result)
+        return QuietRing(kPttYellow, 6, Opacity(0.28F));
+
+    Frame frame = QuietRing(kPttYellow, 18, 0);
+    if (state == State::Listening) {
+        frame.width = 20;
+        frame.dash_count = 1;
+        frame.dash_span_deg = 360;
+        const float breath = reduced_motion ? 0.0F : RaisedCosine(time / 2.4F);
+        frame.opacity = Opacity(0.78F + 0.10F * breath + 0.12F * level);
         return frame;
     }
 
-    constexpr std::array<float, 3> kListeningBase{0.68F, 0.52F, 0.38F};
-    const float listening_breath = RaisedCosine(time / 2.4F);
-    for (int index = 0; index < 3; ++index) {
-        float opacity = kListeningBase[index];
-        if (state == State::Listening) {
-            // One slow shared breath keeps the circles optically concentric;
-            // voice energy adds presence without making their edges wobble.
-            opacity += 0.08F * listening_breath + 0.16F * level;
-        } else if (state == State::Speaking) {
-            // A continuous luminance wave moves out through fixed circles.
-            // There is no sawtooth radius reset and natural PCM gaps cannot
-            // stop its clock; audio contributes only a bounded lift.
-            const float wave = RaisedCosine(time / 2.2F - index * 0.16F);
-            opacity = 0.30F + 0.36F * wave + 0.18F * level;
-        } else if (state == State::Thinking) {
-            const float wave = RaisedCosine(time / 2.8F - index / 3.0F);
-            opacity = 0.22F + 0.36F * wave;
-        }
-        frame.opacity[index] = Opacity(opacity);
+    // Working and Speaking stay in the same yellow family. Geometry and motion
+    // carry the stage: rotating dashes vs a softer stationary pulse.
+    frame.dash_count = kDashSlots;
+    if (state == State::Thinking) {
+        frame.width = 14;
+        frame.dash_span_deg = 26;
+        frame.rotation_deg =
+            reduced_motion ? 0 : static_cast<int16_t>((elapsed_ms / 6) % 360);  // ~167 deg/s
+        frame.opacity = Opacity(0.92F);
+        return frame;
+    }
+
+    frame.width = 12;
+    frame.dash_span_deg = 16;
+    frame.rotation_deg = 0;
+    const float pulse = reduced_motion ? 0.55F : RaisedCosine(time / 1.8F);
+    frame.opacity = Opacity(0.38F + 0.40F * pulse + 0.18F * level);
+    return frame;
+}
+
+inline Frame Face(State state, uint32_t elapsed_ms, float level, bool reduced_motion) {
+    if (UsesRings(state) || state == State::Idle || state == State::Result)
+        return Rings(state, elapsed_ms, level, reduced_motion);
+    Frame frame;
+    if (state == State::Error) {
+        frame = QuietRing(kAmber, 8, 200);
+        frame.dash_span_deg = 336;
+        frame.rotation_deg = 270;
+        return frame;
+    }
+    if (state == State::Boot || state == State::Connecting) {
+        frame.band_opacity = 255;
+        frame.star_opacity = 255;
+    } else {
+        frame.band_opacity = 0;
+        frame.star_opacity = 0;
     }
     return frame;
 }
 
+inline DashSlot Slot(const Frame& frame, int index) {
+    DashSlot slot;
+    if (frame.opacity == 0 || index < 0 || index >= kDashSlots)
+        return slot;
+    if (frame.dash_count <= 1) {
+        slot.visible = index == 0;
+        slot.rotation_deg = frame.rotation_deg;
+        slot.span_deg = frame.dash_span_deg;
+        return slot;
+    }
+    slot.visible = index < frame.dash_count;
+    const int step = 360 / frame.dash_count;
+    slot.rotation_deg = (static_cast<int>(frame.rotation_deg) + index * step) % 360;
+    slot.span_deg = frame.dash_span_deg;
+    return slot;
+}
+
 // Blend from the last rendered frame so rapid press/release cannot jump back
-// to a fully opaque crest or briefly expose a blank face.
+// to a fully opaque crest or briefly expose a blank face. Dash geometry snaps
+// with the target stage so a solid Listening ring does not collapse into eight
+// overlapping full circles.
 inline Frame Transition(const Frame& from, const Frame& target, uint32_t elapsed_ms,
                         bool reduced_motion) {
     if (reduced_motion || elapsed_ms >= kTransitionMs)
@@ -176,10 +250,9 @@ inline Frame Transition(const Frame& from, const Frame& target, uint32_t elapsed
     out.band_opacity = blend(from.band_opacity, target.band_opacity);
     out.star_opacity = blend(from.star_opacity, target.star_opacity);
     out.color = BlendColor(from.color, target.color, ease);
-    for (int index = 0; index < 3; ++index) {
-        out.radii[index] = blend(from.radii[index], target.radii[index]);
-        out.opacity[index] = blend(from.opacity[index], target.opacity[index]);
-    }
+    out.radius = blend(from.radius, target.radius);
+    out.width = std::max(1, blend(from.width, target.width));
+    out.opacity = blend(from.opacity, target.opacity);
     return out;
 }
 

@@ -264,12 +264,14 @@ private:
     lv_obj_t* dictation_panel_ = nullptr;
     lv_obj_t* dictation_status_ = nullptr;
     lv_obj_t* dictation_action_ = nullptr;
-    std::array<lv_obj_t*, 3> crest_rings_{};
+    std::array<lv_obj_t*, OrbitCrest::kDashSlots> crest_rings_{};
     lv_timer_t* crest_animation_timer_ = nullptr;
     OrbitCrest::State crest_state_ = OrbitCrest::State::Boot;
     OrbitCrest::Frame crest_frame_;
     OrbitCrest::Frame crest_transition_from_;
     uint32_t crest_transition_ms_ = 0;
+    uint32_t crest_last_frame_ms_ = 0;
+    uint32_t crest_speech_clock_ms_ = 0;
     uint32_t crest_reply_started_ms_ = 0;
     uint32_t crest_result_started_ms_ = 0;
     uint32_t crest_result_hold_ms_ = 0;
@@ -277,7 +279,7 @@ private:
     const char* crest_displayed_caption_ = nullptr;
     bool crest_reply_received_ = false;
     bool crest_speech_seen_ = false;
-    bool crest_error_ring_geometry_ = false;
+    bool crest_result_layout_ = false;
     bool dictation_visible_ = false;
     std::string dictation_status_text_;
     std::string dictation_action_text_;
@@ -365,18 +367,69 @@ private:
         crest_transition_from_ = crest_frame_;
         crest_transition_ms_ = CrestNowMs();
         crest_state_ = state;
-        if (state == OrbitCrest::State::Speaking)
+        if (state == OrbitCrest::State::Speaking) {
             crest_reply_started_ms_ = crest_transition_ms_;
+            crest_speech_clock_ms_ = 0;
+        }
+        if (state != OrbitCrest::State::Speaking)
+            crest_speech_clock_ms_ = 0;
         crest_level_ = 0;
         if (crest_animation_timer_)
             lv_timer_resume(crest_animation_timer_);
         RenderCrestLocked();
     }
 
+    void ApplyCrestFrameLocked(const OrbitCrest::Frame& frame) {
+        lv_obj_set_style_image_opa(crest_band_, frame.band_opacity, 0);
+        lv_obj_set_style_image_opa(crest_star_, frame.star_opacity, 0);
+        const int diameter = frame.radius * 2;
+        for (int index = 0; index < OrbitCrest::kDashSlots; ++index) {
+            auto* ring = crest_rings_[index];
+            const auto slot = OrbitCrest::Slot(frame, index);
+            if (!slot.visible) {
+                lv_obj_set_style_arc_opa(ring, LV_OPA_TRANSP, LV_PART_MAIN);
+                continue;
+            }
+            if (lv_obj_get_width(ring) != diameter || lv_obj_get_height(ring) != diameter) {
+                lv_obj_set_size(ring, diameter, diameter);
+                lv_obj_center(ring);
+            }
+            lv_obj_set_style_arc_width(ring, frame.width, LV_PART_MAIN);
+            lv_obj_set_style_arc_rounded(ring, true, LV_PART_MAIN);
+            lv_obj_set_style_arc_color(ring, lv_color_hex(frame.color), LV_PART_MAIN);
+            lv_obj_set_style_arc_opa(ring, frame.opacity, LV_PART_MAIN);
+            lv_arc_set_rotation(ring, slot.rotation_deg);
+            lv_arc_set_bg_angles(ring, 0, slot.span_deg);
+        }
+    }
+
+    void ApplyCrestCaptionLayoutLocked(bool result) {
+        if (result == crest_result_layout_ && crest_caption_)
+            return;
+        crest_result_layout_ = result;
+        if (result) {
+            lv_obj_set_size(crest_caption_, 420, 168);
+            lv_obj_align(crest_caption_, LV_ALIGN_CENTER, 0, 0);
+            lv_obj_set_style_text_letter_space(crest_caption_, 4, 0);
+            lv_obj_set_style_text_line_space(crest_caption_, 16, 0);
+            if (crest_timer_text_)
+                lv_obj_add_flag(crest_timer_text_, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_set_size(crest_caption_, 320, 80);
+            lv_obj_align(crest_caption_, LV_ALIGN_CENTER, 0, 0);
+            lv_obj_set_style_text_letter_space(crest_caption_, 1, 0);
+            lv_obj_set_style_text_line_space(crest_caption_, 6, 0);
+            if (crest_timer_text_)
+                lv_obj_remove_flag(crest_timer_text_, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
     void RenderCrestLocked() {
         if (!crest_layer_ || power_save_active_.load())
             return;
         const uint32_t now = CrestNowMs();
+        const uint32_t delta = std::min<uint32_t>(now - crest_last_frame_ms_, 60);
+        crest_last_frame_ms_ = now;
         if (crest_state_ == OrbitCrest::State::Result && crest_result_hold_ms_ &&
             now - crest_result_started_ms_ >= crest_result_hold_ms_) {
             ClearCrestResultLocked();
@@ -401,48 +454,23 @@ private:
                                        : OrbitCrest::AudioLevel(meter.mean_absolute.load(), age);
         const float smoothing = target_level > crest_level_ ? 0.24F : 0.08F;
         crest_level_ += (target_level - crest_level_) * smoothing;
-        if (crest_state_ == OrbitCrest::State::Speaking && target_level > 0)
+        if (crest_state_ == OrbitCrest::State::Speaking && target_level > 0) {
+            crest_speech_clock_ms_ += delta;
             crest_speech_seen_ = true;
-
-        OrbitCrest::Frame target;
-        if (OrbitCrest::UsesRings(crest_state_)) {
-            target =
-                OrbitCrest::Rings(crest_state_, now - crest_transition_ms_, crest_level_, false);
-        } else if (crest_state_ == OrbitCrest::State::Result ||
-                   crest_state_ == OrbitCrest::State::Error ||
-                   crest_state_ == OrbitCrest::State::Boot ||
-                   crest_state_ == OrbitCrest::State::Connecting) {
-            target.band_opacity = 0;
-            if (crest_state_ == OrbitCrest::State::Error) {
-                target.color = OrbitCrest::kAmber;
-                target.opacity[1] = 180;
-            }
         }
+
+        const uint32_t motion_ms = crest_state_ == OrbitCrest::State::Speaking
+                                       ? crest_speech_clock_ms_
+                                       : now - crest_transition_ms_;
+        const OrbitCrest::Frame target =
+            OrbitCrest::Face(crest_state_, motion_ms, crest_level_, false);
         crest_frame_ = OrbitCrest::Transition(crest_transition_from_, target,
                                               now - crest_transition_ms_, false);
-        lv_obj_set_style_image_opa(crest_band_, crest_frame_.band_opacity, 0);
-        lv_obj_set_style_image_opa(crest_star_, crest_frame_.star_opacity, 0);
-        for (int index = 0; index < 3; ++index) {
-            auto* ring = crest_rings_[index];
-            const int diameter = crest_frame_.radii[index] * 2;
-            if (lv_obj_get_width(ring) != diameter || lv_obj_get_height(ring) != diameter) {
-                lv_obj_set_size(ring, diameter, diameter);
-                lv_obj_center(ring);
-            }
-            lv_obj_set_style_arc_color(ring, lv_color_hex(crest_frame_.color), LV_PART_MAIN);
-            lv_obj_set_style_arc_opa(ring, crest_frame_.opacity[index], LV_PART_MAIN);
-        }
-        const bool error_geometry = crest_state_ == OrbitCrest::State::Error;
-        if (error_geometry != crest_error_ring_geometry_) {
-            for (auto* ring : crest_rings_) {
-                lv_arc_set_rotation(ring, error_geometry ? 270 : 0);
-                lv_arc_set_bg_angles(ring, error_geometry ? 12 : 0, error_geometry ? 348 : 360);
-            }
-            crest_error_ring_geometry_ = error_geometry;
-        }
+        ApplyCrestFrameLocked(crest_frame_);
         const char* text = crest_state_ == OrbitCrest::State::Result
                                ? crest_result_caption_
                                : OrbitCrest::Caption(crest_state_);
+        ApplyCrestCaptionLayoutLocked(crest_state_ == OrbitCrest::State::Result && text && text[0]);
         if (crest_displayed_caption_ != text) {
             lv_label_set_text_static(crest_caption_, text);
             crest_displayed_caption_ = text;
@@ -450,10 +478,10 @@ private:
         lv_obj_set_style_text_color(
             crest_caption_,
             lv_color_hex(crest_state_ == OrbitCrest::State::Error ? OrbitCrest::kAmber
-                                                                  : OrbitCrest::kIvory),
+                                                                  : 0xFFFFFF),
             0);
         if (crest_animation_timer_ && now - crest_transition_ms_ >= OrbitCrest::kTransitionMs &&
-            !OrbitCrest::UsesRings(crest_state_) && crest_state_ != OrbitCrest::State::Result) {
+            !OrbitCrest::UsesRings(crest_state_)) {
             lv_timer_pause(crest_animation_timer_);
         }
     }
@@ -479,14 +507,16 @@ private:
         crest_band_ = lv_image_create(crest_layer_);
         lv_image_set_src(crest_band_, &OrbitCrest::kBandImage);
         lv_obj_set_pos(crest_band_, OrbitCrest::kBandX, OrbitCrest::kBandY);
-        for (int index = 0; index < 3; ++index) {
+        for (int index = 0; index < OrbitCrest::kDashSlots; ++index) {
             auto*& ring = crest_rings_[index];
             ring = lv_arc_create(crest_layer_);
             lv_obj_remove_style_all(ring);
-            const int diameter = crest_frame_.radii[index] * 2;
+            const int diameter = OrbitCrest::kRingRadius * 2;
             lv_obj_set_size(ring, diameter, diameter);
             lv_obj_center(ring);
-            lv_obj_set_style_arc_width(ring, 3, LV_PART_MAIN);
+            lv_obj_set_style_arc_width(ring, 6, LV_PART_MAIN);
+            lv_obj_set_style_arc_rounded(ring, true, LV_PART_MAIN);
+            lv_obj_set_style_arc_opa(ring, LV_OPA_TRANSP, LV_PART_MAIN);
             lv_obj_set_style_arc_opa(ring, LV_OPA_TRANSP, LV_PART_INDICATOR);
             lv_arc_set_rotation(ring, 0);
             lv_arc_set_bg_angles(ring, 0, 360);
@@ -500,11 +530,12 @@ private:
             lv_obj_set_style_image_recolor_opa(mark, LV_OPA_COVER, 0);
         }
         crest_caption_ = lv_label_create(crest_layer_);
-        lv_obj_set_size(crest_caption_, 280, 74);
-        lv_obj_align(crest_caption_, LV_ALIGN_CENTER, 0, 97);
+        lv_obj_set_size(crest_caption_, 320, 80);
+        lv_obj_align(crest_caption_, LV_ALIGN_CENTER, 0, 0);
         lv_obj_set_style_text_font(crest_caption_, &font_noto_sans_basic_30_4, 0);
         lv_obj_set_style_text_align(crest_caption_, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_style_text_line_space(crest_caption_, 3, 0);
+        lv_obj_set_style_text_letter_space(crest_caption_, 1, 0);
+        lv_obj_set_style_text_line_space(crest_caption_, 6, 0);
         lv_label_set_long_mode(crest_caption_, LV_LABEL_LONG_CLIP);
 
         crest_timer_text_ = lv_label_create(crest_layer_);
@@ -552,7 +583,7 @@ private:
                 static_cast<RoundLcdDisplay*>(lv_timer_get_user_data(timer))->RenderCrestLocked();
             },
             33, this);
-        crest_transition_ms_ = CrestNowMs();
+        crest_transition_ms_ = crest_last_frame_ms_ = CrestNowMs();
         RenderCrestLocked();
     }
 
@@ -1977,10 +2008,18 @@ public:
                 return;
             }
             // No transcript text is retained or rendered; the watch face
-            // acknowledges only that a reply arrived.
+            // acknowledges only that a reply arrived. Keep the Working/Speaking
+            // ring on screen until status returns to Ready, then show the
+            // sparse result caption.
             crest_reply_received_ = true;
             crest_reply_started_ms_ = CrestNowMs();
-            SetCrestResultLocked("Reply received", kReplyPlaybackMaximumMs);
+            if (crest_state_ == OrbitCrest::State::Listening ||
+                crest_state_ == OrbitCrest::State::Thinking ||
+                crest_state_ == OrbitCrest::State::Speaking) {
+                crest_result_caption_ = "Reply received";
+            } else {
+                SetCrestResultLocked("Reply received", kReplyPlaybackMaximumMs);
+            }
             SetReplyLayoutLocked(true);
         }
         if (!ScheduleVisualReset(kReplyPlaybackMaximumMs)) {
@@ -2014,6 +2053,7 @@ public:
                 lv_obj_remove_flag(brand_label_, LV_OBJ_FLAG_HIDDEN);
             }
             SetReplyLayoutLocked(reply_visible_.load());
+            crest_last_frame_ms_ = CrestNowMs();
             RenderCrestLocked();
         }
     }
@@ -2024,9 +2064,31 @@ public:
         }
         const VisualState state = StateForStatus(status);
         resting_state_.store(state);
-        if (receipt_visible_.load() && state != VisualState::kListening &&
-            state != VisualState::kConnecting && state != VisualState::kUnavailable) {
+        // Hold-to-talk stages always own the face so Listening → Working →
+        // Speaking stays readable while a reply is in flight. Receipts wait
+        // until the spoken turn ends.
+        if (state == VisualState::kListening || state == VisualState::kWorking ||
+            state == VisualState::kSpeaking) {
+            if (state == VisualState::kListening) {
+                receipt_visible_.store(false);
+            }
+            CancelVisualReset();
+            if (notification_timer_ != nullptr) {
+                esp_timer_stop(notification_timer_);
+            }
+            ApplyVisualState(state);
+            return;
+        }
+        if (receipt_visible_.load() && state != VisualState::kConnecting &&
+            state != VisualState::kUnavailable) {
             if (reply_visible_.load() && state == VisualState::kReady) {
+                {
+                    DisplayLockGuard lock(this);
+                    if (crest_result_caption_[0] &&
+                        crest_state_ != OrbitCrest::State::Result) {
+                        SetCrestResultLocked(crest_result_caption_, kReplyHoldAfterSpeechMs);
+                    }
+                }
                 RestartReplyFromTop();
                 if (!ScheduleVisualReset(kReplyHoldAfterSpeechMs)) {
                     receipt_visible_.store(false);
