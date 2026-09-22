@@ -78,8 +78,10 @@ protected:
 // vtable slot without rebuilding every display TU panics on connect.
 void ProvisionsShowTimerFace();
 bool ProvisionsTimerFaceShowing();
+// `caption` is the small face word ("List" / "Notes") above the lines; nullptr
+// or "" draws none.
 void ProvisionsShowShoppingFocus(const std::string& above, const std::string& focus,
-                                 const std::string& below);
+                                 const std::string& below, const char* caption = nullptr);
 // Menu page: a timer ring or a list mark, swiped between. Not a Display
 // virtual — a new vtable slot panics on connect.
 void ProvisionsShowOrbitMenu(uint8_t page);

@@ -803,7 +803,7 @@ void Application::PaintOrbitView() {
     }
     if (view == OrbitView::Notes) {
         if (notes_items_.empty()) {
-            ProvisionsShowShoppingFocus("", "hold to add", "");
+            ProvisionsShowShoppingFocus("", "hold to add", "", "Notes");
             return;
         }
         if (g_notes_focus >= notes_items_.size())
@@ -815,13 +815,13 @@ void Application::PaintOrbitView() {
             above = notes_items_[index - 1];
         if (index + 1 < notes_items_.size())
             below = notes_items_[index + 1];
-        ProvisionsShowShoppingFocus(above, notes_items_[index], below);
+        ProvisionsShowShoppingFocus(above, notes_items_[index], below, "Notes");
         return;
     }
     if (shopping_list_items_.empty() && !shopping_list_face_.empty())
         SplitShoppingLines(shopping_list_face_, shopping_list_items_);
     if (shopping_list_items_.empty()) {
-        ProvisionsShowShoppingFocus("", "hold to add", "");
+        ProvisionsShowShoppingFocus("", "hold to add", "", "List");
         return;
     }
     if (g_shopping_focus >= shopping_list_items_.size())
@@ -851,6 +851,6 @@ void Application::PaintOrbitView() {
         const size_t after = index + 1 < count ? std::min(size_t{2}, count - index - 1) : 0;
         JoinShoppingLines(shopping_list_items_, index + 1, index + 1 + after, below);
     }
-    ProvisionsShowShoppingFocus(above, focus, below);
+    ProvisionsShowShoppingFocus(above, focus, below, "List");
 }
 #endif

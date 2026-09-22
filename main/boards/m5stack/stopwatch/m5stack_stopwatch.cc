@@ -299,6 +299,9 @@ private:
     std::array<lv_obj_t*, 3> menu_list_bars_{};
     lv_obj_t* menu_note_card_ = nullptr;
     std::array<lv_obj_t*, 3> menu_dots_{};
+    // Small grey word above the List / Notes face so a glance tells them apart.
+    lv_obj_t* face_caption_ = nullptr;
+    std::string face_caption_text_;
     lv_obj_t* lock_layer_ = nullptr;
     // Yellow chevron nudging toward the Talk button (about 10:30 on the rim)
     // while a face says "Hold yellow". Bobs outward so the eye finds it.
@@ -408,6 +411,7 @@ private:
         SetVisible(menu_note_card_, false);
         for (auto* dot : menu_dots_)
             SetVisible(dot, false);
+        SetVisible(face_caption_, false);
     }
 
     void ChangeCrestStateLocked(OrbitCrest::State state) {
@@ -672,7 +676,30 @@ private:
         lv_obj_align(menu_note_card_, LV_ALIGN_CENTER, 0, -28);
         lv_obj_remove_flag(menu_note_card_, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_remove_flag(menu_note_card_, LV_OBJ_FLAG_CLICKABLE);
+        // Ruled card: a short gold title line and two dark rules. Children
+        // hide with the card, so the menu code keeps toggling one object.
+        for (int index = 0; index < 3; ++index) {
+            auto* rule = lv_obj_create(menu_note_card_);
+            lv_obj_remove_style_all(rule);
+            const bool title = index == 0;
+            lv_obj_set_size(rule, title ? 36 : 56, 4);
+            lv_obj_set_style_radius(rule, 2, 0);
+            lv_obj_set_style_bg_color(rule, lv_color_hex(title ? kColorGold : 0x2A261C), 0);
+            lv_obj_set_style_bg_opa(rule, LV_OPA_COVER, 0);
+            lv_obj_align(rule, LV_ALIGN_TOP_LEFT, 16, 26 + index * 20);
+            lv_obj_remove_flag(rule, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_remove_flag(rule, LV_OBJ_FLAG_CLICKABLE);
+        }
         SetVisible(menu_note_card_, false);
+        face_caption_ = lv_label_create(dictation_panel_);
+        lv_obj_set_size(face_caption_, 200, 24);
+        lv_obj_set_style_text_font(face_caption_, &font_noto_sans_basic_16_4, 0);
+        lv_obj_set_style_text_color(face_caption_, lv_color_hex(0x8B877C), 0);
+        lv_obj_set_style_text_align(face_caption_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_letter_space(face_caption_, 2, 0);
+        lv_label_set_long_mode(face_caption_, LV_LABEL_LONG_CLIP);
+        lv_obj_align(face_caption_, LV_ALIGN_CENTER, 0, -150);
+        lv_obj_add_flag(face_caption_, LV_OBJ_FLAG_HIDDEN);
         for (int index = 0; index < 3; ++index) {
             auto* dot = lv_obj_create(dictation_panel_);
             lv_obj_remove_style_all(dot);
@@ -2840,11 +2867,13 @@ public:
     }
 
     void ShowShoppingFocus(const std::string& above, const std::string& focus,
-                           const std::string& below) {
+                           const std::string& below, const char* caption) {
         if (dictation_panel_ == nullptr)
             return;
+        const std::string caption_text = caption ? caption : "";
         if (shopping_focus_layout_ && dictation_eyebrow_text_ == above &&
-            dictation_status_text_ == focus && dictation_item_text_ == below)
+            dictation_status_text_ == focus && dictation_item_text_ == below &&
+            face_caption_text_ == caption_text)
             return;
         // Never park the main loop behind a starved LVGL task; the next
         // paint carries the same list.
@@ -2944,6 +2973,10 @@ public:
                                    0);
         lv_obj_set_style_text_color(dictation_status_,
                                     lv_color_hex(prompt ? 0x8B877C : OrbitCrest::kIvory), 0);
+        lv_obj_set_style_text_opa(dictation_status_, prompt ? LV_OPA_60 : LV_OPA_COVER, 0);
+        // Face word sits above the lines; the lines stay where they were.
+        SetLabelText(face_caption_, &face_caption_text_, caption_text);
+        SetVisible(face_caption_, !caption_text.empty());
         SetPromptEmphasisLocked(false);
         SetHoldHintLocked(prompt);
         if (!already)
@@ -2985,6 +3018,7 @@ public:
         SetVisible(dictation_eyebrow_, false);
         SetVisible(dictation_status_, false);
         SetVisible(dictation_status_bold_, false);
+        SetVisible(face_caption_, false);
         SetPromptEmphasisLocked(false);
         SetHoldHintLocked(false);
         const bool shopping = page == 0;
@@ -4069,12 +4103,12 @@ bool ProvisionsTimerFaceShowing() {
 }
 
 void ProvisionsShowShoppingFocus(const std::string& above, const std::string& focus,
-                                 const std::string& below) {
+                                 const std::string& below, const char* caption) {
     auto* display = Board::GetInstance().GetDisplay();
     if (display == nullptr) {
         return;
     }
-    static_cast<RoundLcdDisplay*>(display)->ShowShoppingFocus(above, focus, below);
+    static_cast<RoundLcdDisplay*>(display)->ShowShoppingFocus(above, focus, below, caption);
 }
 
 void ProvisionsShowOrbitMenu(uint8_t page) {
