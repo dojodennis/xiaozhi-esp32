@@ -1180,3 +1180,11 @@ menu "TAIJIPAI_S3_CONFIG"
 endmenu
 
 endmenu
+
+# espressif/esp_h264 is not installed on the StopWatch (ESP32-S3). Its
+# manifest still evaluates $CONFIG{ESP_VIDEO_USE_CUSTOMIZED_ESP_H264_VERSION}.
+# A promptless bool left at n is omitted from sdkconfig, so CMake still
+# treats the name as missing. Keep this off.
+config ESP_VIDEO_USE_CUSTOMIZED_ESP_H264_VERSION
+    bool "Use a customized esp_h264 (leave off)"
+    default n
