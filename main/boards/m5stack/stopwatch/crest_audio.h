@@ -10,6 +10,8 @@ namespace OrbitCrest {
 struct AudioMeter {
     std::atomic<uint32_t> mean_absolute{0};
     std::atomic<uint32_t> sampled_ms{0};
+    // Loudest chunk since TakePeak(): tells a silent alarm apart from a muted one.
+    std::atomic<uint32_t> peak_mean{0};
 
     void Observe(const int16_t* samples, std::size_t size, uint32_t now_ms) {
         uint32_t total = 0;
@@ -21,9 +23,16 @@ struct AudioMeter {
             total += value < 0 ? -value : value;
             ++count;
         }
-        mean_absolute.store(count == 0 ? 0 : total / count, std::memory_order_relaxed);
+        const uint32_t mean = count == 0 ? 0 : total / count;
+        mean_absolute.store(mean, std::memory_order_relaxed);
+        uint32_t peak = peak_mean.load(std::memory_order_relaxed);
+        while (mean > peak &&
+               !peak_mean.compare_exchange_weak(peak, mean, std::memory_order_relaxed)) {
+        }
         sampled_ms.store(now_ms, std::memory_order_release);
     }
+
+    uint32_t TakePeak() { return peak_mean.exchange(0, std::memory_order_relaxed); }
 };
 
 inline AudioMeter input_meter;

@@ -24,6 +24,7 @@ class ProvisionsTimerDismissalTests(unittest.TestCase):
         self.assertIn('"provisions_timer_dismissal.cc"', cmake)
         self.assertIn("provisions::timers::Dismissals timer_dismissals_", header)
         self.assertIn("void DismissDueTimers();", header)
+        self.assertIn("void AbortAlarmListening();", header)
         service = application.split("void Application::ServiceTimers()", 1)[1].split("\n}\n", 1)[0]
         self.assertIn("timer_dismissals_.Service(session, negotiated", service)
         self.assertIn("timer_dismissals_.Filter(snapshot)", service)
@@ -46,7 +47,7 @@ class ProvisionsTimerDismissalTests(unittest.TestCase):
         self.assertIn("SetStatus(GetProvisionsIdleStatus())", dismiss)
 
         silence = board.split("bool SilenceTimerAlarm()", 1)[1].split("bool HasTimerAlarm()", 1)[0]
-        self.assertIn("timer_alarm_state_.silenced()", silence)
+        self.assertNotIn("timer_alarm_state_.silenced()", silence)
         self.assertIn("DismissDueTimersLocked()", silence)
         self.assertIn("timer_dismiss_callback_()", silence)
         self.assertIn("Application::GetInstance().DismissDueTimers()", board)
@@ -60,8 +61,8 @@ class ProvisionsTimerDismissalTests(unittest.TestCase):
             "AlarmOutputChange DismissDueTimersLocked()", 1
         )[0]
         self.assertIn("if (!timer_alarm_active_.load())", dismiss)
-        self.assertIn("FinishedTimers(", dismiss)
-        self.assertIn("if (due.empty())", dismiss)
+        self.assertNotIn("FinishedTimers(", dismiss)
+        self.assertNotIn("if (due.empty())", dismiss)
         self.assertIn("DismissDueTimersLocked()", dismiss)
         self.assertIn("timer_dismiss_callback_()", dismiss)
 
@@ -73,6 +74,7 @@ class ProvisionsTimerDismissalTests(unittest.TestCase):
         self.assertIn("Application::GetInstance().Schedule", touch_init)
         self.assertIn("self->display_->HasTimerAlarm()", touch_init)
         self.assertIn("display_->DismissRingingTimers()", touch_init)
+        self.assertIn("AbortAlarmListening()", touch_init)
         self.assertIn("display_->ToggleTimerFocus()", touch_init)
         self.assertNotIn("SilenceTimerAlarm()", touch_init)
 
@@ -83,8 +85,9 @@ class ProvisionsTimerDismissalTests(unittest.TestCase):
         self.assertIn("const uint8_t event = (frame[3] & 0xC0) >> 6", touch)
         self.assertIn("finger_count > 0 && (event == 0 || event == 2)", touch)
 
-        self.assertIn('"TAP TO STOP\\nBLUE SILENCES"', board)
-        self.assertIn('"TAP TO STOP\\nBLUE CLEARS"', board)
+        self.assertIn('"TAP TO STOP\\nBLUE STOPS"', board)
+        self.assertNotIn('"TAP TO STOP\\nBLUE SILENCES"', board)
+        self.assertNotIn('"TAP TO STOP\\nBLUE CLEARS"', board)
 
     @unittest.skipUnless(
         shutil.which("c++") and shutil.which("cc"),

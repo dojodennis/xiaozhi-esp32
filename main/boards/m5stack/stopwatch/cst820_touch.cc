@@ -52,6 +52,12 @@ bool StopwatchCst820Touch::Begin(i2c_master_bus_handle_t bus, uint8_t address) {
 }
 
 bool StopwatchCst820Touch::ReadPressed(bool& pressed) {
+    uint16_t x = 0;
+    uint16_t y = 0;
+    return ReadTouch(pressed, x, y);
+}
+
+bool StopwatchCst820Touch::ReadTouch(bool& pressed, uint16_t& x, uint16_t& y) {
     if (device_ == nullptr) {
         return false;
     }
@@ -66,6 +72,8 @@ bool StopwatchCst820Touch::ReadPressed(bool& pressed) {
     const uint8_t finger_count = frame[2];
     const uint8_t event = (frame[3] & 0xC0) >> 6;
     pressed = finger_count > 0 && (event == 0 || event == 2);
+    x = static_cast<uint16_t>(((frame[3] & 0x0F) << 8) | frame[4]);
+    y = static_cast<uint16_t>(((frame[5] & 0x0F) << 8) | frame[6]);
     return true;
 }
 

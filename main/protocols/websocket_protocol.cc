@@ -15,6 +15,8 @@
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
 #include "provisions_timers.h"
 #include "provisions_voice_wire.h"
+bool ProvisionsListenShopping() __attribute__((weak));
+bool ProvisionsListenShopping() { return false; }
 #endif
 
 #include <esp_log.h>
@@ -996,7 +998,12 @@ bool WebsocketProtocol::SendStoredRecording(const provisions::VoiceReplay& repla
     };
     bool started = false;
     if (ok) {
-        const auto start = provisions::VoiceCaptureStart(replay, session, turn, deferred, alarm_stop);
+        const bool shopping =
+            !replay.capture.IsDictation() && !alarm_stop && ProvisionsListenShopping();
+        const bool notes = !shopping && !replay.capture.IsDictation() && !alarm_stop &&
+                           ProvisionsListenNotes();
+        const auto start = provisions::VoiceCaptureStart(
+            replay, session, turn, deferred, alarm_stop, shopping, notes);
         ok = !start.empty() && still_current() && SendText(start);
         started = ok;
     }

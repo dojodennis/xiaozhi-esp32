@@ -265,7 +265,7 @@ bool ParseLiteCaptureConsumed(const cJSON* value, const std::string& session,
     return true;
 }
 std::string VoiceCaptureStart(const VoiceReplay& replay, const std::string& session, uint32_t turn,
-                              bool deferred, bool alarm_stop) {
+                              bool deferred, bool alarm_stop, bool shopping, bool notes) {
     const bool retry = std::any_of(replay.retry_token.begin(), replay.retry_token.end(),
                                    [](uint8_t byte) { return byte != 0; });
     if (retry && !deferred)
@@ -284,6 +284,10 @@ std::string VoiceCaptureStart(const VoiceReplay& replay, const std::string& sess
     cJSON_AddBoolToObject(root, "deferred", deferred);
     if (alarm_stop && !deferred && !replay.capture.IsDictation())
         cJSON_AddBoolToObject(root, "alarm_stop", true);
+    if (shopping && !alarm_stop && !replay.capture.IsDictation())
+        cJSON_AddBoolToObject(root, "shopping", true);
+    if (notes && !shopping && !alarm_stop && !replay.capture.IsDictation())
+        cJSON_AddBoolToObject(root, "notes", true);
     if (retry)
         cJSON_AddStringToObject(root, "retry_token", VoiceIdText(replay.retry_token).c_str());
     cJSON* capture = cJSON_AddObjectToObject(root, "capture");

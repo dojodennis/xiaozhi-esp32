@@ -15,6 +15,12 @@ std::string VoiceIdText(const VoiceId& id);
 // ringing: command-only, never deferred, and the gateway answers nothing
 // unless it hears a stop phrase.
 std::string VoiceCaptureStart(const VoiceReplay& replay, const std::string& session, uint32_t turn,
-                              bool deferred, bool alarm_stop = false);
+                              bool deferred, bool alarm_stop = false, bool shopping = false,
+                              bool notes = false);
 }  // namespace provisions
+
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+bool ProvisionsListenShopping();
+bool ProvisionsListenNotes();
+#endif
 #endif

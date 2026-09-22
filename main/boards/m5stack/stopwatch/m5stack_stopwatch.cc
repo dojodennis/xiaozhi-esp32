@@ -18,6 +18,7 @@
 #include "provisions_local_capture_feedback.h"
 #include "provisions_hardware_facts.h"
 #include "provisions_timer_snapshot.h"
+#include "provisions_voice_feedback.h"
 #include "utf8_ellipsis.h"
 #if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
 #include <esp_pthread.h>
@@ -254,6 +255,10 @@ private:
     lv_obj_t* crest_band_ = nullptr;
     lv_obj_t* crest_star_ = nullptr;
     lv_obj_t* crest_caption_ = nullptr;
+    // Gold service countdown behind the shopping list, same geometry as the
+    // Timers face's outer ring. -1 means no service timer is running.
+    lv_obj_t* shopping_service_arc_ = nullptr;
+    int shopping_service_value_ = -1;
     lv_obj_t* compact_timer_layer_ = nullptr;
     lv_obj_t* compact_service_arc_ = nullptr;
     lv_obj_t* compact_service_label_ = nullptr;
@@ -263,8 +268,13 @@ private:
     lv_obj_t* compact_timer_remaining_ = nullptr;
     lv_obj_t* compact_timer_hint_ = nullptr;
     lv_obj_t* dictation_panel_ = nullptr;
+    lv_obj_t* dictation_title_ = nullptr;
+    lv_obj_t* dictation_eyebrow_ = nullptr;
     lv_obj_t* dictation_status_ = nullptr;
+    lv_obj_t* dictation_status_bold_ = nullptr;
+    lv_obj_t* dictation_item_ = nullptr;
     lv_obj_t* dictation_action_ = nullptr;
+    lv_obj_t* dictation_help_ = nullptr;
     std::array<lv_obj_t*, 3> crest_rings_{};
     lv_timer_t* crest_animation_timer_ = nullptr;
     OrbitCrest::State crest_state_ = OrbitCrest::State::Boot;
@@ -280,7 +290,26 @@ private:
     bool crest_speech_seen_ = false;
     bool crest_error_ring_geometry_ = false;
     bool dictation_visible_ = false;
+    bool dictation_saving_ = false;
+    bool dictation_review_ = false;
+    bool shopping_focus_layout_ = false;
+    bool menu_layout_ = false;
+    bool orbit_locked_ui_ = false;
+    lv_obj_t* menu_timer_arc_ = nullptr;
+    std::array<lv_obj_t*, 3> menu_list_bars_{};
+    lv_obj_t* menu_note_card_ = nullptr;
+    std::array<lv_obj_t*, 3> menu_dots_{};
+    lv_obj_t* lock_layer_ = nullptr;
+    // Yellow chevron nudging toward the Talk button (about 10:30 on the rim)
+    // while a face says "Hold yellow". Bobs outward so the eye finds it.
+    lv_obj_t* hold_hint_ = nullptr;
+    bool hold_hint_wanted_ = false;
+    // Standby face: the crest artwork alone on black at low backlight instead
+    // of a dead screen. Swap OrbitCrest::kBandImage/kStarImage to rebrand.
+    lv_obj_t* standby_layer_ = nullptr;
+    std::string dictation_eyebrow_text_;
     std::string dictation_status_text_;
+    std::string dictation_item_text_;
     std::string dictation_action_text_;
     bool crest_timer_active_ = false;
     float crest_level_ = 0;
@@ -360,6 +389,27 @@ private:
         crest_speech_seen_ = false;
     }
 
+    // The spoken confirmation is a crest result held for many seconds. A swipe,
+    // a menu change, or a timer that just landed owns the screen instead.
+    void DismissSpokenFaceLocked() {
+        receipt_visible_.store(false);
+        reply_visible_.store(false);
+        CancelVisualReset();
+        ClearCrestResultLocked();
+        if (crest_state_ == OrbitCrest::State::Result)
+            ChangeCrestStateLocked(OrbitCrest::State::Idle);
+    }
+
+    void HideOrbitMenuLocked() {
+        menu_layout_ = false;
+        SetVisible(menu_timer_arc_, false);
+        for (auto* bar : menu_list_bars_)
+            SetVisible(bar, false);
+        SetVisible(menu_note_card_, false);
+        for (auto* dot : menu_dots_)
+            SetVisible(dot, false);
+    }
+
     void ChangeCrestStateLocked(OrbitCrest::State state) {
         crest_transition_from_ = crest_frame_;
         crest_transition_ms_ = CrestNowMs();
@@ -374,6 +424,8 @@ private:
 
     void RenderCrestLocked() {
         if (!crest_layer_ || power_save_active_.load())
+            return;
+        if (shopping_focus_layout_)
             return;
         const uint32_t now = CrestNowMs();
         if (crest_state_ == OrbitCrest::State::Result && crest_result_hold_ms_ &&
@@ -506,6 +558,23 @@ private:
         lv_obj_set_style_text_line_space(crest_caption_, 3, 0);
         lv_label_set_long_mode(crest_caption_, LV_LABEL_LONG_CLIP);
 
+        shopping_service_arc_ = lv_arc_create(crest_layer_);
+        lv_obj_set_size(shopping_service_arc_, ProvisionsStopwatchOrbit::kDisplaySize - 10,
+                        ProvisionsStopwatchOrbit::kDisplaySize - 10);
+        lv_obj_center(shopping_service_arc_);
+        lv_arc_set_rotation(shopping_service_arc_, 270);
+        lv_arc_set_bg_angles(shopping_service_arc_, 0, 360);
+        lv_arc_set_range(shopping_service_arc_, 0, 1000);
+        lv_arc_set_value(shopping_service_arc_, 1000);
+        lv_obj_remove_style(shopping_service_arc_, nullptr, LV_PART_KNOB);
+        lv_obj_remove_flag(shopping_service_arc_, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_arc_width(shopping_service_arc_, 7, LV_PART_MAIN);
+        lv_obj_set_style_arc_width(shopping_service_arc_, 7, LV_PART_INDICATOR);
+        lv_obj_set_style_arc_color(shopping_service_arc_, lv_color_hex(kOrbitTrack), LV_PART_MAIN);
+        lv_obj_set_style_arc_color(shopping_service_arc_, lv_color_hex(kOrbitService),
+                                   LV_PART_INDICATOR);
+        SetVisible(shopping_service_arc_, false);
+
         dictation_panel_ = lv_obj_create(crest_layer_);
         lv_obj_remove_style_all(dictation_panel_);
         lv_obj_set_size(dictation_panel_, 466, 466);
@@ -513,28 +582,110 @@ private:
         lv_obj_set_style_bg_color(dictation_panel_, lv_color_hex(0x000000), 0);
         lv_obj_set_style_bg_opa(dictation_panel_, LV_OPA_COVER, 0);
         lv_obj_remove_flag(dictation_panel_, LV_OBJ_FLAG_SCROLLABLE);
-        auto* title = lv_label_create(dictation_panel_);
-        lv_obj_set_style_text_font(title, &font_noto_sans_basic_30_4, 0);
-        lv_obj_set_style_text_color(title, lv_color_hex(OrbitCrest::kIvory), 0);
-        lv_label_set_text(title, "Dictation");
-        lv_obj_align(title, LV_ALIGN_CENTER, 0, -125);
+        dictation_title_ = lv_label_create(dictation_panel_);
+        lv_obj_set_style_text_font(dictation_title_, &font_noto_sans_basic_30_4, 0);
+        lv_obj_set_style_text_color(dictation_title_, lv_color_hex(OrbitCrest::kIvory), 0);
+        lv_label_set_text(dictation_title_, "Dictation");
+        lv_obj_align(dictation_title_, LV_ALIGN_CENTER, 0, -125);
+        lv_obj_add_flag(dictation_title_, LV_OBJ_FLAG_HIDDEN);
         dictation_status_ = lv_label_create(dictation_panel_);
-        lv_obj_set_size(dictation_status_, 310, 115);
-        lv_obj_align(dictation_status_, LV_ALIGN_CENTER, 0, -35);
-        lv_obj_set_style_text_font(dictation_status_, &font_noto_sans_basic_16_4, 0);
+        lv_obj_set_size(dictation_status_, 310, 220);
+        lv_obj_align(dictation_status_, LV_ALIGN_CENTER, 0, 16);
+        lv_obj_set_style_text_font(dictation_status_, &font_noto_sans_basic_30_4, 0);
         lv_obj_set_style_text_align(dictation_status_, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_style_text_color(dictation_status_, lv_color_hex(0xcbd5e1), 0);
-        lv_obj_set_style_text_line_space(dictation_status_, 8, 0);
+        lv_obj_set_style_text_color(dictation_status_, lv_color_hex(OrbitCrest::kIvory), 0);
+        lv_obj_set_style_text_line_space(dictation_status_, 2, 0);
+        lv_label_set_long_mode(dictation_status_, LV_LABEL_LONG_WRAP);
+        // Same glyphs drawn 2 px to the right: the only bold we have at 30 px.
+        dictation_status_bold_ = lv_label_create(dictation_panel_);
+        lv_obj_set_style_text_font(dictation_status_bold_, &font_noto_sans_basic_30_4, 0);
+        lv_obj_set_style_text_align(dictation_status_bold_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_color(dictation_status_bold_, lv_color_hex(OrbitCrest::kIvory), 0);
+        lv_label_set_long_mode(dictation_status_bold_, LV_LABEL_LONG_CLIP);
+        lv_obj_set_style_translate_x(dictation_status_bold_, 2, 0);
+        lv_obj_add_flag(dictation_status_bold_, LV_OBJ_FLAG_HIDDEN);
         dictation_action_ = lv_label_create(dictation_panel_);
         lv_obj_set_style_text_font(dictation_action_, &font_noto_sans_basic_30_4, 0);
         lv_obj_set_style_text_color(dictation_action_, lv_color_hex(0x7bb7ff), 0);
         lv_obj_align(dictation_action_, LV_ALIGN_CENTER, 0, 65);
-        auto* help = lv_label_create(dictation_panel_);
-        lv_obj_set_style_text_font(help, &font_noto_sans_basic_16_4, 0);
-        lv_obj_set_style_text_color(help, lv_color_hex(0xcbd5e1), 0);
-        lv_obj_set_style_text_align(help, LV_TEXT_ALIGN_CENTER, 0);
-        lv_label_set_text(help, "Hold yellow: segment\nDouble blue: back");
-        lv_obj_align(help, LV_ALIGN_CENTER, 0, 125);
+        lv_obj_add_flag(dictation_action_, LV_OBJ_FLAG_HIDDEN);
+        dictation_help_ = lv_label_create(dictation_panel_);
+        lv_obj_set_style_text_font(dictation_help_, &font_noto_sans_basic_16_4, 0);
+        lv_obj_set_style_text_color(dictation_help_, lv_color_hex(0xcbd5e1), 0);
+        lv_obj_set_style_text_align(dictation_help_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_label_set_text(dictation_help_, "Hold yellow: segment\nDouble blue: back");
+        lv_obj_align(dictation_help_, LV_ALIGN_CENTER, 0, 125);
+        lv_obj_add_flag(dictation_help_, LV_OBJ_FLAG_HIDDEN);
+        dictation_eyebrow_ = lv_label_create(dictation_panel_);
+        lv_obj_set_width(dictation_eyebrow_, 238);
+        lv_obj_set_style_text_font(dictation_eyebrow_, &font_noto_sans_basic_16_4, 0);
+        lv_obj_set_style_text_color(dictation_eyebrow_, lv_color_hex(kColorGold), 0);
+        lv_obj_set_style_text_align(dictation_eyebrow_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_letter_space(dictation_eyebrow_, 3, 0);
+        lv_obj_align(dictation_eyebrow_, LV_ALIGN_CENTER, 0, -118);
+        lv_obj_add_flag(dictation_eyebrow_, LV_OBJ_FLAG_HIDDEN);
+        dictation_item_ = lv_label_create(dictation_panel_);
+        lv_obj_set_size(dictation_item_, 300, 110);
+        lv_obj_set_style_text_font(dictation_item_, &font_noto_sans_basic_30_4, 0);
+        lv_obj_set_style_text_color(dictation_item_, lv_color_hex(OrbitCrest::kIvory), 0);
+        lv_obj_set_style_text_align(dictation_item_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_line_space(dictation_item_, 4, 0);
+        lv_label_set_long_mode(dictation_item_, LV_LABEL_LONG_WRAP);
+        lv_obj_align(dictation_item_, LV_ALIGN_CENTER, 0, 78);
+        lv_obj_add_flag(dictation_item_, LV_OBJ_FLAG_HIDDEN);
+
+        // Menu logos, the same idea as the stock StopWatch app icons: a ring
+        // for timers, three bars for the list. Swipe flips which one is lit.
+        menu_timer_arc_ = lv_arc_create(dictation_panel_);
+        lv_obj_set_size(menu_timer_arc_, 132, 132);
+        lv_obj_align(menu_timer_arc_, LV_ALIGN_CENTER, 0, -28);
+        lv_arc_set_bg_angles(menu_timer_arc_, 0, 360);
+        lv_arc_set_rotation(menu_timer_arc_, 270);
+        lv_arc_set_range(menu_timer_arc_, 0, 1000);
+        lv_arc_set_value(menu_timer_arc_, 720);
+        lv_obj_remove_style(menu_timer_arc_, nullptr, LV_PART_KNOB);
+        lv_obj_remove_flag(menu_timer_arc_, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_arc_width(menu_timer_arc_, 10, LV_PART_MAIN);
+        lv_obj_set_style_arc_width(menu_timer_arc_, 10, LV_PART_INDICATOR);
+        lv_obj_set_style_arc_color(menu_timer_arc_, lv_color_hex(0x2A261C), LV_PART_MAIN);
+        lv_obj_set_style_arc_color(menu_timer_arc_, lv_color_hex(kColorGold), LV_PART_INDICATOR);
+        SetVisible(menu_timer_arc_, false);
+        for (int index = 0; index < 3; ++index) {
+            auto* bar = lv_obj_create(dictation_panel_);
+            lv_obj_remove_style_all(bar);
+            lv_obj_set_size(bar, 96, 10);
+            lv_obj_set_style_radius(bar, 5, 0);
+            lv_obj_set_style_bg_color(bar, lv_color_hex(OrbitCrest::kIvory), 0);
+            lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
+            lv_obj_align(bar, LV_ALIGN_CENTER, 0, -52 + index * 22);
+            lv_obj_remove_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_remove_flag(bar, LV_OBJ_FLAG_CLICKABLE);
+            menu_list_bars_[index] = bar;
+            SetVisible(bar, false);
+        }
+        menu_note_card_ = lv_obj_create(dictation_panel_);
+        lv_obj_remove_style_all(menu_note_card_);
+        lv_obj_set_size(menu_note_card_, 88, 108);
+        lv_obj_set_style_radius(menu_note_card_, 8, 0);
+        lv_obj_set_style_bg_color(menu_note_card_, lv_color_hex(OrbitCrest::kIvory), 0);
+        lv_obj_set_style_bg_opa(menu_note_card_, LV_OPA_COVER, 0);
+        lv_obj_align(menu_note_card_, LV_ALIGN_CENTER, 0, -28);
+        lv_obj_remove_flag(menu_note_card_, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_remove_flag(menu_note_card_, LV_OBJ_FLAG_CLICKABLE);
+        SetVisible(menu_note_card_, false);
+        for (int index = 0; index < 3; ++index) {
+            auto* dot = lv_obj_create(dictation_panel_);
+            lv_obj_remove_style_all(dot);
+            lv_obj_set_size(dot, 8, 8);
+            lv_obj_set_style_radius(dot, 4, 0);
+            lv_obj_set_style_bg_color(dot, lv_color_hex(0x333333), 0);
+            lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+            lv_obj_align(dot, LV_ALIGN_CENTER, (index - 1) * 16, 118);
+            lv_obj_remove_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
+            lv_obj_remove_flag(dot, LV_OBJ_FLAG_CLICKABLE);
+            menu_dots_[index] = dot;
+            SetVisible(dot, false);
+        }
         lv_obj_add_flag(dictation_panel_, LV_OBJ_FLAG_HIDDEN);
 
         crest_animation_timer_ = lv_timer_create(
@@ -648,6 +799,62 @@ private:
         } else {
             lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
         }
+    }
+
+    static void SetLabelText(lv_obj_t* label, std::string* cache, const std::string& text) {
+        if (label == nullptr || cache == nullptr || *cache == text)
+            return;
+        *cache = text;
+        lv_label_set_text(label, text.c_str());
+    }
+
+    // Number-first review: gold RECORDED/SAVING eyebrow, 30pt quantity or
+    // 30pt stacked list. The ring only has 16pt and 30pt.
+    // The gateway still sends one ASCII blob; the split is local paint only.
+    static void SplitDictationReview(const std::string& status, std::string* eyebrow,
+                                     std::string* qty, std::string* item) {
+        eyebrow->clear();
+        qty->clear();
+        item->clear();
+        if (status == "Saving") {
+            *eyebrow = "SAVING";
+            return;
+        }
+        const bool recorded = status.size() >= 8 &&
+                              status.compare(status.size() - 8, 8, "RECORDED") == 0 &&
+                              (status.size() == 8 || status[status.size() - 9] == '\n');
+        const bool retry = status.size() >= 9 &&
+                           status.compare(status.size() - 9, 9, "TRY AGAIN") == 0 &&
+                           (status.size() == 9 || status[status.size() - 10] == '\n');
+        if (!recorded && !retry) {
+            *qty = status;
+            return;
+        }
+        *eyebrow = recorded ? "RECORDED" : "TRY AGAIN";
+        std::string body = status.substr(0, status.size() - (recorded ? 8u : 9u));
+        while (!body.empty() && body.back() == '\n')
+            body.pop_back();
+        if (body.empty() || body == "Recorded")
+            return;
+        const auto nl = body.find('\n');
+        if (nl == std::string::npos) {
+            *qty = body;
+            return;
+        }
+        std::string first = body.substr(0, nl);
+        int spaces = 0;
+        for (char character : first) {
+            if (character == ' ')
+                ++spaces;
+        }
+        const std::string rest = body.substr(nl + 1);
+        const bool rest_starts_qty = !rest.empty() && rest.front() >= '0' && rest.front() <= '9';
+        if (spaces >= 2 || rest_starts_qty || rest.find('\n') != std::string::npos) {
+            *item = body;
+            return;
+        }
+        *qty = std::move(first);
+        *item = rest;
     }
 
     int64_t EffectiveServerNowMs() const {
@@ -772,18 +979,18 @@ private:
             focus = service;
         }
         SetVisible(compact_service_arc_, service != nullptr);
-        SetVisible(compact_service_label_, service != nullptr && !service_only);
+        SetVisible(compact_service_label_, false);
+        std::string service_text;
         if (service != nullptr) {
             lv_arc_set_value(compact_service_arc_, ServiceArcValueLocked(service, now_ms));
             const bool service_due =
                 service->status == ProvisionsTimerSnapshot::TimerStatus::kAttention ||
                 (now_ms > 0 && service->deadline_ms <= now_ms);
-            const std::string service_text =
+            service_text =
                 service_due
                     ? "SERVICE NOW"
                     : "SERVICE  " +
                           ProvisionsStopwatchOrbit::FormatRemaining(service->deadline_ms, now_ms);
-            lv_label_set_text(compact_service_label_, service_text.c_str());
         }
         SetVisible(compact_timer_arc_, !service_only);
 
@@ -823,8 +1030,14 @@ private:
         lv_label_set_text(compact_timer_eyebrow_, service_only ? "SERVICE" : "TIMER");
         lv_obj_set_style_text_color(compact_timer_eyebrow_,
                                     lv_color_hex(service_only ? kOrbitService : kColorGold), 0);
-        lv_label_set_text(compact_timer_hint_, service_only ? "TAP FOR DETAILS"
-                                                            : "TAP FOR ALL TIMERS");
+        if (service != nullptr && !service_only) {
+            lv_label_set_text(compact_timer_hint_, service_text.c_str());
+            lv_obj_set_style_text_color(compact_timer_hint_, lv_color_hex(kOrbitService), 0);
+        } else {
+            lv_label_set_text(compact_timer_hint_, service_only ? "TAP FOR DETAILS"
+                                                                : "TAP FOR ALL TIMERS");
+            lv_obj_set_style_text_color(compact_timer_hint_, lv_color_hex(0x8B877C), 0);
+        }
     }
 
     void SetReplyLayoutLocked(bool visible) {
@@ -861,9 +1074,16 @@ private:
         }
         SetVisible(crest_layer_, (show_normal || show_reply) && !show_compact_timer);
         SetVisible(compact_timer_layer_, show_compact_timer);
-        SetVisible(dictation_panel_, dictation_visible_ && !receipt_visible_.load());
+        SetVisible(dictation_panel_, dictation_visible_ && dictation_review_);
         SetVisible(orbit_layer_, show_orbit);
         SetVisible(alarm_layer_, show_alarm);
+        SetVisible(hold_hint_, hold_hint_wanted_ && display_awake && !show_alarm && !orbit_locked_ui_);
+        SetVisible(standby_layer_, !display_awake && !orbit_locked_ui_);
+        // The lock covers every face except a ringing timer, which still has
+        // to be readable and tappable.
+        SetVisible(lock_layer_, orbit_locked_ui_ && !show_alarm);
+        if (orbit_locked_ui_ && !show_alarm && lock_layer_ != nullptr)
+            lv_obj_move_foreground(lock_layer_);
     }
 
     AlarmOutputChange RefreshOrbitLocked() {
@@ -1034,9 +1254,7 @@ private:
                 lv_label_set_text(alarm_names_label_, names.c_str());
             }
             if (alarm_hint_label_ != nullptr) {
-                lv_label_set_text(alarm_hint_label_, timer_alarm_state_.silenced()
-                                                         ? "TAP TO STOP\nBLUE CLEARS"
-                                                         : "TAP TO STOP\nBLUE SILENCES");
+                lv_label_set_text(alarm_hint_label_, "TAP TO STOP\nBLUE STOPS");
             }
         }
         SetReplyLayoutLocked(reply_visible_.load());
@@ -1057,10 +1275,18 @@ private:
     }
 
     void ApplyAlarmOutputChange(AlarmOutputChange change) {
-        if (alarm_output_paused_ && change == AlarmOutputChange::kStart) {
+        if (timer_alarm_output_callback_ == nullptr) {
             return;
         }
-        if (timer_alarm_output_callback_ == nullptr || change == AlarmOutputChange::kNone) {
+        if (alarm_output_paused_) {
+            if (change == AlarmOutputChange::kStart) {
+                return;
+            }
+            if (change == AlarmOutputChange::kNone) {
+                return;
+            }
+        }
+        if (change == AlarmOutputChange::kNone) {
             return;
         }
         timer_alarm_output_callback_(change == AlarmOutputChange::kStart);
@@ -1120,10 +1346,168 @@ private:
             return;
         }
         SetVisible(orbit_service_arc_, service != nullptr);
+        shopping_service_value_ = service ? ServiceArcValueLocked(service, now_ms) : -1;
+        SetVisible(shopping_service_arc_, shopping_focus_layout_ && service != nullptr);
         if (service == nullptr) {
             return;
         }
-        lv_arc_set_value(orbit_service_arc_, ServiceArcValueLocked(service, now_ms));
+        lv_arc_set_value(orbit_service_arc_, shopping_service_value_);
+        lv_arc_set_value(shopping_service_arc_, shopping_service_value_);
+    }
+
+    void CreateStandbyUiLocked(lv_obj_t* screen) {
+        standby_layer_ = lv_obj_create(screen);
+        lv_obj_remove_style_all(standby_layer_);
+        lv_obj_set_size(standby_layer_, ProvisionsStopwatchOrbit::kDisplaySize,
+                        ProvisionsStopwatchOrbit::kDisplaySize);
+        lv_obj_center(standby_layer_);
+        lv_obj_set_style_bg_color(standby_layer_, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(standby_layer_, LV_OPA_COVER, 0);
+        lv_obj_remove_flag(standby_layer_, LV_OBJ_FLAG_SCROLLABLE);
+        auto* band = lv_image_create(standby_layer_);
+        lv_image_set_src(band, &OrbitCrest::kBandImage);
+        lv_obj_set_pos(band, OrbitCrest::kBandX, OrbitCrest::kBandY);
+        auto* star = lv_image_create(standby_layer_);
+        lv_image_set_src(star, &OrbitCrest::kStarImage);
+        lv_obj_set_pos(star, OrbitCrest::kStarX, OrbitCrest::kStarY);
+        for (auto* mark : {band, star}) {
+            lv_obj_set_style_image_recolor(mark, lv_color_hex(OrbitCrest::kIvory), 0);
+            lv_obj_set_style_image_recolor_opa(mark, LV_OPA_COVER, 0);
+        }
+        SetVisible(standby_layer_, false);
+    }
+
+    // Talk button sits at 10:15 on the rim. Draw a bold chevron with a shaft
+    // whose tip points at it, in the button's own yellow.
+    static constexpr int kHoldHintPoints = 5;
+    lv_point_precise_t hold_hint_points_[kHoldHintPoints] = {};
+    static constexpr float kHoldHintDx = -0.793F;  // sin(307.5 deg)
+    static constexpr float kHoldHintDy = -0.609F;  // -cos(307.5 deg)
+
+    void CreateHoldHintLocked(lv_obj_t* screen) {
+        const float cx = ProvisionsStopwatchOrbit::kDisplaySize / 2.0F;
+        // About 2 mm above the pure radial line; that is where the button sits.
+        const float cy = cx - 20.0F;
+        const float tip_r = 200.0F;
+        const float px = -kHoldHintDy;  // perpendicular to the pointing direction
+        const float py = kHoldHintDx;
+        const float tx = cx + kHoldHintDx * tip_r;
+        const float ty = cy + kHoldHintDy * tip_r;
+        auto at = [&](float back, float side) {
+            return lv_point_precise_t{
+                static_cast<lv_value_precise_t>(tx - kHoldHintDx * back + px * side),
+                static_cast<lv_value_precise_t>(ty - kHoldHintDy * back + py * side)};
+        };
+        hold_hint_points_[0] = at(70, 0);   // shaft end
+        hold_hint_points_[1] = at(0, 0);    // tip
+        hold_hint_points_[2] = at(32, 24);  // wing
+        hold_hint_points_[3] = at(0, 0);    // tip
+        hold_hint_points_[4] = at(32, -24); // wing
+        hold_hint_ = lv_line_create(screen);
+        lv_obj_remove_style_all(hold_hint_);
+        lv_obj_set_pos(hold_hint_, 0, 0);
+        lv_line_set_points(hold_hint_, hold_hint_points_, kHoldHintPoints);
+        lv_obj_set_style_line_width(hold_hint_, 12, 0);
+        lv_obj_set_style_line_rounded(hold_hint_, true, 0);
+        lv_obj_set_style_line_color(hold_hint_, lv_color_hex(kColorTalkButton), 0);
+        lv_obj_remove_flag(hold_hint_, LV_OBJ_FLAG_CLICKABLE);
+        SetVisible(hold_hint_, false);
+    }
+
+    // Pocket lock. A dim padlock; a ringing timer still paints over it.
+    void CreateLockUiLocked(lv_obj_t* screen) {
+        lock_layer_ = lv_obj_create(screen);
+        lv_obj_remove_style_all(lock_layer_);
+        lv_obj_set_size(lock_layer_, ProvisionsStopwatchOrbit::kDisplaySize,
+                        ProvisionsStopwatchOrbit::kDisplaySize);
+        lv_obj_center(lock_layer_);
+        lv_obj_set_style_bg_color(lock_layer_, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(lock_layer_, LV_OPA_COVER, 0);
+        lv_obj_remove_flag(lock_layer_, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_remove_flag(lock_layer_, LV_OBJ_FLAG_CLICKABLE);
+
+        auto* shackle = lv_arc_create(lock_layer_);
+        lv_obj_set_size(shackle, 52, 52);
+        lv_obj_align(shackle, LV_ALIGN_CENTER, 0, -36);
+        lv_arc_set_bg_angles(shackle, 200, 340);
+        lv_arc_set_value(shackle, 0);
+        lv_obj_remove_style(shackle, nullptr, LV_PART_KNOB);
+        lv_obj_remove_style(shackle, nullptr, LV_PART_INDICATOR);
+        lv_obj_remove_flag(shackle, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_arc_width(shackle, 6, LV_PART_MAIN);
+        lv_obj_set_style_arc_color(shackle, lv_color_hex(OrbitCrest::kIvory), LV_PART_MAIN);
+
+        auto* body = lv_obj_create(lock_layer_);
+        lv_obj_remove_style_all(body);
+        lv_obj_set_size(body, 64, 48);
+        lv_obj_set_style_radius(body, 10, 0);
+        lv_obj_set_style_bg_color(body, lv_color_hex(OrbitCrest::kIvory), 0);
+        lv_obj_set_style_bg_opa(body, LV_OPA_COVER, 0);
+        lv_obj_align(body, LV_ALIGN_CENTER, 0, 8);
+        lv_obj_remove_flag(body, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_remove_flag(body, LV_OBJ_FLAG_CLICKABLE);
+
+        auto* caption = lv_label_create(lock_layer_);
+        lv_obj_set_style_text_font(caption, &font_noto_sans_basic_16_4, 0);
+        lv_obj_set_style_text_color(caption, lv_color_hex(0x8B877C), 0);
+        lv_obj_set_style_text_align(caption, LV_TEXT_ALIGN_CENTER, 0);
+        lv_label_set_text(caption, "Locked");
+        lv_obj_align(caption, LV_ALIGN_CENTER, 0, 56);
+        SetVisible(lock_layer_, false);
+    }
+
+    // "Hold yellow" prompts read from across the galley: 140 % and faux bold.
+    void SetPromptEmphasisLocked(bool on) {
+        if (dictation_status_ == nullptr || dictation_status_bold_ == nullptr)
+            return;
+        const int32_t scale = on ? (LV_SCALE_NONE * 14) / 10 : LV_SCALE_NONE;
+        for (auto* label : {dictation_status_, dictation_status_bold_}) {
+            lv_obj_set_style_transform_pivot_x(label, LV_PCT(50), 0);
+            lv_obj_set_style_transform_pivot_y(label, LV_PCT(50), 0);
+            lv_obj_set_style_transform_scale_x(label, scale, 0);
+            lv_obj_set_style_transform_scale_y(label, scale, 0);
+        }
+        if (on) {
+            lv_obj_update_layout(dictation_status_);
+            lv_obj_set_size(dictation_status_bold_, lv_obj_get_width(dictation_status_),
+                            lv_obj_get_height(dictation_status_));
+            lv_obj_set_style_text_line_space(
+                dictation_status_bold_, lv_obj_get_style_text_line_space(dictation_status_, LV_PART_MAIN), 0);
+            lv_label_set_text(dictation_status_bold_, lv_label_get_text(dictation_status_));
+            lv_obj_align_to(dictation_status_bold_, dictation_status_, LV_ALIGN_CENTER, 0, 0);
+        }
+        SetVisible(dictation_status_bold_, on);
+    }
+
+    void SetHoldHintLocked(bool wanted) {
+        if (hold_hint_ == nullptr)
+            return;
+        if (wanted == hold_hint_wanted_ && wanted == !lv_obj_has_flag(hold_hint_, LV_OBJ_FLAG_HIDDEN))
+            return;
+        hold_hint_wanted_ = wanted;
+        lv_anim_delete(hold_hint_, nullptr);
+        if (!wanted) {
+            SetVisible(hold_hint_, false);
+            return;
+        }
+        lv_obj_set_style_translate_x(hold_hint_, 0, 0);
+        lv_obj_set_style_translate_y(hold_hint_, 0, 0);
+        SetVisible(hold_hint_, true);
+        lv_obj_move_foreground(hold_hint_);
+        lv_anim_t anim;
+        lv_anim_init(&anim);
+        lv_anim_set_var(&anim, hold_hint_);
+        lv_anim_set_values(&anim, 0, 14);
+        lv_anim_set_duration(&anim, 550);
+        lv_anim_set_playback_duration(&anim, 550);
+        lv_anim_set_repeat_count(&anim, LV_ANIM_REPEAT_INFINITE);
+        lv_anim_set_path_cb(&anim, lv_anim_path_ease_in_out);
+        lv_anim_set_exec_cb(&anim, [](void* var, int32_t value) {
+            auto* line = static_cast<lv_obj_t*>(var);
+            lv_obj_set_style_translate_x(line, static_cast<int32_t>(kHoldHintDx * value), 0);
+            lv_obj_set_style_translate_y(line, static_cast<int32_t>(kHoldHintDy * value), 0);
+        });
+        lv_anim_start(&anim);
     }
 
     void CreateOrbitUiLocked(lv_obj_t* screen) {
@@ -1245,7 +1629,7 @@ private:
         lv_obj_set_style_text_color(alarm_hint_label_, lv_color_hex(kColorAmber), 0);
         lv_obj_set_style_text_letter_space(alarm_hint_label_, 2, 0);
         lv_obj_set_style_text_align(alarm_hint_label_, LV_TEXT_ALIGN_CENTER, 0);
-        lv_label_set_text(alarm_hint_label_, "TAP TO STOP\nBLUE SILENCES");
+        lv_label_set_text(alarm_hint_label_, "TAP TO STOP\nBLUE STOPS");
         lv_obj_align(alarm_hint_label_, LV_ALIGN_BOTTOM_MID, 0, -92);
 
         SetVisible(orbit_layer_, false);
@@ -1469,6 +1853,9 @@ private:
             reply_panel_ == nullptr || reply_label_ == nullptr) {
             return;
         }
+        // STT still reports Listening during Saving. Hold yellow must not win.
+        if (dictation_saving_ && state == VisualState::kListening)
+            state = VisualState::kWorking;
         ClearReplyLocked();
         const auto presentation = PresentationFor(state);
         const lv_color_t color = lv_color_hex(presentation.color);
@@ -1849,6 +2236,9 @@ public:
         CreateCrestUiLocked(screen);
         CreateCompactTimerUiLocked(screen);
         CreateOrbitUiLocked(screen);
+        CreateStandbyUiLocked(screen);
+        CreateHoldHintLocked(screen);
+        CreateLockUiLocked(screen);
 #if CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO
         schedule_view_.Create(screen, &font_noto_sans_basic_30_4, &font_noto_sans_basic_16_4);
         schedule_view_.Render(schedule_demo_.model(),
@@ -1994,7 +2384,10 @@ public:
             if (new_timer) {
                 timer_face_until_us_.store(0);
                 new_timer_wake_.store(true);
-                SetReplyLayoutLocked(reply_visible_.load());
+                // The spoken "timer set" hold was covering the dial. Drop it
+                // so the compact timer is what stays on screen.
+                DismissSpokenFaceLocked();
+                SetReplyLayoutLocked(false);
             }
             if (same_galley_session) {
                 ProvisionsStopwatchOrbit::PreserveAttention(previous_timers,
@@ -2022,9 +2415,9 @@ public:
         ApplyAlarmOutputChange(output_change);
     }
 
-    // First blue gesture on a ringing takeover silences it; the next blue
-    // gesture on the silenced takeover dismisses every due timer: the takeover
-    // clears and the motor stops at once, and the gateway is told afterwards.
+    // One blue gesture on a ringing takeover dismisses every due timer: the
+    // takeover clears and the motor stops at once, and the gateway is told
+    // afterwards. A second gesture is then free for retry or dictation.
     bool SilenceTimerAlarm() {
         AlarmOutputChange output_change = AlarmOutputChange::kNone;
         bool dismissed = false;
@@ -2038,19 +2431,8 @@ public:
             if (!timer_alarm_active_.load()) {
                 return false;
             }
-            if (timer_alarm_state_.silenced()) {
-                // Dismissal removes the takeover, so a silenced timer can no
-                // longer consume every later blue gesture and trap retry/dictation.
-                output_change = DismissDueTimersLocked();
-                dismissed = true;
-            } else {
-                output_change = timer_alarm_state_.Silence();
-                if (output_change != AlarmOutputChange::kStop)
-                    return false;
-                if (alarm_hint_label_ != nullptr) {
-                    lv_label_set_text(alarm_hint_label_, "TAP TO STOP\nBLUE CLEARS");
-                }
-            }
+            output_change = DismissDueTimersLocked();
+            dismissed = true;
 #endif
         }
         ApplyAlarmOutputChange(output_change);
@@ -2059,18 +2441,12 @@ public:
         return true;
     }
 
-    // A screen tap is an emergency fallback, not a general timer control: it
-    // dismisses only timers that are already due and driving the alarm takeover.
+    // A screen tap on the alarm takeover is the same dismissal as blue.
     bool DismissRingingTimers() {
         AlarmOutputChange output_change = AlarmOutputChange::kNone;
         {
             DisplayLockGuard lock(this);
             if (!timer_alarm_active_.load()) {
-                return false;
-            }
-            const auto due = ProvisionsStopwatchOrbit::FinishedTimers(
-                timer_snapshot_.timers, EffectiveServerNowMs());
-            if (due.empty()) {
                 return false;
             }
             output_change = DismissDueTimersLocked();
@@ -2147,6 +2523,21 @@ public:
         return true;
     }
 
+    bool TimerFaceShowing() const { return TimerFaceForced(); }
+
+    void ShowTimerFace() {
+        AlarmOutputChange output_change;
+        {
+            DisplayLockGuard lock(this);
+            DismissSpokenFaceLocked();
+            HideOrbitMenuLocked();
+            timer_face_until_us_.store(esp_timer_get_time() + kTimerFaceIdleUs);
+            output_change = RefreshOrbitLocked();
+            SetReplyLayoutLocked(reply_visible_.load());
+        }
+        ApplyAlarmOutputChange(output_change);
+    }
+
     // Talk+blue chord (Application task): show the timer dial even with no
     // timers, so a spoken timer command can follow; a second chord or 30 s idle
     // returns to the normal face. Recording is unaffected by the face.
@@ -2175,6 +2566,12 @@ public:
             std::strcmp(role, "assistant") != 0) {
             return;
         }
+        // A list, a menu, the timer dial, or a running timer already owns the
+        // glass. The sentence still plays; it must not stick on the screen.
+        if (shopping_focus_layout_ || menu_layout_ || TimerFaceForced() || crest_timer_active_ ||
+            orbit_locked_ui_) {
+            return;
+        }
 
         CancelVisualReset();
         if (notification_timer_ != nullptr) {
@@ -2190,10 +2587,18 @@ public:
                 return;
             }
             // No transcript text is retained or rendered; the watch face
-            // acknowledges only that a reply arrived.
+            // acknowledges only that a reply arrived. Keep the Working/Speaking
+            // ring on screen until status returns to Ready, then show the
+            // sparse result caption.
             crest_reply_received_ = true;
             crest_reply_started_ms_ = CrestNowMs();
-            SetCrestResultLocked("Reply received", kReplyPlaybackMaximumMs);
+            if (crest_state_ == OrbitCrest::State::Listening ||
+                crest_state_ == OrbitCrest::State::Thinking ||
+                crest_state_ == OrbitCrest::State::Speaking) {
+                crest_result_caption_ = "Reply received";
+            } else {
+                SetCrestResultLocked("Reply received", kReplyPlaybackMaximumMs);
+            }
             SetReplyLayoutLocked(true);
         }
         if (!ScheduleVisualReset(kReplyPlaybackMaximumMs)) {
@@ -2213,12 +2618,17 @@ public:
         }
         lv_obj_t* chrome[] = {top_bar_,     brand_label_, title_label_, brand_rule_,
                               hero_halo_,   status_bar_,  hint_panel_,  reply_header_label_,
-                              reply_panel_, crest_layer_, orbit_layer_, alarm_layer_};
+                              reply_panel_, crest_layer_, orbit_layer_, alarm_layer_,
+                              hold_hint_,   lock_layer_};
         for (auto* object : chrome) {
             if (object != nullptr) {
                 lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
             }
         }
+        // Standby shows the crest alone; nothing else is drawn under it.
+        SetVisible(standby_layer_, on);
+        if (on && standby_layer_ != nullptr)
+            lv_obj_move_foreground(standby_layer_);
         if (!on) {
             if (top_bar_ != nullptr) {
                 lv_obj_remove_flag(top_bar_, LV_OBJ_FLAG_HIDDEN);
@@ -2237,9 +2647,39 @@ public:
         }
         const VisualState state = StateForStatus(status);
         resting_state_.store(state);
-        if (receipt_visible_.load() && state != VisualState::kListening &&
-            state != VisualState::kConnecting && state != VisualState::kUnavailable) {
+        // Hold-to-talk stages always own the face so Listening → Working →
+        // Speaking stays readable while a reply is in flight. Receipts wait
+        // until the spoken turn ends.
+        if (state == VisualState::kListening || state == VisualState::kWorking ||
+            state == VisualState::kSpeaking) {
+            if (state == VisualState::kListening) {
+                receipt_visible_.store(false);
+            }
+            CancelVisualReset();
+            if (notification_timer_ != nullptr) {
+                esp_timer_stop(notification_timer_);
+            }
+            ApplyVisualState(state);
+            return;
+        }
+        if (receipt_visible_.load() &&
+            (shopping_focus_layout_ || menu_layout_ || TimerFaceForced() || crest_timer_active_ ||
+             orbit_locked_ui_)) {
+            DisplayLockGuard lock(this);
+            DismissSpokenFaceLocked();
+            if (shopping_focus_layout_ || menu_layout_ || TimerFaceForced() || orbit_locked_ui_)
+                return;
+        }
+        if (receipt_visible_.load() && state != VisualState::kConnecting &&
+            state != VisualState::kUnavailable) {
             if (reply_visible_.load() && state == VisualState::kReady) {
+                {
+                    DisplayLockGuard lock(this);
+                    if (crest_result_caption_[0] &&
+                        crest_state_ != OrbitCrest::State::Result) {
+                        SetCrestResultLocked(crest_result_caption_, kReplyHoldAfterSpeechMs);
+                    }
+                }
                 RestartReplyFromTop();
                 if (!ScheduleVisualReset(kReplyHoldAfterSpeechMs)) {
                     receipt_visible_.store(false);
@@ -2324,18 +2764,261 @@ public:
         DisplayLockGuard lock(this);
         if (dictation_panel_ == nullptr)
             return;
+        (void)action;
+        shopping_focus_layout_ = false;
+        HideOrbitMenuLocked();
+        lv_obj_set_style_bg_opa(dictation_panel_, LV_OPA_COVER, 0);
+        SetVisible(shopping_service_arc_, false);
+        SetVisible(crest_caption_, true);
+        SetVisible(crest_band_, true);
+        SetVisible(crest_star_, true);
+        for (auto* ring : crest_rings_)
+            SetVisible(ring, true);
+        if (crest_animation_timer_)
+            lv_timer_resume(crest_animation_timer_);
         dictation_visible_ = visible;
-        SetVisible(dictation_panel_, visible);
-        if (dictation_status_text_ != status) {
-            dictation_status_text_ = status;
-            lv_label_set_text(dictation_status_, status.c_str());
+        dictation_saving_ = visible && status == "Saving";
+        const bool recording = status == "Recording" || status.rfind("Recording\n", 0) == 0;
+        const bool recorded = status.size() >= 8 &&
+                              status.compare(status.size() - 8, 8, "RECORDED") == 0 &&
+                              (status.size() == 8 || status[status.size() - 9] == '\n');
+        const bool retry = status.size() >= 9 &&
+                           status.compare(status.size() - 9, 9, "TRY AGAIN") == 0 &&
+                           (status.size() == 9 || status[status.size() - 10] == '\n');
+        std::string eyebrow;
+        std::string qty;
+        std::string item;
+        if (visible && (recorded || retry))
+            SplitDictationReview(status, &eyebrow, &qty, &item);
+        std::string body = item;
+        if (body.empty())
+            body = qty;
+        else if (!qty.empty())
+            body = qty + "\n" + item;
+        if (body.empty() && visible && (recorded || retry)) {
+            body = status.substr(0, status.size() - (recorded ? 8u : 9u));
+            while (!body.empty() && body.back() == '\n')
+                body.pop_back();
         }
-        if (dictation_action_text_ != action) {
-            dictation_action_text_ = action;
-            const std::string label = "Blue: " + action;
-            lv_label_set_text(dictation_action_, label.c_str());
+        if (body.empty() && visible && !dictation_saving_ && !recording) {
+            body = status;
+        }
+        dictation_review_ = visible && !dictation_saving_ && !recording && !body.empty();
+        SetHoldHintLocked(dictation_review_ && status.rfind("Hold yellow", 0) == 0);
+        SetVisible(dictation_panel_, dictation_review_);
+        if (dictation_review_)
+            lv_obj_move_foreground(dictation_panel_);
+        if (dictation_saving_)
+            ApplyVisualStateLocked(VisualState::kWorking);
+        SetVisible(dictation_title_, false);
+        SetVisible(dictation_action_, false);
+        SetVisible(dictation_help_, false);
+        SetVisible(dictation_eyebrow_, false);
+        SetVisible(dictation_item_, false);
+        if (dictation_review_) {
+            lv_obj_set_size(dictation_status_, 310, 220);
+            lv_obj_align(dictation_status_, LV_ALIGN_CENTER, 0, 16);
+            lv_obj_set_style_text_font(dictation_status_, &font_noto_sans_basic_30_4, 0);
+            lv_obj_set_style_text_line_space(dictation_status_, 2, 0);
+            lv_obj_set_style_text_letter_space(dictation_status_, 0, 0);
+            lv_obj_set_style_text_color(dictation_status_, lv_color_hex(OrbitCrest::kIvory), 0);
+            lv_label_set_long_mode(dictation_status_, LV_LABEL_LONG_WRAP);
+            lv_obj_set_style_transform_scale_x(dictation_status_, LV_SCALE_NONE, 0);
+            lv_obj_set_style_transform_scale_y(dictation_status_, LV_SCALE_NONE, 0);
+            SetVisible(dictation_status_, true);
+            SetLabelText(dictation_eyebrow_, &dictation_eyebrow_text_, "");
+            SetLabelText(dictation_status_, &dictation_status_text_, body);
+            SetLabelText(dictation_item_, &dictation_item_text_, "");
+        } else {
+            SetVisible(dictation_status_, false);
+            SetLabelText(dictation_eyebrow_, &dictation_eyebrow_text_, "");
+            SetLabelText(dictation_status_, &dictation_status_text_, "");
+            SetLabelText(dictation_item_, &dictation_item_text_, "");
+        }
+        SetPromptEmphasisLocked(dictation_review_ && status.rfind("Hold yellow", 0) == 0);
+        SetReplyLayoutLocked(false);
+    }
+
+    void ShowShoppingFocus(const std::string& above, const std::string& focus,
+                           const std::string& below) {
+        if (dictation_panel_ == nullptr)
+            return;
+        if (shopping_focus_layout_ && dictation_eyebrow_text_ == above &&
+            dictation_status_text_ == focus && dictation_item_text_ == below)
+            return;
+        // Never park the main loop behind a starved LVGL task; the next
+        // paint carries the same list.
+        if (!Lock(400)) {
+            ESP_LOGW(TAG, "shopping paint skipped: display busy");
+            return;
+        }
+        struct Release {
+            RoundLcdDisplay* self;
+            ~Release() { self->Unlock(); }
+        } release{this};
+        DismissSpokenFaceLocked();
+        HideOrbitMenuLocked();
+        const bool already = shopping_focus_layout_;
+        shopping_focus_layout_ = true;
+        dictation_visible_ = true;
+        dictation_saving_ = false;
+        dictation_review_ = true;
+        if (!already) {
+            lv_obj_set_style_bg_opa(dictation_panel_, LV_OPA_TRANSP, 0);
+            SetVisible(crest_caption_, false);
+            SetVisible(crest_band_, false);
+            SetVisible(crest_star_, false);
+            for (auto* ring : crest_rings_)
+                SetVisible(ring, false);
+            if (crest_animation_timer_)
+                lv_timer_pause(crest_animation_timer_);
+            // Service countdown sits behind the list, timer-face size.
+            if (shopping_service_value_ >= 0)
+                lv_arc_set_value(shopping_service_arc_, shopping_service_value_);
+            SetVisible(shopping_service_arc_, shopping_service_value_ >= 0);
+            SetVisible(dictation_panel_, true);
+            lv_obj_move_foreground(dictation_panel_);
+            SetVisible(dictation_title_, false);
+            SetVisible(dictation_action_, false);
+            SetVisible(dictation_help_, false);
+            lv_obj_set_style_text_letter_space(dictation_eyebrow_, 0, 0);
+            lv_obj_set_style_text_color(dictation_eyebrow_, lv_color_hex(0xcbd5e1), 0);
+            lv_obj_set_style_text_font(dictation_eyebrow_, &font_noto_sans_basic_30_4, 0);
+            lv_obj_set_style_text_align(dictation_eyebrow_, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_set_style_text_line_space(dictation_eyebrow_, 1, 0);
+            lv_label_set_long_mode(dictation_eyebrow_, LV_LABEL_LONG_CLIP);
+            lv_obj_set_style_text_font(dictation_status_, &font_noto_sans_basic_30_4, 0);
+            lv_obj_set_style_text_align(dictation_status_, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_set_style_text_line_space(dictation_status_, 1, 0);
+            lv_obj_set_style_text_letter_space(dictation_status_, 0, 0);
+            lv_obj_set_style_text_color(dictation_status_, lv_color_hex(OrbitCrest::kIvory), 0);
+            lv_label_set_long_mode(dictation_status_, LV_LABEL_LONG_CLIP);
+            SetVisible(dictation_status_, true);
+            lv_obj_set_style_text_font(dictation_item_, &font_noto_sans_basic_16_4, 0);
+            lv_obj_set_style_text_color(dictation_item_, lv_color_hex(0xcbd5e1), 0);
+            lv_obj_set_style_text_align(dictation_item_, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_set_style_text_line_space(dictation_item_, 1, 0);
+            lv_label_set_long_mode(dictation_item_, LV_LABEL_LONG_CLIP);
+        }
+        auto lines = [](const std::string& text) {
+            if (text.empty())
+                return 0;
+            int count = 1;
+            for (char character : text) {
+                if (character == '\n')
+                    ++count;
+            }
+            return count;
+        };
+        const int above_n = lines(above);
+        const int focus_n = lines(focus);
+        const int below_n = lines(below);
+        const int row = 36;
+        const int above_h = above_n * row;
+        const int focus_h = std::max(focus_n, 1) * row;
+        const int below_h = below_n * row;
+        const int gap = above_n && focus_n ? 6 : 0;
+        const int gap2 = focus_n && below_n ? 4 : 0;
+        const int total = above_h + gap + focus_h + gap2 + below_h;
+        const int top = -total / 2;
+        lv_obj_set_size(dictation_eyebrow_, 340, above_h > 0 ? above_h : row);
+        lv_obj_align(dictation_eyebrow_, LV_ALIGN_CENTER, 0, top + above_h / 2);
+        lv_obj_set_size(dictation_status_, 340, focus_h);
+        lv_obj_align(dictation_status_, LV_ALIGN_CENTER, 0, top + above_h + gap + focus_h / 2);
+        lv_obj_set_size(dictation_item_, 320, below_h > 0 ? below_h : row);
+        lv_obj_align(dictation_item_, LV_ALIGN_CENTER, 0,
+                     top + above_h + gap + focus_h + gap2 + below_h / 2);
+        SetVisible(dictation_eyebrow_, !above.empty());
+        SetVisible(dictation_item_, !below.empty());
+        lv_obj_set_style_text_opa(dictation_eyebrow_, LV_OPA_70, 0);
+        lv_obj_set_style_text_opa(dictation_status_, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_opa(dictation_item_, LV_OPA_40, 0);
+        SetLabelText(dictation_eyebrow_, &dictation_eyebrow_text_, above);
+        SetLabelText(dictation_status_, &dictation_status_text_, focus);
+        SetLabelText(dictation_item_, &dictation_item_text_, below);
+        // Empty list: one quiet line, not the galley-sized prompt.
+        const bool prompt = above.empty() && focus == "hold to add";
+        lv_obj_set_style_text_font(dictation_status_,
+                                   prompt ? &font_noto_sans_basic_16_4
+                                          : &font_noto_sans_basic_30_4,
+                                   0);
+        lv_obj_set_style_text_color(dictation_status_,
+                                    lv_color_hex(prompt ? 0x8B877C : OrbitCrest::kIvory), 0);
+        SetPromptEmphasisLocked(false);
+        SetHoldHintLocked(prompt);
+        if (!already)
+            SetReplyLayoutLocked(false);
+    }
+
+    // Blue opens this. Sideways swipe flips the logo; yellow confirms.
+    void ShowOrbitMenu(uint8_t page) {
+        if (dictation_panel_ == nullptr || menu_timer_arc_ == nullptr)
+            return;
+        if (!Lock(400)) {
+            ESP_LOGW(TAG, "menu paint skipped: display busy");
+            return;
+        }
+        struct Release {
+            RoundLcdDisplay* self;
+            ~Release() { self->Unlock(); }
+        } release{this};
+        DismissSpokenFaceLocked();
+        shopping_focus_layout_ = false;
+        menu_layout_ = true;
+        dictation_visible_ = true;
+        dictation_saving_ = false;
+        dictation_review_ = true;
+        lv_obj_set_style_bg_opa(dictation_panel_, LV_OPA_COVER, 0);
+        SetVisible(crest_caption_, false);
+        SetVisible(crest_band_, false);
+        SetVisible(crest_star_, false);
+        for (auto* ring : crest_rings_)
+            SetVisible(ring, false);
+        if (crest_animation_timer_)
+            lv_timer_pause(crest_animation_timer_);
+        SetVisible(shopping_service_arc_, false);
+        SetVisible(dictation_panel_, true);
+        lv_obj_move_foreground(dictation_panel_);
+        SetVisible(dictation_title_, false);
+        SetVisible(dictation_action_, false);
+        SetVisible(dictation_help_, false);
+        SetVisible(dictation_eyebrow_, false);
+        SetVisible(dictation_status_, false);
+        SetVisible(dictation_status_bold_, false);
+        SetPromptEmphasisLocked(false);
+        SetHoldHintLocked(false);
+        const bool shopping = page == 0;
+        const bool notes = page == 2;
+        SetVisible(menu_timer_arc_, page == 1);
+        for (auto* bar : menu_list_bars_)
+            SetVisible(bar, shopping);
+        SetVisible(menu_note_card_, notes);
+        lv_obj_set_style_text_font(dictation_item_, &font_noto_sans_basic_16_4, 0);
+        lv_obj_set_style_text_color(dictation_item_, lv_color_hex(0x8B877C), 0);
+        lv_obj_set_style_text_align(dictation_item_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_size(dictation_item_, 200, 28);
+        lv_obj_align(dictation_item_, LV_ALIGN_CENTER, 0, 78);
+        lv_label_set_text(dictation_item_, notes ? "Notes" : shopping ? "List" : "Timers");
+        SetVisible(dictation_item_, true);
+        for (int index = 0; index < 3; ++index) {
+            lv_obj_set_style_bg_color(menu_dots_[index],
+                                      lv_color_hex(index == page ? kColorGold : 0x333333), 0);
+            SetVisible(menu_dots_[index], true);
         }
         SetReplyLayoutLocked(false);
+    }
+
+    void SetOrbitLocked(bool locked) {
+        DisplayLockGuard lock(this);
+        orbit_locked_ui_ = locked;
+        if (locked)
+            DismissSpokenFaceLocked();
+        SetReplyLayoutLocked(reply_visible_.load());
+    }
+
+    void DismissSpokenFace() {
+        DisplayLockGuard lock(this);
+        DismissSpokenFaceLocked();
     }
 
     void ClearChatMessages() override {}
@@ -2388,15 +3071,29 @@ private:
     ProvisionsStopWatch::ButtonChord chord_;
     std::function<void()> chord_talk_start_;
     esp_timer_handle_t chord_timer_ = nullptr;
+    esp_timer_handle_t lock_timer_ = nullptr;
+    // Pocket lock. Single presses and swipes do nothing until both buttons
+    // are held together again. A ringing timer can still be dismissed.
+    std::atomic<bool> orbit_locked_{false};
+    static constexpr int64_t kLockHoldUs = 600 * 1000;
     RoundLcdDisplay* display_;
     StopwatchBacklight* backlight_;
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     esp_timer_handle_t display_idle_timer_ = nullptr;
     esp_timer_handle_t capture_haptic_timer_ = nullptr;
+    // Local alarm ring: vibrate and the 0.4 s exclamation take turns so the
+    // motor does not bury the speaker. Phase 0 is motor; odd phases play.
+    esp_timer_handle_t alarm_chime_timer_ = nullptr;
+    std::atomic<bool> alarm_chime_on_{false};
+    std::atomic<uint8_t> alarm_phase_{0};
     StopwatchCst820Touch touch_;
     TaskHandle_t touch_task_ = nullptr;
     std::atomic<bool> touch_dismiss_queued_{false};
     bool touch_was_pressed_ = false;
+    uint16_t touch_down_x_ = 0;
+    uint16_t touch_down_y_ = 0;
+    bool touch_swiped_ = false;
+    bool touch_alarm_press_ = false;
     std::atomic<int64_t> display_idle_deadline_us_{0};
     provisions::LocalCapturePulse capture_haptic_pulse_;
     bool display_dimmed_ = false;
@@ -2463,7 +3160,7 @@ private:
         }
         auto& audio = Application::GetInstance().GetAudioService();
         orbit::service_schedule::AlarmOutputHooks hooks{
-            [&audio]() { return audio.PlayLocalFeedback(Lang::Sounds::OGG_EXCLAMATION); },
+            [&audio]() { return audio.PlayLocalFeedback(provisions::feedback::kAlarm); },
             [&audio]() { audio.CancelLocalFeedback(); },
             [&audio]() { return audio.IsPlaybackIdle(); },
             [&audio]() { return audio.LocalFeedbackErrors(); },
@@ -2524,17 +3221,78 @@ private:
                 auto* self = static_cast<M5StackStopwatchBoard*>(arg);
                 while (true) {
                     bool pressed = false;
-                    if (self->touch_.ReadPressed(pressed)) {
-                        if (pressed && !self->touch_was_pressed_ &&
+                    uint16_t x = 0;
+                    uint16_t y = 0;
+                    if (self->touch_.ReadTouch(pressed, x, y)) {
+                        const bool alarm = self->display_->HasTimerAlarm();
+                        // Locked glass ignores the thumb. A ringing timer still
+                        // stops on contact, below.
+                        if (self->orbit_locked_.load() && !alarm) {
+                            self->touch_was_pressed_ = pressed;
+                            vTaskDelay(pdMS_TO_TICKS(20));
+                            continue;
+                        }
+                        const bool shopping =
+                            Application::GetInstance().IsOrbitShoppingFace() && !alarm;
+                        const bool notes =
+                            Application::GetInstance().IsOrbitNotesFace() && !alarm;
+                        const bool menu = Application::GetInstance().IsOrbitMenuFace();
+                        if (pressed && !self->touch_was_pressed_) {
+                            self->touch_down_x_ = x;
+                            self->touch_down_y_ = y;
+                            self->touch_swiped_ = false;
+                            self->touch_alarm_press_ = alarm;
+                            // A ringing timer stops on the first contact, swipe or
+                            // not; nothing else may wait for the finger to lift.
+                            if (alarm && !self->touch_dismiss_queued_.exchange(true)) {
+                                Application::GetInstance().Schedule([self]() {
+                                    self->touch_dismiss_queued_.store(false);
+                                    if (self->display_->DismissRingingTimers()) {
+                                        Application::GetInstance().AbortAlarmListening();
+                                        self->ResetDisplayIdleTimer();
+                                    }
+                                });
+                            }
+                        }
+                        if (pressed && !self->touch_swiped_) {
+                            // One gesture per press, decided by the dominant axis
+                            // once the thumb has travelled 40px. Sideways swaps the
+                            // face (shopping list <-> timer dial); up/down pages the
+                            // shopping list, finger moving down pulling older items.
+                            const int dx = static_cast<int>(x) -
+                                           static_cast<int>(self->touch_down_x_);
+                            const int dy = static_cast<int>(y) -
+                                           static_cast<int>(self->touch_down_y_);
+                            const int ax = dx < 0 ? -dx : dx;
+                            const int ay = dy < 0 ? -dy : dy;
+                            if (ax >= 40 || ay >= 40) {
+                                self->touch_swiped_ = true;
+                                if (ax > ay) {
+                                    if (!self->touch_alarm_press_) {
+                                        ESP_LOGI(TAG, "face swipe: x %u -> %u travel %d",
+                                                 self->touch_down_x_, x, dx);
+                                        Application::GetInstance().HandleOrbitFaceSwipe(dx > 0);
+                                        self->ResetDisplayIdleTimer();
+                                    }
+                                } else if (shopping || notes) {
+                                    ESP_LOGI(TAG, "list swipe: y %u -> %u travel %d",
+                                             self->touch_down_y_, y, dy);
+                                    Application::GetInstance().HandleShoppingSwipe(dy > 0);
+                                    self->ResetDisplayIdleTimer();
+                                }
+                            }
+                        }
+                        // A tap (lift without a swipe) on the timer side toggles the
+                        // six-timer overview. On release, so a swipe is never also a
+                        // tap; a press that stopped a ring is spent.
+                        if (!pressed && self->touch_was_pressed_ && !self->touch_swiped_ &&
+                            !shopping && !notes && !menu && !self->touch_alarm_press_ &&
                             !self->touch_dismiss_queued_.exchange(true)) {
                             Application::GetInstance().Schedule([self]() {
                                 self->touch_dismiss_queued_.store(false);
-                                const bool handled = self->display_->HasTimerAlarm()
-                                                         ? self->display_->DismissRingingTimers()
-                                                         : self->display_->ToggleTimerFocus();
-                                if (handled) {
+                                if (!self->display_->HasTimerAlarm() &&
+                                    self->display_->ToggleTimerFocus())
                                     self->ResetDisplayIdleTimer();
-                                }
                             });
                         }
                         self->touch_was_pressed_ = pressed;
@@ -2689,6 +3447,49 @@ private:
         };
         if (esp_timer_create(&args, &chord_timer_) != ESP_OK)
             chord_timer_ = nullptr;
+
+        esp_timer_create_args_t lock_args = {
+            .callback = [](void* arg) {
+                auto* self = static_cast<M5StackStopwatchBoard*>(arg);
+                bool held = false;
+                {
+                    std::lock_guard<std::mutex> lock(self->chord_mutex_);
+                    held = self->chord_.BothHeld();
+                }
+                if (held)
+                    self->ToggleOrbitLock();
+            },
+            .arg = this,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "stopwatch_lock_hold",
+            .skip_unhandled_events = true,
+        };
+        if (esp_timer_create(&lock_args, &lock_timer_) != ESP_OK)
+            lock_timer_ = nullptr;
+    }
+
+    void CancelLockHold() {
+        if (lock_timer_ != nullptr)
+            esp_timer_stop(lock_timer_);
+    }
+
+    void ToggleOrbitLock() {
+        const bool locked = !orbit_locked_.load();
+        orbit_locked_.store(locked);
+        ESP_LOGI(TAG, "orbit lock %s", locked ? "on" : "off");
+        Application::GetInstance().Schedule([this, locked]() {
+            if (display_dimmed_) {
+                display_dimmed_ = false;
+                display_->SetPowerSaveMode(false);
+            }
+            display_->SetOrbitLocked(locked);
+            if (locked) {
+                GetBacklight()->SetBrightness(8, false);
+                return;
+            }
+            GetBacklight()->RestoreBrightness();
+            ResetDisplayIdleTimer();
+        });
     }
 
     // Talk down: hold the start for the chord window so Talk+blue never opens
@@ -2728,8 +3529,16 @@ private:
     bool TalkReleased() {
         if (chord_timer_ != nullptr)
             esp_timer_stop(chord_timer_);
+        CancelLockHold();
         std::lock_guard<std::mutex> lock(chord_mutex_);
         return chord_.TalkUp();
+    }
+
+    // True when that release was a click inside the chord window: no capture
+    // started, so the yellow tap confirms the menu instead.
+    bool TalkClicked() {
+        std::lock_guard<std::mutex> lock(chord_mutex_);
+        return chord_.TakeTalkClick();
     }
 
     void BluePressed() {
@@ -2746,6 +3555,7 @@ private:
     }
 
     void BlueReleased() {
+        CancelLockHold();
         std::lock_guard<std::mutex> lock(chord_mutex_);
         chord_.BlueUp();
     }
@@ -2755,9 +3565,16 @@ private:
         return chord_.SwallowBlueGesture();
     }
 
+    // Both buttons are down. The lock commits only if they are still down
+    // kLockHoldUs later; a quick chord does not change the face.
     void OnButtonChord() {
-        ResetDisplayIdleTimer();
-        Application::GetInstance().Schedule([this]() { display_->ToggleTimerFace(); });
+        if (lock_timer_ == nullptr) {
+            ToggleOrbitLock();
+            return;
+        }
+        esp_timer_stop(lock_timer_);
+        if (esp_timer_start_once(lock_timer_, kLockHoldUs) != ESP_OK)
+            ESP_LOGW(TAG, "lock hold timer did not start");
     }
 
     void InitializeButtons() {
@@ -2776,14 +3593,36 @@ private:
         });
 #else
         // Talk and blue together (within ButtonChord::kWindowUs, either order)
-        // toggle the timer face and fire neither single-button action.
+        // is the pocket lock, once they have been held. Neither single-button
+        // action fires for that press.
         button1_.OnPressDown([this]() {
+            if (orbit_locked_.load()) {
+                // Chord tracking only: no wake, no microphone.
+                ArmTalkStart([]() {});
+                return;
+            }
             ResetDisplayIdleTimer();
-            ArmTalkStart([]() { Application::GetInstance().StartListening(); });
+            ArmTalkStart([]() {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                if (Application::GetInstance().ConfirmOrbitMenu())
+                    return;
+#endif
+                Application::GetInstance().StartListening();
+            });
         });
         button1_.OnPressUp([this]() {
-            if (TalkReleased())
-                Application::GetInstance().StopListening();
+            if (TalkReleased()) {
+                if (!orbit_locked_.load())
+                    Application::GetInstance().StopListening();
+                return;
+            }
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+            // A tap shorter than the 150 ms window used to do nothing, so the
+            // menu only confirmed on a deliberate hold. Confirm on the click;
+            // the microphone stays closed (the return value is not consulted).
+            if (!orbit_locked_.load() && TalkClicked())
+                Application::GetInstance().ConfirmOrbitMenu();
+#endif
         });
         button2_.OnPressDown([this]() { BluePressed(); });
         button2_.OnPressUp([this]() { BlueReleased(); });
@@ -2794,19 +3633,29 @@ private:
         button2_.OnDoubleClick([this]() {
             if (BlueGestureInChord())
                 return;
-            ResetDisplayIdleTimer();
+            if (!orbit_locked_.load())
+                ResetDisplayIdleTimer();
             Application::GetInstance().Schedule([this]() {
-                if (display_->SilenceTimerAlarm())
+                if (display_->SilenceTimerAlarm()) {
+                    Application::GetInstance().AbortAlarmListening();
                     return;
-                Application::GetInstance().ToggleDictationScreen();
+                }
+                if (orbit_locked_.load())
+                    return;
+                Application::GetInstance().HandleOrbitMenuBlue();
             });
         });
         button2_.OnLongPress([this]() {
             if (BlueGestureInChord())
                 return;
-            ResetDisplayIdleTimer();
+            if (!orbit_locked_.load())
+                ResetDisplayIdleTimer();
             Application::GetInstance().Schedule([this]() {
-                if (display_->SilenceTimerAlarm())
+                if (display_->SilenceTimerAlarm()) {
+                    Application::GetInstance().AbortAlarmListening();
+                    return;
+                }
+                if (orbit_locked_.load())
                     return;
                 auto& app = Application::GetInstance();
                 if (!app.IsDictationScreen())
@@ -2815,25 +3664,27 @@ private:
         });
 #endif
 
-        // Keep the second button useful without adding a menu or allowing an
-        // accidental mute. It toggles only between the pilot floor and max.
+        // Blue opens or returns to the menu, then advances the highlight.
+        // Yellow confirms. Volume stays on the codec; this is navigation.
         button2_.OnClick([this]() {
             if (BlueGestureInChord())
                 return;
-            ResetDisplayIdleTimer();
+            if (!orbit_locked_.load())
+                ResetDisplayIdleTimer();
             Application::GetInstance().Schedule([this]() {
                 if (display_->SilenceTimerAlarm()) {
+                    Application::GetInstance().AbortAlarmListening();
                     return;
                 }
+                if (orbit_locked_.load())
+                    return;
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
-                if (Application::GetInstance().IsDictationScreen()) {
-                    Application::GetInstance().DictationButton();
-                    return;
-                }
-#endif
+                Application::GetInstance().HandleOrbitMenuBlue();
+#else
                 auto* codec = GetAudioCodec();
                 const bool maximum = codec->output_volume() >= kMaximumOutputVolume;
                 codec->SetOutputVolume(maximum ? kDefaultOutputVolume : kMaximumOutputVolume);
+#endif
             });
         });
 #endif
@@ -2876,13 +3727,15 @@ private:
                         esp_timer_get_time() < deadline) {
                         return;
                     }
-                    if (self->display_->HasTimerAlarm()) {
-                        self->ResetDisplayIdleTimer();
+                    if (self->display_->HasTimerAlarm() || self->orbit_locked_.load()) {
+                        if (self->display_->HasTimerAlarm())
+                            self->ResetDisplayIdleTimer();
                         return;
                     }
                     self->display_dimmed_ = true;
                     self->GetDisplay()->SetPowerSaveMode(true);
-                    self->GetBacklight()->SetBrightness(5);
+                    // Enough to read the standby crest across the galley.
+                    self->GetBacklight()->SetBrightness(12);
                 });
             },
             .arg = this,
@@ -2895,6 +3748,54 @@ private:
             esp_timer_get_time() + kDisplayIdleTimeoutUs);
         ESP_ERROR_CHECK(
             esp_timer_start_once(display_idle_timer_, kDisplayIdleTimeoutUs));
+    }
+
+    static constexpr uint64_t kAlarmChimePeriodUs = 1000 * 1000;
+
+    void InitializeAlarmChimeTimer() {
+        esp_timer_create_args_t timer_args = {
+            .callback = [](void* arg) {
+                auto* self = static_cast<M5StackStopwatchBoard*>(arg);
+                Application::GetInstance().Schedule([self]() {
+                    // Main-loop only. The chime never forces the speaker: a
+                    // busy or timer-owned output simply skips this beat.
+                    if (!self->alarm_chime_on_.load() || !self->display_->HasTimerAlarm()) {
+                        return;
+                    }
+                    auto& audio = Application::GetInstance().GetAudioService();
+                    const uint8_t phase = static_cast<uint8_t>(self->alarm_phase_.fetch_add(1) + 1);
+                    if (phase % 2 == 1) {
+                        self->ioe_.digitalWrite(IOE_PIN_MOTOR, LOW);
+                        // A refused beat is silent on the bench; say why.
+                        // out_peak is the loudest chunk the codec accepted since the
+                        // previous beat: 0 means silence was written, not muted.
+                        const unsigned out_peak = OrbitCrest::output_meter.TakePeak();
+                        // Not Lang::Sounds::OGG_EXCLAMATION: that is a 200 Hz tone
+                        // this speaker cannot reproduce. Only its edges came out,
+                        // as the "hang-up" clicks. kAlarm is 2.0/2.6 kHz pips.
+                        const bool queued = audio.PlayLocalFeedback(provisions::feedback::kAlarm);
+                        ESP_LOGI(TAG,
+                                 "alarm beat phase=%u chime=%s decode_errors=%u out_peak=%u "
+                                 "output=%s",
+                                 phase, queued ? "queued" : "REFUSED",
+                                 static_cast<unsigned>(audio.LocalFeedbackErrors()), out_peak,
+                                 self->GetAudioCodec()->output_enabled() ? "on" : "off");
+                    } else {
+                        // No CancelLocalFeedback here: the clip is 0.7 s of
+                        // audio behind a cold codec open, so at 1.0 s its last
+                        // pip can still be in the DMA queue, and the cancel
+                        // flushed it. Let it drain under the motor; the next
+                        // odd beat's PlayLocalFeedback resets the queue anyway.
+                        self->ioe_.digitalWrite(IOE_PIN_MOTOR, HIGH);
+                    }
+                });
+            },
+            .arg = this,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "stopwatch_alarm_chime",
+            .skip_unhandled_events = true,
+        };
+        ESP_ERROR_CHECK(esp_timer_create(&timer_args, &alarm_chime_timer_));
     }
 
     void InitializeCaptureHapticTimer() {
@@ -2982,14 +3883,29 @@ public:
         InitializeTalkChordTimer();
 #endif
 #if !CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+        InitializeAlarmChimeTimer();
         display_->SetTimerAlarmOutputCallback([this](bool active) {
-            ioe_.digitalWrite(IOE_PIN_MOTOR, active ? HIGH : LOW);
+            auto& audio = Application::GetInstance().GetAudioService();
+            alarm_chime_on_.store(active);
             if (active) {
                 ResetDisplayIdleTimer();
-                Application::GetInstance().GetAudioService().PlayLocalFeedback(
-                    Lang::Sounds::OGG_EXCLAMATION);
+                alarm_phase_.store(0);
+                // Vibrate first. The speaker click is inaudible under the motor,
+                // so sound waits for the first odd phase.
+                ioe_.digitalWrite(IOE_PIN_MOTOR, HIGH);
+                audio.CancelLocalFeedback();
+                if (alarm_chime_timer_ != nullptr) {
+                    const esp_err_t stop_result = esp_timer_stop(alarm_chime_timer_);
+                    if (stop_result == ESP_OK || stop_result == ESP_ERR_INVALID_STATE) {
+                        esp_timer_start_periodic(alarm_chime_timer_, kAlarmChimePeriodUs);
+                    }
+                }
             } else {
-                Application::GetInstance().GetAudioService().CancelLocalFeedback();
+                if (alarm_chime_timer_ != nullptr) {
+                    esp_timer_stop(alarm_chime_timer_);
+                }
+                ioe_.digitalWrite(IOE_PIN_MOTOR, LOW);
+                audio.CancelLocalFeedback();
             }
         });
 #endif
@@ -3135,5 +4051,46 @@ public:
     }
 #endif
 };
+
+void ProvisionsShowTimerFace() {
+    auto* display = Board::GetInstance().GetDisplay();
+    if (display == nullptr) {
+        return;
+    }
+    static_cast<RoundLcdDisplay*>(display)->ShowTimerFace();
+}
+
+bool ProvisionsTimerFaceShowing() {
+    auto* display = Board::GetInstance().GetDisplay();
+    if (display == nullptr) {
+        return false;
+    }
+    return static_cast<RoundLcdDisplay*>(display)->TimerFaceShowing();
+}
+
+void ProvisionsShowShoppingFocus(const std::string& above, const std::string& focus,
+                                 const std::string& below) {
+    auto* display = Board::GetInstance().GetDisplay();
+    if (display == nullptr) {
+        return;
+    }
+    static_cast<RoundLcdDisplay*>(display)->ShowShoppingFocus(above, focus, below);
+}
+
+void ProvisionsShowOrbitMenu(uint8_t page) {
+    auto* display = Board::GetInstance().GetDisplay();
+    if (display == nullptr) {
+        return;
+    }
+    static_cast<RoundLcdDisplay*>(display)->ShowOrbitMenu(page);
+}
+
+void ProvisionsDismissSpokenFace() {
+    auto* display = Board::GetInstance().GetDisplay();
+    if (display == nullptr) {
+        return;
+    }
+    static_cast<RoundLcdDisplay*>(display)->DismissSpokenFace();
+}
 
 DECLARE_BOARD(M5StackStopwatchBoard);

@@ -120,7 +120,9 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertNotIn("esp_timer_is_active", source)
         self.assertIn("Application::GetInstance().Schedule", source)
         self.assertIn("ResetDisplayIdleTimer()", source)
-        self.assertIn("GetBacklight()->SetBrightness(5)", source)
+        # Standby shows the crest dimly instead of a black screen.
+        self.assertIn("GetBacklight()->SetBrightness(12)", source)
+        self.assertIn("SetVisible(standby_layer_, on)", source)
         self.assertIn("kDefaultOutputVolume = 90", source)
         self.assertIn("class ProvisionsStopwatchAudioCodec", source)
         self.assertIn("OrbitCrest::input_meter.Observe", source)
@@ -165,8 +167,38 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
             source,
         )
         self.assertIn("void SetDictationScreen(bool visible", source)
-        self.assertIn("SetVisible(dictation_panel_, visible)", source)
+        self.assertIn("SetVisible(dictation_panel_, dictation_review_)", source)
+        self.assertIn("lv_obj_move_foreground(dictation_panel_)", source)
+        self.assertIn("dictation_title_ = lv_label_create(dictation_panel_)", source)
+        self.assertIn("dictation_help_ = lv_label_create(dictation_panel_)", source)
+        self.assertIn("dictation_eyebrow_ = lv_label_create(dictation_panel_)", source)
+        self.assertIn("dictation_item_ = lv_label_create(dictation_panel_)", source)
+        self.assertIn('dictation_saving_ = visible && status == "Saving"', source)
+        self.assertIn('status.rfind("Recording\\n", 0) == 0', source)
+        self.assertNotIn('body = "Hold yellow to record"', source)
+        self.assertIn("dictation_review_ = visible && !dictation_saving_ && !recording && !body.empty()", source)
         self.assertIn(
+            "if (dictation_saving_ && state == VisualState::kListening)",
+            source,
+        )
+        self.assertIn("ApplyVisualStateLocked(VisualState::kWorking)", source)
+        self.assertNotIn('text = "Saving"', source)
+        self.assertIn("rest_starts_qty", source)
+        self.assertIn("spaces >= 2", source)
+        self.assertIn("SplitDictationReview", source)
+        self.assertIn('*eyebrow = "SAVING"', source)
+        self.assertIn('*eyebrow = recorded ? "RECORDED" : "TRY AGAIN"', source)
+        self.assertIn("lv_obj_set_size(dictation_status_, 310, 220)", source)
+        self.assertNotIn("lv_obj_set_size(dictation_status_, 310, 180)", source)
+        self.assertIn("lv_obj_set_style_text_line_space(dictation_status_, 2, 0)", source)
+        self.assertNotIn("lv_obj_set_size(dictation_status_, 400, 280)", source)
+        self.assertIn("SetVisible(dictation_title_, false)", source)
+        self.assertIn("SetVisible(dictation_help_, false)", source)
+        self.assertIn("SetVisible(dictation_action_, false)", source)
+        self.assertIn("SetVisible(dictation_eyebrow_, false)", source)
+        self.assertNotIn("heard_face ? &font_noto_sans_basic_30_4", source)
+        self.assertIn("SetVisible(dictation_panel_, dictation_visible_ && dictation_review_)", source)
+        self.assertNotIn(
             "SetVisible(dictation_panel_, dictation_visible_ && !receipt_visible_.load())",
             source,
         )
@@ -176,6 +208,15 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("void ResetTimerSnapshot", source)
         self.assertIn("bool SilenceTimerAlarm", source)
         self.assertIn("RegisterProvisionsTimerSnapshotCallback", source)
+        self.assertIn("std::array<lv_obj_t*, 3> crest_rings_", source)
+        self.assertIn("crest_error_ring_geometry_", source)
+        self.assertIn("OrbitCrest::Rings(", source)
+        self.assertIn("OrbitCrest::State::Listening ||", source.split("void SetChatMessage", 1)[1].split("void SetPowerSaveMode", 1)[0])
+        motion = (BOARD_DIR / "crest_motion.h").read_text(encoding="utf-8")
+        self.assertIn("kGold = 0xC5A46D", motion)
+        self.assertIn("kIvory = 0xE8E0D2", motion)
+        self.assertIn("radii{120, 154, 184}", motion)
+        self.assertIn("state == State::Listening ? kGold : kIvory", motion)
         self.assertIn("compact_timer_layer_ = lv_obj_create(screen)", source)
         self.assertIn("compact_service_arc_ = lv_arc_create(compact_timer_layer_)", source)
         self.assertIn("compact_service_label_ = lv_label_create(compact_timer_layer_)", source)
@@ -189,6 +230,7 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("const bool service_only = focus == nullptr && service != nullptr", source)
         self.assertIn("SetVisible(compact_timer_arc_, !service_only)", source)
         self.assertIn('"SERVICE  " +', source)
+        self.assertIn("lv_label_set_text(compact_timer_hint_, service_text.c_str())", source)
         self.assertNotIn("auto* card = lv_obj_create(compact_timer_layer_)", source)
         self.assertNotIn("compact_timer_status_", source)
         self.assertNotIn("compact_timer_accent_", source)
@@ -276,7 +318,8 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("IsClockStatus(status)", source)
         self.assertIn('.name = "stopwatch_visual_reset"', source)
         self.assertIn("receipt_visible_.store(true)", source)
-        self.assertIn("receipt_visible_.load() && state != VisualState::kListening", source)
+        self.assertIn("state == VisualState::kListening || state == VisualState::kWorking", source)
+        self.assertIn("receipt_visible_.load() && state != VisualState::kConnecting", source)
         self.assertIn("ApplyVisualStateLocked(resting_state_.load())", source)
         self.assertNotIn("ApplyVisualState(self->resting_state_.load())", source)
         self.assertIn("Lang::Strings::CHECKING_NEW_VERSION", source)
@@ -342,7 +385,10 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("show_reply = display_awake && !show_alarm && visible", reply_layout)
         self.assertIn("ShouldShowOrbitLocked()", reply_layout)
         self.assertIn("SetVisible(alarm_layer_, show_alarm)", reply_layout)
-        self.assertNotIn("LV_ANIM_REPEAT_INFINITE", source)
+        # The only looping animation is the hold-yellow arrow, and it is
+        # deleted the moment the hint is hidden.
+        self.assertEqual(source.count("LV_ANIM_REPEAT_INFINITE"), 1)
+        self.assertIn("lv_anim_delete(hold_hint_, nullptr)", source)
 
     def test_the_dial_uses_the_app_palette_and_keeps_service_outside(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
@@ -396,10 +442,15 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertLess(clear, gate)
         self.assertLess(gate, expand)
         self.assertIn("return true", toggle)
-        touch = source.split("self->touch_dismiss_queued_.store(false);", 1)[1][:400]
+        # A ring stops on first contact; the overview toggle waits for the lift
+        # so a swipe is never also a tap.
+        touch = source.split("self->touch_dismiss_queued_.store(false);", 1)[1].split(
+            "void InitializeI2c()", 1)[0]
         self.assertLess(touch.index("DismissRingingTimers()"), touch.index("ToggleTimerFocus()"))
-        # The Talk+blue chord keeps its own toggle.
-        self.assertIn("display_->ToggleTimerFace()", source)
+        self.assertIn("!pressed && self->touch_was_pressed_ && !self->touch_swiped_", touch)
+        # Both buttons held together lock the glass; the dial toggle is the tap.
+        self.assertIn("ToggleOrbitLock()", source)
+        self.assertIn("kLockHoldUs", source)
 
     def test_provisions_new_timer_wakes_the_compact_crest(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
@@ -413,7 +464,7 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("if (display_->ConsumeNewTimerWake())", source)
         self.assertIn("ResetDisplayIdleTimer();", source.split("ConsumeNewTimerWake())", 1)[1][:80])
 
-    def test_provisions_blue_button_silences_alarm_or_toggles_high_and_max_volume(self):
+    def test_provisions_blue_button_silences_alarm_or_opens_the_orbit_menu(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
         method = re.search(
             r"^    void InitializeButtons\(\) \{.*?^    \}", source, re.MULTILINE | re.DOTALL
@@ -428,6 +479,7 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
             result = subprocess.run(
                 [compiler, "-E", "-P", "-x", "c++",
                  "-DCONFIG_PROVISIONS_GATEWAY_REQUIRED=1",
+                 "-DCONFIG_PROVISIONS_LOCAL_CAPTURE=1",
                  f"-DCONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO={int(demo)}", "-"],
                 input=method.group(0), capture_output=True, text=True,
             )
@@ -440,22 +492,23 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("Application::GetInstance().Schedule", provisions_buttons)
         self.assertRegex(
             provisions_buttons,
-            r"if\s*\(display_->SilenceTimerAlarm\(\)\)\s*\{\s*return;\s*\}",
+            r"if\s*\(display_->SilenceTimerAlarm\(\)\)\s*\{\s*"
+            r"Application::GetInstance\(\)\.AbortAlarmListening\(\);\s*"
+            r"return;\s*\}",
         )
-        self.assertIn("kDefaultOutputVolume", provisions_buttons)
-        self.assertIn("kMaximumOutputVolume", provisions_buttons)
-        self.assertIn(
+        self.assertIn("HandleOrbitMenuBlue()", provisions_buttons)
+        self.assertIn("ConfirmOrbitMenu()", provisions_buttons)
+        self.assertNotIn(
             "codec->SetOutputVolume(maximum ? kDefaultOutputVolume : kMaximumOutputVolume)",
             provisions_buttons,
         )
         self.assertLess(
             provisions_buttons.index("display_->SilenceTimerAlarm()"),
-            provisions_buttons.index("codec->SetOutputVolume("),
+            provisions_buttons.index("HandleOrbitMenuBlue()"),
         )
         self.assertIn("StartListening", provisions_buttons)
         self.assertNotIn("AdvanceScheduleDemo", provisions_buttons)
         self.assertNotIn("volume = 0", provisions_buttons)
-        self.assertNotIn("SetOutputVolume(0)", provisions_buttons)
         self.assertNotIn("ShowNotification", provisions_buttons)
 
         demo_buttons = preprocess(True)
@@ -463,6 +516,70 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
         self.assertIn("display_->SilenceTimerAlarm()", demo_buttons)
         self.assertNotIn("StartListening", demo_buttons)
         self.assertNotIn("SetOutputVolume", demo_buttons)
+
+    def test_timer_alarm_chime_repeats_without_forcing_the_speaker(self):
+        # The motor buries the speaker, so the ring vibrates first and only
+        # then plays the 0.7 s pips on odd phases. Never force the speaker.
+        source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")
+        chime = source.split("void InitializeAlarmChimeTimer()", 1)[1].split("void InitializeCaptureHapticTimer()", 1)[0]
+        self.assertIn('.name = "stopwatch_alarm_chime"', chime)
+        self.assertIn(".dispatch_method = ESP_TIMER_TASK", chime)
+        self.assertIn("Application::GetInstance().Schedule", chime)
+        self.assertNotIn("if (audio.IsPlaybackIdle())", chime)
+        # Stock exclamation.ogg is a 200 Hz tone the ring's speaker cannot
+        # reproduce (only its edges were heard, as clicks); the alarm plays
+        # the 2 kHz Provisions clip instead.
+        self.assertIn("audio.PlayLocalFeedback(provisions::feedback::kAlarm)", chime)
+        self.assertNotIn("OGG_EXCLAMATION)", chime)
+        # The even beat lets the 0.9 s clip drain under the motor; cancelling
+        # it at 1.0 s flushed the last beep out of the DMA queue. A refused
+        # beat is logged so a silent ring can be read from the console.
+        self.assertNotIn("audio.CancelLocalFeedback()", chime)
+        self.assertIn('"alarm beat phase=%u chime=%s decode_errors=%u out_peak=%u "', chime)
+        self.assertIn('queued ? "queued" : "REFUSED"', chime)
+        self.assertIn("phase % 2 == 1", chime)
+        self.assertIn("IOE_PIN_MOTOR, LOW", chime)
+        self.assertIn("IOE_PIN_MOTOR, HIGH", chime)
+        self.assertIn("!self->display_->HasTimerAlarm()", chime)
+        self.assertIn("kAlarmChimePeriodUs = 1000 * 1000", source)
+        callback = source.split("display_->SetTimerAlarmOutputCallback(", 1)[1].split("});", 1)[0]
+        self.assertIn("alarm_chime_on_.store(active)", callback)
+        self.assertIn("alarm_phase_.store(0)", callback)
+        self.assertIn("IOE_PIN_MOTOR, HIGH", callback)
+        self.assertNotIn("PlayLocalFeedback", callback)
+        self.assertIn("esp_timer_start_periodic(alarm_chime_timer_, kAlarmChimePeriodUs)", callback)
+        self.assertIn("esp_timer_stop(alarm_chime_timer_)", callback)
+        self.assertIn("audio.CancelLocalFeedback()", callback)
+        self.assertIn("void ShowTimerFace()", source)
+        self.assertIn("void ProvisionsShowTimerFace()", source)
+        self.assertIn("bool ProvisionsTimerFaceShowing()", source)
+        self.assertIn("void ShowShoppingFocus", source)
+        self.assertIn("void ProvisionsShowShoppingFocus", source)
+        self.assertIn("shopping_focus_layout_", source)
+        self.assertIn("LV_OPA_TRANSP", source)
+        focus = source.split("void ShowShoppingFocus", 1)[1]
+        self.assertIn("font_noto_sans_basic_30_4", focus)
+        self.assertIn("SetVisible(crest_caption_, false)", focus)
+        self.assertIn("SetVisible(crest_star_, false)", focus)
+        self.assertIn("SetVisible(crest_band_, false)", focus)
+        render = source.split("void RenderCrestLocked()", 1)[1].split(
+            "void SetCrestResultLocked", 1
+        )[0]
+        self.assertIn("if (shopping_focus_layout_)", render)
+        self.assertIn("return;", render.split("if (shopping_focus_layout_)", 1)[1])
+        self.assertIn("lv_timer_pause(crest_animation_timer_)", focus)
+        self.assertIn("const bool already = shopping_focus_layout_", focus)
+        self.assertIn("if (!already)", focus)
+        self.assertIn("lv_obj_set_style_text_opa(dictation_eyebrow_, LV_OPA_70, 0)", focus)
+        self.assertIn("lv_obj_set_style_text_font(dictation_eyebrow_, &font_noto_sans_basic_30_4, 0)", focus)
+        self.assertIn("const int top = -total / 2", focus)
+        self.assertIn("if (!Lock(400))", focus)
+        self.assertNotIn("DisplayLockGuard lock(this);", focus.split("void ShowOrbitMenu", 1)[0])
+        display_h = (ROOT / "main/display/display.h").read_text(encoding="utf-8")
+        self.assertIn("locked_ = display_->Lock(30000)", display_h)
+        self.assertIn("if (locked_)\n            display_->Unlock();", display_h)
+        self.assertIn("lv_obj_set_style_text_line_space(dictation_eyebrow_, 1, 0)", focus)
+        self.assertIn("LV_LABEL_LONG_CLIP", focus)
 
     def test_local_capture_haptic_is_bounded_and_yields_to_timer_alarm(self):
         source = (BOARD_DIR / "m5stack_stopwatch.cc").read_text(encoding="utf-8")

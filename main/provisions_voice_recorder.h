@@ -121,6 +121,9 @@ public:
     bool HasContext() const { return has_context_.load() || lite_active_.load(); }
     unsigned AwaitingReceiptCount() const { return awaiting_receipt_count_.load(); }
     bool IsReady() const { return storage_ready_.load(); }
+    // True while a microphone buffer is still recording or being saved.
+    // A new hold in that window is not a failed save.
+    bool CaptureOpen() const;
     unsigned PendingCount() const { return pending_count_.load(); }
     bool NeedsAttention() const { return needs_attention_.load(); }
     // Storage or context faults only. A kept recording that is no longer being
@@ -201,6 +204,7 @@ private:
     void ForgetAwaitingReceipt(size_t slot);
     void ApplyUploadMark(const UploadMark& mark);
     bool EvictForNewCapture(uint64_t now_unix_ms);
+    bool EvictNeedsAttentionForNewCapture();
     VoiceStoreResult Store(const VoiceCapture& capture, VoiceBytes frames,
                            SavedVoiceCapture& saved);
     dictation::NvsStore dictation_store_;

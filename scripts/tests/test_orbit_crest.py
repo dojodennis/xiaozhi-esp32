@@ -94,6 +94,7 @@ int main() {
     assert(meter.sampled_ms == 42);
     meter.Observe(nullptr, 0, 43);
     assert(meter.mean_absolute == 0);
+    assert(std::strcmp(Caption(State::Thinking), "") == 0);
     assert(std::strcmp(ResultCaption("No match"), "No match") == 0);
     assert(std::strstr(ResultCaption("Added"), "Not sent"));
     for (auto input : {"Saved", "HTTP 403", "token expired", "a long technical paragraph", ""})

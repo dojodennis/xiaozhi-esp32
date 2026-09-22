@@ -1133,7 +1133,8 @@ if(CONFIG_PROVISIONS_LOCAL_CAPTURE)
     list(APPEND MAIN_PRIV_REQUIRES_EXTRA tcp_transport)
     set(PROVISIONS_FEEDBACK_SOUNDS
         "assets/provisions/saved_on_orbit.ogg"
-        "assets/provisions/could_not_save.ogg")
+        "assets/provisions/could_not_save.ogg"
+        "assets/provisions/alarm.ogg")
 endif()
 if(BOARD_TYPE STREQUAL "m5stack-stick-s3")
     list(APPEND MAIN_PRIV_REQUIRES_EXTRA

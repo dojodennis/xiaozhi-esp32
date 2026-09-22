@@ -474,7 +474,7 @@ int main(){OrbitCrestDisplay display;display.SetTimerText("7 • 0:10 Pasta");as
     def test_durable_recovery_fence_blocks_publication_but_not_local_capture(self):
         incoming = (ROOT / "main/application.cc").read_text()
         incoming = incoming[incoming.index("protocol->OnIncomingJson("):]
-        guard = "if (!heartbeat && timer_player_.Fenced())"
+        guard = "if (!heartbeat && timer_player_.Fenced() && !dictation_screen_.load())"
         self.assertIn(guard, incoming)
         self.assertLess(incoming.index("if (timer_frame || timer_tts)"), incoming.index(guard))
         self.assertLess(incoming.index("const bool heartbeat"), incoming.index(guard))

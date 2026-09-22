@@ -5,6 +5,10 @@
 
 #define TAG "Protocol"
 
+namespace {
+std::atomic<bool> g_listen_shopping{false};
+}
+
 void Protocol::AddTextFontCapabilities(cJSON* root) {
     auto capability = Assets::GetInstance().text_font_capability();
     cJSON* features = cJSON_GetObjectItem(root, "features");
@@ -71,6 +75,8 @@ void Protocol::SendWakeWordDetected(const std::string& wake_word) {
     SendText(json);
 }
 
+void Protocol::SetListenShopping(bool shopping) { g_listen_shopping.store(shopping); }
+
 void Protocol::SendStartListening(ListeningMode mode) {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     if (!voice_turn_.Begin()) {
@@ -78,6 +84,7 @@ void Protocol::SendStartListening(ListeningMode mode) {
         return;
     }
 #endif
+    const bool shopping = g_listen_shopping.exchange(false);
     std::string message = "{\"session_id\":\"" + this->session_id() + "\"";
     message += ",\"type\":\"listen\",\"state\":\"start\"";
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
@@ -89,6 +96,9 @@ void Protocol::SendStartListening(ListeningMode mode) {
         message += ",\"mode\":\"auto\"";
     } else {
         message += ",\"mode\":\"manual\"";
+    }
+    if (shopping) {
+        message += ",\"shopping\":true";
     }
     message += "}";
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED

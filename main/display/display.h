@@ -74,17 +74,36 @@ protected:
     virtual void Unlock() = 0;
 };
 
+// Board hook: stopwatch implements this. Not a Display virtual — adding a
+// vtable slot without rebuilding every display TU panics on connect.
+void ProvisionsShowTimerFace();
+bool ProvisionsTimerFaceShowing();
+void ProvisionsShowShoppingFocus(const std::string& above, const std::string& focus,
+                                 const std::string& below);
+// Menu page: a timer ring or a list mark, swiped between. Not a Display
+// virtual — a new vtable slot panics on connect.
+void ProvisionsShowOrbitMenu(uint8_t page);
+// Drop the spoken confirmation ("timer set" / reply hold) so a swipe or a
+// new timer can show the face underneath it.
+void ProvisionsDismissSpokenFace();
+
 class DisplayLockGuard {
 public:
     DisplayLockGuard(Display* display) : display_(display) {
-        if (!display_->Lock(30000)) {
+        locked_ = display_->Lock(30000);
+        if (!locked_) {
             ESP_LOGE("Display", "Failed to lock display");
         }
     }
-    ~DisplayLockGuard() { display_->Unlock(); }
+    ~DisplayLockGuard() {
+        if (locked_)
+            display_->Unlock();
+    }
+    bool locked() const { return locked_; }
 
 private:
     Display* display_;
+    bool locked_ = false;
 };
 
 class NoDisplay : public Display {
