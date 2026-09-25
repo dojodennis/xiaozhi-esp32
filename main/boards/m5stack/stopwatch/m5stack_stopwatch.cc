@@ -13,6 +13,7 @@
 #include "crest_asset.h"
 #include "crest_audio.h"
 #include "crest_motion.h"
+#include "menu_asset.h"
 #include "button_chord.h"
 #include "orbit_dial.h"
 #include "provisions_local_capture_feedback.h"
@@ -295,9 +296,9 @@ private:
     bool shopping_focus_layout_ = false;
     bool menu_layout_ = false;
     bool orbit_locked_ui_ = false;
-    lv_obj_t* menu_timer_arc_ = nullptr;
-    std::array<lv_obj_t*, 3> menu_list_bars_{};
-    lv_obj_t* menu_note_card_ = nullptr;
+    // One image for the page's mark (List, Timers or Notes); ShowOrbitMenu
+    // swaps its source. Dots are images too, a bronze sphere for the page.
+    lv_obj_t* menu_mark_ = nullptr;
     std::array<lv_obj_t*, 3> menu_dots_{};
     // Small grey word above the List / Notes face so a glance tells them apart.
     lv_obj_t* face_caption_ = nullptr;
@@ -405,10 +406,7 @@ private:
 
     void HideOrbitMenuLocked() {
         menu_layout_ = false;
-        SetVisible(menu_timer_arc_, false);
-        for (auto* bar : menu_list_bars_)
-            SetVisible(bar, false);
-        SetVisible(menu_note_card_, false);
+        SetVisible(menu_mark_, false);
         for (auto* dot : menu_dots_)
             SetVisible(dot, false);
         SetVisible(face_caption_, false);
@@ -638,59 +636,13 @@ private:
         lv_obj_align(dictation_item_, LV_ALIGN_CENTER, 0, 78);
         lv_obj_add_flag(dictation_item_, LV_OBJ_FLAG_HIDDEN);
 
-        // Menu logos, the same idea as the stock StopWatch app icons: a ring
-        // for timers, three bars for the list. Swipe flips which one is lit.
-        menu_timer_arc_ = lv_arc_create(dictation_panel_);
-        lv_obj_set_size(menu_timer_arc_, 132, 132);
-        lv_obj_align(menu_timer_arc_, LV_ALIGN_CENTER, 0, -28);
-        lv_arc_set_bg_angles(menu_timer_arc_, 0, 360);
-        lv_arc_set_rotation(menu_timer_arc_, 270);
-        lv_arc_set_range(menu_timer_arc_, 0, 1000);
-        lv_arc_set_value(menu_timer_arc_, 720);
-        lv_obj_remove_style(menu_timer_arc_, nullptr, LV_PART_KNOB);
-        lv_obj_remove_flag(menu_timer_arc_, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_style_arc_width(menu_timer_arc_, 10, LV_PART_MAIN);
-        lv_obj_set_style_arc_width(menu_timer_arc_, 10, LV_PART_INDICATOR);
-        lv_obj_set_style_arc_color(menu_timer_arc_, lv_color_hex(0x2A261C), LV_PART_MAIN);
-        lv_obj_set_style_arc_color(menu_timer_arc_, lv_color_hex(kColorGold), LV_PART_INDICATOR);
-        SetVisible(menu_timer_arc_, false);
-        for (int index = 0; index < 3; ++index) {
-            auto* bar = lv_obj_create(dictation_panel_);
-            lv_obj_remove_style_all(bar);
-            lv_obj_set_size(bar, 96, 10);
-            lv_obj_set_style_radius(bar, 5, 0);
-            lv_obj_set_style_bg_color(bar, lv_color_hex(OrbitCrest::kIvory), 0);
-            lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-            lv_obj_align(bar, LV_ALIGN_CENTER, 0, -52 + index * 22);
-            lv_obj_remove_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
-            lv_obj_remove_flag(bar, LV_OBJ_FLAG_CLICKABLE);
-            menu_list_bars_[index] = bar;
-            SetVisible(bar, false);
-        }
-        menu_note_card_ = lv_obj_create(dictation_panel_);
-        lv_obj_remove_style_all(menu_note_card_);
-        lv_obj_set_size(menu_note_card_, 88, 108);
-        lv_obj_set_style_radius(menu_note_card_, 8, 0);
-        lv_obj_set_style_bg_color(menu_note_card_, lv_color_hex(OrbitCrest::kIvory), 0);
-        lv_obj_set_style_bg_opa(menu_note_card_, LV_OPA_COVER, 0);
-        lv_obj_align(menu_note_card_, LV_ALIGN_CENTER, 0, -28);
-        lv_obj_remove_flag(menu_note_card_, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_remove_flag(menu_note_card_, LV_OBJ_FLAG_CLICKABLE);
-        // Ruled card: a short gold title line and two dark rules. Children
-        // hide with the card, so the menu code keeps toggling one object.
-        for (int index = 0; index < 3; ++index) {
-            auto* rule = lv_obj_create(menu_note_card_);
-            lv_obj_remove_style_all(rule);
-            const bool title = index == 0;
-            lv_obj_set_size(rule, title ? 36 : 56, 4);
-            lv_obj_set_style_radius(rule, 2, 0);
-            lv_obj_set_style_bg_color(rule, lv_color_hex(title ? kColorGold : 0x2A261C), 0);
-            lv_obj_set_style_bg_opa(rule, LV_OPA_COVER, 0);
-            lv_obj_align(rule, LV_ALIGN_TOP_LEFT, 16, 26 + index * 20);
-            lv_obj_remove_flag(rule, LV_OBJ_FLAG_SCROLLABLE);
-            lv_obj_remove_flag(rule, LV_OBJ_FLAG_CLICKABLE);
-        }
-        SetVisible(menu_note_card_, false);
+        // Menu marks, drawing G (25 Sept, after the Nausicaa superyacht):
+        // steel, gloss-black glazing and bronze, baked to RGB565 by
+        // scripts/generate_orbit_menu.py. They sit on this panel's black.
+        menu_mark_ = lv_image_create(dictation_panel_);
+        lv_obj_remove_flag(menu_mark_, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_remove_flag(menu_mark_, LV_OBJ_FLAG_CLICKABLE);
+        SetVisible(menu_mark_, false);
         face_caption_ = lv_label_create(dictation_panel_);
         lv_obj_set_size(face_caption_, 200, 24);
         lv_obj_set_style_text_font(face_caption_, &font_noto_sans_basic_16_4, 0);
@@ -701,13 +653,9 @@ private:
         lv_obj_align(face_caption_, LV_ALIGN_CENTER, 0, -150);
         lv_obj_add_flag(face_caption_, LV_OBJ_FLAG_HIDDEN);
         for (int index = 0; index < 3; ++index) {
-            auto* dot = lv_obj_create(dictation_panel_);
-            lv_obj_remove_style_all(dot);
-            lv_obj_set_size(dot, 8, 8);
-            lv_obj_set_style_radius(dot, 4, 0);
-            lv_obj_set_style_bg_color(dot, lv_color_hex(0x333333), 0);
-            lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
-            lv_obj_align(dot, LV_ALIGN_CENTER, (index - 1) * 16, 118);
+            auto* dot = lv_image_create(dictation_panel_);
+            lv_image_set_src(dot, &OrbitMenu::kDotOffImage);
+            lv_obj_set_pos(dot, OrbitMenu::kDotLeft(index), OrbitMenu::kDotTop);
             lv_obj_remove_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
             lv_obj_remove_flag(dot, LV_OBJ_FLAG_CLICKABLE);
             menu_dots_[index] = dot;
@@ -2927,6 +2875,7 @@ public:
             lv_obj_set_style_text_color(dictation_item_, lv_color_hex(0xcbd5e1), 0);
             lv_obj_set_style_text_align(dictation_item_, LV_TEXT_ALIGN_CENTER, 0);
             lv_obj_set_style_text_line_space(dictation_item_, 1, 0);
+            lv_obj_set_style_text_letter_space(dictation_item_, 0, 0);
             lv_label_set_long_mode(dictation_item_, LV_LABEL_LONG_CLIP);
         }
         auto lines = [](const std::string& text) {
@@ -2985,7 +2934,7 @@ public:
 
     // Blue opens this. Sideways swipe flips the logo; yellow confirms.
     void ShowOrbitMenu(uint8_t page) {
-        if (dictation_panel_ == nullptr || menu_timer_arc_ == nullptr)
+        if (dictation_panel_ == nullptr || menu_mark_ == nullptr)
             return;
         if (!Lock(400)) {
             ESP_LOGW(TAG, "menu paint skipped: display busy");
@@ -3023,20 +2972,26 @@ public:
         SetHoldHintLocked(false);
         const bool shopping = page == 0;
         const bool notes = page == 2;
-        SetVisible(menu_timer_arc_, page == 1);
-        for (auto* bar : menu_list_bars_)
-            SetVisible(bar, shopping);
-        SetVisible(menu_note_card_, notes);
+        const OrbitMenu::Mark& mark = OrbitMenu::kMarks[notes ? 2 : shopping ? 0 : 1];
+        lv_image_set_src(menu_mark_, mark.image);
+        lv_obj_set_pos(menu_mark_, mark.x, mark.y);
+        SetVisible(menu_mark_, true);
+        // Caption as drawn: steel grey, spaced. Full opacity every time,
+        // because the List / Notes face leaves this label at 40%.
         lv_obj_set_style_text_font(dictation_item_, &font_noto_sans_basic_16_4, 0);
-        lv_obj_set_style_text_color(dictation_item_, lv_color_hex(0x8B877C), 0);
+        lv_obj_set_style_text_color(dictation_item_, lv_color_hex(0xA9A9A4), 0);
+        lv_obj_set_style_text_opa(dictation_item_, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_letter_space(dictation_item_, 2, 0);
         lv_obj_set_style_text_align(dictation_item_, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_size(dictation_item_, 200, 28);
         lv_obj_align(dictation_item_, LV_ALIGN_CENTER, 0, 78);
-        lv_label_set_text(dictation_item_, notes ? "Notes" : shopping ? "List" : "Timers");
+        // Through the cache, so the List / Notes face never skips its own text.
+        SetLabelText(dictation_item_, &dictation_item_text_,
+                     notes ? "Notes" : shopping ? "List" : "Timers");
         SetVisible(dictation_item_, true);
         for (int index = 0; index < 3; ++index) {
-            lv_obj_set_style_bg_color(menu_dots_[index],
-                                      lv_color_hex(index == page ? kColorGold : 0x333333), 0);
+            lv_image_set_src(menu_dots_[index],
+                             index == page ? &OrbitMenu::kDotOnImage : &OrbitMenu::kDotOffImage);
             SetVisible(menu_dots_[index], true);
         }
         SetReplyLayoutLocked(false);
