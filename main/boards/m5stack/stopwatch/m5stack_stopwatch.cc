@@ -42,6 +42,7 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <esp_system.h>
 #include <esp_timer.h>
@@ -296,10 +297,13 @@ private:
     bool shopping_focus_layout_ = false;
     bool menu_layout_ = false;
     bool orbit_locked_ui_ = false;
-    // One image for the page's mark (List, Timers or Notes); ShowOrbitMenu
-    // swaps its source. Dots are images too, a bronze sphere for the page.
+    // Drawing G4a: each menu page is one full-screen picture, caption and
+    // page dots included. The page on show is expanded from its 256-colour
+    // copy in flash into menu_pixels_ (RGB565, PSRAM), which menu_mark_ shows.
     lv_obj_t* menu_mark_ = nullptr;
-    std::array<lv_obj_t*, 3> menu_dots_{};
+    uint16_t* menu_pixels_ = nullptr;
+    lv_image_dsc_t menu_image_{};
+    int menu_page_shown_ = -1;
     // Small grey word above the List / Notes face so a glance tells them apart.
     lv_obj_t* face_caption_ = nullptr;
     std::string face_caption_text_;
@@ -407,8 +411,6 @@ private:
     void HideOrbitMenuLocked() {
         menu_layout_ = false;
         SetVisible(menu_mark_, false);
-        for (auto* dot : menu_dots_)
-            SetVisible(dot, false);
         SetVisible(face_caption_, false);
     }
 
@@ -636,10 +638,10 @@ private:
         lv_obj_align(dictation_item_, LV_ALIGN_CENTER, 0, 78);
         lv_obj_add_flag(dictation_item_, LV_OBJ_FLAG_HIDDEN);
 
-        // Menu marks, drawing G (25 Sept, after the Nausicaa superyacht):
-        // steel, gloss-black glazing and bronze, baked to RGB565 by
-        // scripts/generate_orbit_menu.py. They sit on this panel's black.
+        // Menu pages, drawing G4a (26 Sept, after Marc Newson's Nausicaa):
+        // whole-screen pictures packed by scripts/generate_orbit_menu.py.
         menu_mark_ = lv_image_create(dictation_panel_);
+        lv_obj_set_pos(menu_mark_, 0, 0);
         lv_obj_remove_flag(menu_mark_, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_remove_flag(menu_mark_, LV_OBJ_FLAG_CLICKABLE);
         SetVisible(menu_mark_, false);
@@ -652,15 +654,6 @@ private:
         lv_label_set_long_mode(face_caption_, LV_LABEL_LONG_CLIP);
         lv_obj_align(face_caption_, LV_ALIGN_CENTER, 0, -150);
         lv_obj_add_flag(face_caption_, LV_OBJ_FLAG_HIDDEN);
-        for (int index = 0; index < 3; ++index) {
-            auto* dot = lv_image_create(dictation_panel_);
-            lv_image_set_src(dot, &OrbitMenu::kDotOffImage);
-            lv_obj_set_pos(dot, OrbitMenu::kDotLeft(index), OrbitMenu::kDotTop);
-            lv_obj_remove_flag(dot, LV_OBJ_FLAG_SCROLLABLE);
-            lv_obj_remove_flag(dot, LV_OBJ_FLAG_CLICKABLE);
-            menu_dots_[index] = dot;
-            SetVisible(dot, false);
-        }
         lv_obj_add_flag(dictation_panel_, LV_OBJ_FLAG_HIDDEN);
 
         crest_animation_timer_ = lv_timer_create(
@@ -2932,7 +2925,39 @@ public:
             SetReplyLayoutLocked(false);
     }
 
-    // Blue opens this. Sideways swipe flips the logo; yellow confirms.
+    // Expand one menu page (256 colours in flash) into the RGB565 buffer the
+    // menu image shows. The buffer is taken from PSRAM on first use and kept:
+    // the menu opens often, and one 434 KB block does not fragment.
+    bool PaintMenuPageLocked(int page) {
+        constexpr int kSize = OrbitMenu::kPageSize;
+        constexpr size_t kBytes = size_t(kSize) * kSize * sizeof(uint16_t);
+        if (menu_pixels_ == nullptr) {
+            menu_pixels_ = static_cast<uint16_t*>(
+                heap_caps_malloc(kBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+            if (menu_pixels_ == nullptr) {
+                ESP_LOGW(TAG, "menu page: no PSRAM for %u bytes", unsigned(kBytes));
+                return false;
+            }
+            menu_image_.header.magic = LV_IMAGE_HEADER_MAGIC;
+            menu_image_.header.cf = LV_COLOR_FORMAT_RGB565;
+            menu_image_.header.w = kSize;
+            menu_image_.header.h = kSize;
+            menu_image_.header.stride = kSize * sizeof(uint16_t);
+            menu_image_.data_size = kBytes;
+            menu_image_.data = reinterpret_cast<const uint8_t*>(menu_pixels_);
+            lv_image_set_src(menu_mark_, &menu_image_);
+        }
+        if (menu_page_shown_ != page) {
+            const OrbitMenu::Page& source = OrbitMenu::kPages[page];
+            for (int i = 0; i < kSize * kSize; ++i)
+                menu_pixels_[i] = source.palette[source.pixels[i]];
+            menu_page_shown_ = page;
+            lv_obj_invalidate(menu_mark_);
+        }
+        return true;
+    }
+
+    // Blue opens this. Sideways swipe flips the page; yellow confirms.
     void ShowOrbitMenu(uint8_t page) {
         if (dictation_panel_ == nullptr || menu_mark_ == nullptr)
             return;
@@ -2972,27 +2997,23 @@ public:
         SetHoldHintLocked(false);
         const bool shopping = page == 0;
         const bool notes = page == 2;
-        const OrbitMenu::Mark& mark = OrbitMenu::kMarks[notes ? 2 : shopping ? 0 : 1];
-        lv_image_set_src(menu_mark_, mark.image);
-        lv_obj_set_pos(menu_mark_, mark.x, mark.y);
-        SetVisible(menu_mark_, true);
-        // Caption as drawn: steel grey, spaced. Full opacity every time,
-        // because the List / Notes face leaves this label at 40%.
-        lv_obj_set_style_text_font(dictation_item_, &font_noto_sans_basic_16_4, 0);
-        lv_obj_set_style_text_color(dictation_item_, lv_color_hex(0xA9A9A4), 0);
-        lv_obj_set_style_text_opa(dictation_item_, LV_OPA_COVER, 0);
-        lv_obj_set_style_text_letter_space(dictation_item_, 2, 0);
-        lv_obj_set_style_text_align(dictation_item_, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_size(dictation_item_, 200, 28);
-        lv_obj_align(dictation_item_, LV_ALIGN_CENTER, 0, 78);
-        // Through the cache, so the List / Notes face never skips its own text.
-        SetLabelText(dictation_item_, &dictation_item_text_,
-                     notes ? "Notes" : shopping ? "List" : "Timers");
-        SetVisible(dictation_item_, true);
-        for (int index = 0; index < 3; ++index) {
-            lv_image_set_src(menu_dots_[index],
-                             index == page ? &OrbitMenu::kDotOnImage : &OrbitMenu::kDotOffImage);
-            SetVisible(menu_dots_[index], true);
+        if (PaintMenuPageLocked(notes ? 2 : shopping ? 0 : 1)) {
+            // The picture carries the caption and the page dots.
+            SetVisible(menu_mark_, true);
+            SetVisible(dictation_item_, false);
+        } else {
+            // No PSRAM for the picture: the word alone on black still works.
+            SetVisible(menu_mark_, false);
+            lv_obj_set_style_text_font(dictation_item_, &font_noto_sans_basic_16_4, 0);
+            lv_obj_set_style_text_color(dictation_item_, lv_color_hex(0xA9A9A4), 0);
+            lv_obj_set_style_text_opa(dictation_item_, LV_OPA_COVER, 0);
+            lv_obj_set_style_text_letter_space(dictation_item_, 2, 0);
+            lv_obj_set_style_text_align(dictation_item_, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_set_size(dictation_item_, 200, 28);
+            lv_obj_align(dictation_item_, LV_ALIGN_CENTER, 0, 78);
+            SetLabelText(dictation_item_, &dictation_item_text_,
+                         notes ? "Notes" : shopping ? "List" : "Timers");
+            SetVisible(dictation_item_, true);
         }
         SetReplyLayoutLocked(false);
     }

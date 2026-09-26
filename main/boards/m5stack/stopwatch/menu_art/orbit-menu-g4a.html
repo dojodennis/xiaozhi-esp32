@@ -1,0 +1,231 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+@font-face { font-family: Noto; src: url("file:///Users/dojo/orbit-claude/firmware/.worktrees/faces/managed_components/lvgl__lvgl/tests/src/test_files/fonts/noto/NotoSansSC-Regular.ttf"); }
+html, body { margin: 0; background: #0e0f10; }
+body { padding: 32px 40px; font-family: Noto, sans-serif; color: #8A9096; }
+.row { margin-bottom: 28px; }
+.row h2 { margin: 0 0 12px; font: 500 20px Noto, sans-serif; color: #d6dade; letter-spacing: .5px; }
+.row h2 span { color: #8A9096; font-weight: 400; }
+.faces { display: flex; gap: 40px; align-items: flex-start; }
+svg { display: block; }
+</style>
+</head>
+<body>
+<div id="sheet"></div>
+<script>
+// Orbit menu, drawing G4a (Dennis picked it 26 Sept). Design source for
+// menu_art/page-*.png; scripts/generate_orbit_menu.py packs those into menu_asset.cc.
+// Open in Chrome for the sheet, #caps for the lettering, #export=<list|timers|notes>
+// for the 466 px frames the generator reads.
+// Drawing G4: each page is the whole round screen. One frame for
+// all three: an asphalt bezel in seven plates (the sky dome's seven panes, the
+// Ohmu's shell), a gloss-black glass disc with the dome's reflection, one
+// pool-deck yellow part breaking the bezel, neon for everything lit.
+const YELLOW = ['#FFEA7A', '#F6CD1C', '#C99A00', '#6B4F00'];
+const NEONS = {
+  ohmu:   { c: '#2BD2FF', core: '#DDF7FF', name: 'Ohmu-blue neon' },
+  yellow: { c: '#FFD21F', core: '#FFF7D1', name: 'pool-deck yellow neon' },
+};
+let N = NEONS.ohmu;
+const S = 466, C = 233, BEZEL_IN = 204, CAPTION_Y = 110, DOT_Y = 148;
+let uid = 0;
+
+const polar = (r, deg) => { const a = (deg - 90) * Math.PI / 180; return [C + r * Math.cos(a), C + r * Math.sin(a)]; };
+const arcPath = (r, d0, d1) => { const [x0, y0] = polar(r, d0), [x1, y1] = polar(r, d1); return `M ${x0} ${y0} A ${r} ${r} 0 ${d1 - d0 > 180 ? 1 : 0} 1 ${x1} ${y1}`; };
+const stops = arr => arr.map((c, i) => `<stop offset="${i / (arr.length - 1)}" stop-color="${c}"/>`).join('');
+const rad = (id, arr, cx = .36, cy = .3, r = .8) => `<radialGradient id="${id}" cx="${cx}" cy="${cy}" r="${r}">${stops(arr)}</radialGradient>`;
+const lin = (id, arr, x2, y2) => `<linearGradient id="${id}" x1="0" y1="0" x2="${x2}" y2="${y2}">${stops(arr)}</linearGradient>`;
+const neon = (d, w) => `<path d="${d}" fill="none" stroke="${N.c}" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round" filter="url(#g)"/>` +
+  `<path d="${d}" fill="none" stroke="${N.c}" stroke-width="${w * .8}" stroke-linecap="round" stroke-linejoin="round"/>` +
+  `<path d="${d}" fill="none" stroke="${N.core}" stroke-width="${w * .34}" stroke-linecap="round" stroke-linejoin="round"/>`;
+function sphere(cx, cy, r, yellow) {
+  const id = 's' + uid++, c = yellow ? YELLOW : ['#A7ACB1', '#6E7378', '#43474C', '#26282B'];
+  return `<defs>${rad(id, c)}</defs><circle cx="${cx}" cy="${cy}" r="${r}" fill="url(#${id})"/>` +
+    `<ellipse cx="${cx - r * .32}" cy="${cy - r * .38}" rx="${r * .3}" ry="${r * .18}" fill="#fff" opacity=".5" transform="rotate(-30 ${cx - r * .32} ${cy - r * .38})"/>`;
+}
+function wave(x0, x1, y, amp, len) {
+  let d = `M ${x0} ${y}`;
+  for (let x = x0; x < x1; x += len) { const e = Math.min(x1, x + len), m = (x + e) / 2; d += ` Q ${(x + m) / 2} ${y - amp} ${m} ${y} Q ${(m + e) / 2} ${y + amp} ${e} ${y}`; }
+  return d;
+}
+function seg7(x, y, str, h, col) {
+  const map = { 0: 'abcdef', 1: 'bc', 2: 'abged', 3: 'abgcd', 4: 'fgbc', 5: 'afgcd', 6: 'afgedc', 7: 'abc', 8: 'abcdefg', 9: 'abcdfg' };
+  const w = h * .52, t = h * .13; let d = '', cx = x, dots = '';
+  for (const ch of str) {
+    if (ch === ':') { dots += `<circle cx="${cx + 3}" cy="${y + h * .3}" r="${t * .6}"/><circle cx="${cx + 3}" cy="${y + h * .7}" r="${t * .6}"/>`; cx += 10; continue; }
+    const P = { a: [cx, y, cx + w, y], b: [cx + w, y, cx + w, y + h / 2], c: [cx + w, y + h / 2, cx + w, y + h], d: [cx, y + h, cx + w, y + h], e: [cx, y + h / 2, cx, y + h], f: [cx, y, cx, y + h / 2], g: [cx, y + h / 2, cx + w, y + h / 2] };
+    for (const k of map[ch]) { const [a, b, c2, e] = P[k]; d += ` M ${a} ${b} L ${c2} ${e}`; }
+    cx += w + 12;
+  }
+  return { d, dots, width: cx - x - 12 };
+}
+
+
+// Captions lettered like the name on Nausicaa's hull: lowercase, monoline,
+// rounded-square curves, flat ends, square dots, wide spacing, polished steel.
+// Units: x-height 20, baseline at y 20.
+const GLYPHS = {
+  // After the DIN-style wordmark in the yacht's logo: stems cut square at the
+  // x-height, arches springing from the stem with one rounded shoulder.
+  n: [14, 'M 0 20 V 0 M 0 6.5 Q 0 0 6.5 0 H 7.5 Q 14 0 14 6.5 V 20'],
+  m: [24, 'M 0 20 V 0 M 0 6 Q 0 0 6 0 Q 12 0 12 6 V 20 M 12 6 Q 12 0 18 0 Q 24 0 24 6 V 20'],
+  o: [14.5, 'M 6.5 0 H 8 Q 14.5 0 14.5 6.5 V 13.5 Q 14.5 20 8 20 H 6.5 Q 0 20 0 13.5 V 6.5 Q 0 0 6.5 0 Z'],
+  e: [14, 'M 0 10.5 H 14 V 6.5 Q 14 0 7.5 0 H 6.5 Q 0 0 0 6.5 V 13.5 Q 0 20 6.5 20 H 13'],
+  s: [13.5, 'M 13.5 1 Q 11 0 7 0 Q 0.5 0 0.5 5 Q 0.5 9.5 6.5 10 H 7.5 Q 13.5 10.5 13.5 15 Q 13.5 20 6.5 20 Q 2.5 20 0 19'],
+  t: [10.5, 'M 3.5 -6 V 14.5 Q 3.5 20 9 20 H 10.5 M 0 0 H 10'],
+  i: [3.4, 'M 1.7 0 V 20', [0, -7.2]],
+  l: [3.4, 'M 1.7 -8.5 V 20'],
+  r: [9.5, 'M 0 20 V 0 M 0 6.5 Q 0 0 6.5 0 H 9.5'],
+};
+function lettering(word, cx, baseline, xh) {
+  const k = xh / 20, gap = 4.6, stroke = 3.4;
+  const width = [...word].reduce((w, ch, i) => w + GLYPHS[ch][0] + (i ? gap : 0), 0);
+  const id = 'lt' + uid++, top = baseline - 28 * k;
+  let x = 0, paths = '', dots = '';
+  for (const ch of word) {
+    const [w, d, dot] = GLYPHS[ch];
+    paths += `<path d="${d}" transform="translate(${x} 0)"/>`;
+    if (dot) dots += `<rect x="${x + dot[0]}" y="${dot[1]}" width="3.4" height="3.4"/>`;
+    x += w + gap;
+  }
+  const g = `<g transform="translate(${cx - width * k / 2} ${baseline - 20 * k}) scale(${k})">`;
+  return `<defs><linearGradient id="${id}" x1="0" y1="${top}" x2="0" y2="${baseline + 2}" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F6F8F9"/><stop offset=".45" stop-color="#C9CED2"/><stop offset=".55" stop-color="#8E959B"/><stop offset="1" stop-color="#E8EBED"/></linearGradient></defs>` +
+    `${g}<g fill="none" stroke="#000" stroke-width="${stroke + 1.6}" stroke-linejoin="round" opacity=".7" transform="translate(.6 1)">${paths}</g><g fill="#000" opacity=".7" transform="translate(.6 1)">${dots}</g></g>` +
+    `<g stroke="url(#${id})" fill="url(#${id})">${g}<g fill="none" stroke-width="${stroke}" stroke-linejoin="round">${paths}</g><g stroke="none">${dots}</g></g></g>`;
+}
+
+// ------------------------------------------------------------ shared frame
+function frame() {
+  const id = 'f' + uid++;
+  let g = `<defs>${rad(id + 'b', ['#5E636A', '#43474C', '#2B2D31', '#18191B'], .34, .26, .9)}${rad(id + 'g', ['#1E2023', '#0B0C0D', '#000'], .42, .3, .75)}
+    <radialGradient id="${id}s"><stop offset="0" stop-color="#fff" stop-opacity=".09"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+    <clipPath id="${id}c"><circle cx="${C}" cy="${C}" r="${BEZEL_IN}"/></clipPath></defs>`;
+  // bezel: asphalt, grain, seven plates
+  g += `<circle cx="${C}" cy="${C}" r="${C}" fill="url(#${id}b)"/><circle cx="${C}" cy="${C}" r="${C}" fill="url(#grain)" opacity=".6"/>`;
+  for (let k = 0; k < 7; k++) {
+    const deg = k * 360 / 7 + 360 / 14, [x0, y0] = polar(BEZEL_IN, deg), [x1, y1] = polar(C, deg), [a0, b0] = polar(BEZEL_IN, deg + .6), [a1, b1] = polar(C, deg + .6);
+    g += `<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" stroke="#000" stroke-width="1.4" opacity=".55"/><line x1="${a0}" y1="${b0}" x2="${a1}" y2="${b1}" stroke="#fff" stroke-width=".8" opacity=".1"/>`;
+  }
+  g += `<path d="${arcPath(C - 8, 292, 348)}" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" opacity=".14"/>`;
+  // glass
+  g += `<circle cx="${C}" cy="${C}" r="${BEZEL_IN + 2}" fill="none" stroke="#fff" stroke-width="1" opacity=".16"/>`;
+  g += `<circle cx="${C}" cy="${C}" r="${BEZEL_IN}" fill="url(#${id}g)"/><circle cx="${C}" cy="${C}" r="${BEZEL_IN}" fill="none" stroke="#000" stroke-width="3"/>`;
+  g += `<g clip-path="url(#${id}c)"><ellipse cx="${C - 70}" cy="${C - 118}" rx="170" ry="64" fill="url(#${id}s)" transform="rotate(-24 ${C - 70} ${C - 118})"/></g>`;
+  g += `<path d="${arcPath(BEZEL_IN - 7, 288, 350)}" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" opacity=".08"/>`;
+  return g;
+}
+// A faint mirror of something drawn above a waterline.
+function mirror(content, waterline, depth = 34) {
+  const id = 'm' + uid++;
+  return `<defs><linearGradient id="${id}g" x1="0" y1="${waterline}" x2="0" y2="${waterline + depth}" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#fff" stop-opacity=".22"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient><mask id="${id}m"><rect x="0" y="${waterline}" width="${S}" height="${depth}" fill="url(#${id}g)"/></mask></defs>` +
+    `<g mask="url(#${id}m)"><g transform="translate(0 ${2 * waterline}) scale(1 -1)">${content}</g></g>`;
+}
+
+// ------------------------------------------------------------------ List
+function list() {
+  let g = '';
+  // yellow clip gripping the bezel at twelve
+  g += `<defs>${lin('clip', [YELLOW[0], YELLOW[1], YELLOW[2]], 0, 1)}</defs>`;
+  g += `<rect x="${C - 50}" y="${C - 234}" width="100" height="38" rx="19" fill="#000" opacity=".8"/>`;
+  g += `<rect x="${C - 47}" y="${C - 231}" width="94" height="32" rx="16" fill="url(#clip)"/>`;
+  g += `<rect x="${C - 24}" y="${C - 219}" width="48" height="8" rx="4" fill="#3A2C00"/><rect x="${C - 34}" y="${C - 228}" width="68" height="2.4" rx="1.2" fill="#fff" opacity=".45"/>`;
+  // three hull windows, the items lit inside them
+  let items = '';
+  const rows = [[-68, 150, true], [-22, 190, false], [24, 120, false]];
+  for (const [dy, len, done] of rows) {
+    const y = C + dy;
+    items += `<rect x="${C - 128}" y="${y - 15}" width="256" height="30" rx="15" fill="#08090A" stroke="#000" stroke-width="1.5"/><rect x="${C - 116}" y="${y - 13}" width="232" height="2" rx="1" fill="#fff" opacity=".06"/>`;
+    items += done ? `<line x1="${C - 106}" y1="${y}" x2="${C - 106 + len}" y2="${y}" stroke="${YELLOW[2]}" stroke-width="9" stroke-linecap="round"/>`
+                  : neon(`M ${C - 106} ${y} L ${C - 106 + len} ${y}`, 9);
+  }
+  g += items + mirror(items, C + 40, 30);
+  return g;
+}
+
+// ---------------------------------------------------------------- Timers
+function timers() {
+  const end = 360 * .72;
+  let g = '';
+  g += sphere(C, C - 219, 13, true);
+  // hour marks, twelve in yellow
+  for (let h = 0; h < 12; h++) {
+    const [x, y] = polar(166, h * 30);
+    g += h === 0 ? `<circle cx="${x}" cy="${y}" r="3.4" fill="${YELLOW[1]}"/>` : `<circle cx="${x}" cy="${y}" r="${h % 3 ? 1.8 : 2.6}" fill="#8E9398"/>`;
+  }
+  // the counter: elapsed time as a neon ring inside the bezel
+  g += `<circle cx="${C}" cy="${C}" r="186" fill="none" stroke="#141517" stroke-width="12"/>`;
+  g += neon(arcPath(186, 0, end), 12);
+  // neon readout
+  const r = seg7(0, 0, '04:30', 36, N.c), x = C - r.width / 2, y = C + 30;
+  g += `<g transform="translate(${x} ${y})">${neon(r.d, 5.5)}<g fill="${N.core}" filter="url(#g)">${r.dots}</g></g>`;
+  // yellow hand, tail and hub
+  const [hx, hy] = polar(150, end), [tx, ty] = polar(34, end + 180);
+  g += `<line x1="${tx}" y1="${ty}" x2="${hx}" y2="${hy}" stroke="#000" stroke-width="10" stroke-linecap="round" opacity=".6"/>`;
+  g += `<line x1="${tx}" y1="${ty}" x2="${hx}" y2="${hy}" stroke="${YELLOW[1]}" stroke-width="6" stroke-linecap="round"/>`;
+  g += sphere(C, C, 16, true);
+  return g;
+}
+
+// ----------------------------------------------------------------- Notes
+function notes() {
+  let g = '';
+  // faint rules on the glass
+  for (const dy of [-64, -24, 16, 56]) {
+    const y = C + dy, half = Math.sqrt(190 * 190 - dy * dy);
+    g += `<line x1="${C - half}" y1="${y + 12}" x2="${C + half}" y2="${y + 12}" stroke="#202225" stroke-width="1"/>`;
+  }
+  // the note, written in neon; the last line ends at the pen
+  let writing = neon(wave(C - 150, C + 110, C - 70, 5, 44), 4.4);
+  writing += neon(wave(C - 160, C + 84, C - 30, 5, 44), 4.4);
+  writing += neon(wave(C - 160, C - 20, C + 10, 5, 46), 4.4);
+  g += writing + mirror(writing, C + 28, 30);
+  // yellow pen from the last word out past the bezel, as if resting on the glass
+  const tip = [C - 14, C + 8], ang = -42, len = 320;
+  g += `<defs>${lin('pen', [YELLOW[3], YELLOW[1], YELLOW[0], YELLOW[1], YELLOW[3]], 0, 1)}<filter id="soft" x="-10%" y="-60%" width="120%" height="220%"><feGaussianBlur stdDeviation="4"/></filter></defs>`;
+  g += `<g transform="translate(${tip[0]} ${tip[1]}) rotate(${ang})">`;
+  g += `<rect x="16" y="2" width="${len}" height="26" rx="13" fill="#000" opacity=".6" filter="url(#soft)"/>`;
+  g += `<path d="M 0 0 L 26 -10 L 26 10 Z" fill="#9EA3A8"/><path d="M 0 0 L 26 -10 L 26 -3 Z" fill="#fff" opacity=".35"/>`;
+  g += `<rect x="24" y="-12" width="${len}" height="24" rx="12" fill="url(#pen)"/>`;
+  g += `<rect x="70" y="-12" width="6" height="24" fill="${YELLOW[3]}" opacity=".7"/>`;
+  g += `<rect x="30" y="-8" width="${len - 20}" height="2.4" rx="1.2" fill="#fff" opacity=".4"/>`;
+  g += `</g>`;
+  g += `<circle cx="${tip[0]}" cy="${tip[1]}" r="4" fill="${N.core}" filter="url(#gt)"/>`;
+  return g;
+}
+
+const DEFS = `<filter id="noise"><feTurbulence type="fractalNoise" baseFrequency="1.2" numOctaves="2" seed="7"/><feColorMatrix values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .5 -.2"/></filter>
+  <pattern id="grain" width="466" height="466" patternUnits="userSpaceOnUse"><rect width="466" height="466" filter="url(#noise)"/></pattern>
+  <filter id="g" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3.4" result="a"/><feMerge><feMergeNode in="a"/><feMergeNode in="a"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  <filter id="gt" filterUnits="userSpaceOnUse" x="0" y="0" width="466" height="466"><feGaussianBlur stdDeviation="3" result="a"/><feMerge><feMergeNode in="a"/><feMergeNode in="a"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  <clipPath id="screen"><circle cx="${C}" cy="${C}" r="${C}"/></clipPath>`;
+function dot(i, on) {
+  const x = C + (i - 1) * 20, y = C + DOT_Y;
+  return on ? `<rect x="${x - 8}" y="${y - 2.5}" width="16" height="5" rx="2.5" fill="${N.c}" filter="url(#g)"/><rect x="${x - 7}" y="${y - 1.2}" width="14" height="2.4" rx="1.2" fill="${N.core}"/>`
+            : `<rect x="${x - 8}" y="${y - 2.5}" width="16" height="5" rx="2.5" fill="#2E3135"/>`;
+}
+function face(content, caption, page, withText = true) {
+  return `<svg width="${S}" height="${S}" viewBox="0 0 ${S} ${S}"><defs>${DEFS}</defs>
+    <g clip-path="url(#screen)">${frame()}${content}
+    ${withText ? [0, 1, 2].map(i => dot(i, i === page)).join('') +
+      lettering(caption.toLowerCase(), C, C + CAPTION_Y + 6, 12) : ''}</g>
+  </svg>`;
+}
+N = NEONS.ohmu;
+const zoomCaps = location.hash === '#caps';
+document.getElementById('sheet').innerHTML = zoomCaps
+  ? `<div class="row"><h2>Captions<span> · lettered like the hull, at 4×</span></h2><svg width="1400" height="220" viewBox="0 0 350 55"><defs>${DEFS}</defs><rect width="350" height="55" fill="#060606"/>${lettering('list', 60, 36, 12)}${lettering('timers', 170, 36, 12)}${lettering('notes', 285, 36, 12)}</svg></div>`
+  : `<div class="row"><h2>G4a<span> · the whole screen, captions lettered like the hull</span></h2><div class="faces">${
+      [list(), timers(), notes()].map((m, i) => face(m, ['List', 'Timers', 'Notes'][i], i)).join('')}</div></div>`;
+const exp = location.hash.match(/^#export=(list|timers|notes)$/);
+if (exp) {
+  const page = ['list', 'timers', 'notes'].indexOf(exp[1]);
+  document.body.style.cssText = 'margin:0;padding:0;background:#000';
+  document.getElementById('sheet').innerHTML = face([list, timers, notes][page](), ['List', 'Timers', 'Notes'][page], page);
+}
+</script>
+</body>
+</html>

@@ -1,162 +1,113 @@
 #!/usr/bin/env python3
-"""Turn the menu drawing (menu_art/*.png) into LVGL RGB565 images (Pillow).
+"""Pack the menu drawing (menu_art/page-*.png) into flash-sized page images.
 
-The PNGs are 466 x 466 frames rendered from menu_art/orbit-menu-g.html
-(#export=<name>) on the same black the menu panel paints, so each mark keeps
-its exact place on the screen. This script crops each mark to what is drawn,
-quantises it to RGB565 with a fixed 4 x 4 ordered dither (smooth steel
-gradients, pure black stays black) and writes menu_asset.h / menu_asset.cc.
+Drawing G4a fills the whole round screen: one 466 x 466 frame per page,
+rendered from menu_art/orbit-menu-g4a.html (#export=<page>). Three frames
+in RGB565 would not fit in ota_0, so each page is stored as 256 colours:
+a palette of RGB565 values and one index byte per pixel, Floyd-Steinberg
+dithered by Pillow. The firmware expands the page it shows into a single
+RGB565 buffer in PSRAM (RoundLcdDisplay::PaintMenuPageLocked).
 
     python3 scripts/generate_orbit_menu.py [--preview OUT_DIR]
 
---preview decodes the generated pixels back into one 466 x 466 frame per page,
-placed where the firmware places them, to check the result without a ring.
+--preview decodes the packed pages back to PNG, exactly as the ring expands
+them, and prints how far each is from its master.
 """
 
 import argparse
+import math
 from pathlib import Path
 
-from PIL import Image, ImageChops
+from PIL import Image
 
 
 BOARD = Path(__file__).resolve().parents[1] / "main/boards/m5stack/stopwatch"
 ART = BOARD / "menu_art"
 SCREEN = 466
 # Menu pages in swipe order; the index is the page ShowOrbitMenu receives.
-MARKS = ("list", "timers", "notes")
-DOTS = ("dot-on", "dot-off")
-# Page dots: 12 px squares centred 118 px below the middle, 16 px apart.
-DOT_SIZE = 12
-DOT_CENTRE_Y = SCREEN // 2 + 118
-# Anything darker than this is black on the panel; dropping it keeps the dither
-# from sprinkling single pixels around the glow.
-FLOOR = 4
-BAYER = ((0, 8, 2, 10), (12, 4, 14, 6), (3, 11, 1, 9), (15, 7, 13, 5))
+PAGES = ("list", "timers", "notes")
 
 
-def frame(name):
-    image = Image.open(ART / f"{name}.png").convert("RGB")
-    assert image.size == (SCREEN, SCREEN), f"{name}.png must be a {SCREEN} px frame"
+def master(name):
+    image = Image.open(ART / f"page-{name}.png").convert("RGB")
+    assert image.size == (SCREEN, SCREEN), f"page-{name}.png must be {SCREEN} px square"
     return image
 
 
-def floor_black(image):
-    red, green, blue = image.split()
-    peak = ImageChops.lighter(ImageChops.lighter(red, green), blue)
-    out = Image.new("RGB", image.size)
-    out.paste(image, mask=peak.point(lambda value: 255 if value >= FLOOR else 0))
-    return out
+def rgb565(r, g, b):
+    return (round(r * 31 / 255) << 11) | (round(g * 63 / 255) << 5) | round(b * 31 / 255)
 
 
-def rgb565(image):
-    """Little-endian RGB565 bytes, ordered-dithered per channel."""
-    width, height = image.size
-    data = bytearray()
-    source = image.load()
-    for y in range(height):
-        for x in range(width):
-            threshold = (BAYER[y % 4][x % 4] + 0.5) / 16
-            r, g, b = source[x, y]
-            r5 = min(31, int(r * 31 / 255 + threshold))
-            g6 = min(63, int(g * 63 / 255 + threshold))
-            b5 = min(31, int(b * 31 / 255 + threshold))
-            value = (r5 << 11) | (g6 << 5) | b5
-            data += bytes((value & 0xFF, value >> 8))
-    return bytes(data)
+def pack(image):
+    """(palette of 256 RGB565 values, index bytes) for one page."""
+    indexed = image.quantize(colors=256, method=Image.Quantize.MEDIANCUT,
+                             dither=Image.Dither.FLOYDSTEINBERG)
+    flat = indexed.getpalette()[:256 * 3]
+    flat += [0] * (256 * 3 - len(flat))
+    palette = [rgb565(*flat[i:i + 3]) for i in range(0, 256 * 3, 3)]
+    assert 0 in palette, "pure black must survive: the screen edge and glass are black"
+    return palette, indexed.tobytes()
 
 
-def decode(data, width, height):
-    pixels = []
-    for i in range(0, len(data), 2):
-        value = data[i] | (data[i + 1] << 8)
-        r, g, b = value >> 11, (value >> 5) & 0x3F, value & 0x1F
-        pixels.append((r * 255 // 31, g * 255 // 63, b * 255 // 31))
-    image = Image.new("RGB", (width, height))
-    image.putdata(pixels)
+def expand(palette, pixels):
+    image = Image.new("RGB", (SCREEN, SCREEN))
+    rgb = []
+    for index in pixels:
+        value = palette[index]
+        rgb.append(((value >> 11) * 255 // 31, ((value >> 5) & 0x3F) * 255 // 63,
+                    (value & 0x1F) * 255 // 31))
+    image.putdata(rgb)
     return image
-
-
-def assets():
-    """(identifier, left, top, image) for every generated image."""
-    out = []
-    for name in MARKS:
-        image = floor_black(frame(name))
-        box = image.getbbox()
-        assert box, f"{name}.png is empty"
-        out.append((name, box[0], box[1], image.crop(box)))
-    for name in DOTS:
-        image = floor_black(frame(name))
-        left, top = SCREEN // 2 - DOT_SIZE // 2, DOT_CENTRE_Y - DOT_SIZE // 2
-        box = image.getbbox()
-        assert box and box[0] >= left and box[1] >= top and \
-            box[2] <= left + DOT_SIZE and box[3] <= top + DOT_SIZE, f"{name} is not a centred dot"
-        out.append((name, left, top, image.crop((left, top, left + DOT_SIZE, top + DOT_SIZE))))
-    return out
 
 
 def identifier(name):
-    return "".join(part.capitalize() for part in name.split("-"))
+    return name.capitalize()
 
 
 def generate():
     header = ["// Generated by scripts/generate_orbit_menu.py; do not edit.",
-              "#pragma once", '#include "lvgl.h"', "namespace OrbitMenu {",
-              "// Where a mark sits on the 466 px menu panel (top-left corner).",
-              "struct Mark {", "    const lv_image_dsc_t* image;", "    int x;", "    int y;", "};"]
+              "#pragma once", "#include <cstdint>", "namespace OrbitMenu {",
+              f"constexpr int kPageSize = {SCREEN};",
+              "// One menu page: 256 RGB565 colours and one palette index per pixel,",
+              "// row by row, kPageSize x kPageSize.",
+              "struct Page {", "    const uint16_t* palette;", "    const uint8_t* pixels;", "};",
+              "// Indexed by menu page: 0 List, 1 Timers, 2 Notes.",
+              "extern const Page kPages[3];", "}  // namespace OrbitMenu"]
     source = ["// Generated by scripts/generate_orbit_menu.py; do not edit.",
               '#include "sdkconfig.h"', "#if CONFIG_PROVISIONS_GATEWAY_REQUIRED",
               '#include "menu_asset.h"', "namespace OrbitMenu {"]
-    marks = []
     total = 0
-    for name, left, top, image in assets():
+    for name in PAGES:
         key = identifier(name)
-        data = rgb565(image)
-        total += len(data)
-        header.append(f"extern const lv_image_dsc_t k{key}Image;")
-        if name in MARKS:
-            marks.append(f"    {{&k{key}Image, {left}, {top}}},")
-        source.append(f"alignas(4) static const uint8_t k{key}Pixels[] = {{")
-        source.extend("    " + ",".join(f"0x{b:02x}" for b in data[i:i + 24]) + ","
-                      for i in range(0, len(data), 24))
-        source.extend(["};", f"const lv_image_dsc_t k{key}Image = [] {{",
-                       "    lv_image_dsc_t image{};",
-                       "    image.header.magic = LV_IMAGE_HEADER_MAGIC;",
-                       "    image.header.cf = LV_COLOR_FORMAT_RGB565;",
-                       f"    image.header.w = {image.width};",
-                       f"    image.header.h = {image.height};",
-                       f"    image.header.stride = {image.width * 2};",
-                       f"    image.data_size = sizeof(k{key}Pixels);",
-                       f"    image.data = k{key}Pixels;",
-                       "    return image;", "}();"])
-    header.extend(["// Indexed by menu page: 0 List, 1 Timers, 2 Notes.",
-                   "extern const Mark kMarks[3];",
-                   f"constexpr int kDotSize = {DOT_SIZE};",
-                   f"constexpr int kDotTop = {DOT_CENTRE_Y - DOT_SIZE // 2};",
-                   "constexpr int kDotLeft(int index) {",
-                   f"    return {SCREEN // 2 - DOT_SIZE // 2} + (index - 1) * 16;",
-                   "}", "}  // namespace OrbitMenu"])
-    source.extend(["const Mark kMarks[3] = {", *marks, "};",
-                   "}  // namespace OrbitMenu", "#endif"])
+        palette, pixels = pack(master(name))
+        total += len(pixels) + 2 * len(palette)
+        source.append(f"alignas(4) static const uint16_t k{key}Palette[256] = {{")
+        source.extend("    " + ",".join(f"0x{v:04x}" for v in palette[i:i + 16]) + ","
+                      for i in range(0, 256, 16))
+        source.extend(["};", f"alignas(4) static const uint8_t k{key}Pixels[{len(pixels)}] = {{"])
+        source.extend("    " + ",".join(f"0x{b:02x}" for b in pixels[i:i + 32]) + ","
+                      for i in range(0, len(pixels), 32))
+        source.append("};")
+    source.append("const Page kPages[3] = {")
+    source.extend(f"    {{k{identifier(name)}Palette, k{identifier(name)}Pixels}}," for name in PAGES)
+    source.extend(["};", "}  // namespace OrbitMenu", "#endif"])
     (BOARD / "menu_asset.h").write_text("\n".join(header) + "\n")
     (BOARD / "menu_asset.cc").write_text("\n".join(source) + "\n")
-    print(f"Generated {len(MARKS)} marks and {len(DOTS)} dots, {total:,} bytes of RGB565.")
+    print(f"Packed {len(PAGES)} menu pages, {total:,} bytes.")
 
 
 def preview(out_dir):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    decoded = {name: (left, top, decode(rgb565(image), *image.size))
-               for name, left, top, image in assets()}
-    for page, name in enumerate(MARKS):
-        canvas = Image.new("RGB", (SCREEN, SCREEN))
-        left, top, image = decoded[name]
-        canvas.paste(image, (left, top))
-        for index in range(3):
-            dot = decoded["dot-on" if index == page else "dot-off"][2]
-            canvas.paste(dot, (SCREEN // 2 - DOT_SIZE // 2 + (index - 1) * 16,
-                               DOT_CENTRE_Y - DOT_SIZE // 2))
-        canvas.save(out_dir / f"menu-{name}.png")
-    print(f"Wrote {len(MARKS)} preview frames to {out_dir}.")
+    for name in PAGES:
+        source = master(name)
+        shown = expand(*pack(source))
+        shown.save(out_dir / f"menu-{name}.png")
+        error = sum((a - b) ** 2 for p, q in zip(source.getdata(), shown.getdata())
+                    for a, b in zip(p, q)) / (SCREEN * SCREEN * 3)
+        psnr = 10 * math.log10(255 ** 2 / error) if error else float("inf")
+        print(f"{name}: {psnr:.1f} dB against the master")
+    print(f"Wrote {len(PAGES)} preview pages to {out_dir}.")
 
 
 if __name__ == "__main__":
