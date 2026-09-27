@@ -85,6 +85,8 @@ public:
 
     // Both buttons are down inside a chord. The lock commits only after they
     // have been held, so a brush in a pocket does not lock or unlock.
+    bool BlueHeld() const { return blue_down_; }
+
     bool BothHeld() const { return chord_ && talk_down_ && blue_down_; }
 
 private:

@@ -148,7 +148,7 @@ class ProvisionsButtonChordTests(unittest.TestCase):
         self.assertIn("ToggleTimerFace()", board)
         # A yellow click (release inside the window) confirms the menu without
         # opening the microphone; only a started capture is stopped.
-        release = board.split("button1_.OnPressUp", 1)[1].split("});", 1)[0]
+        release = board.split("button1_.OnPressUp", 1)[1].split("button2_.OnPressDown", 1)[0]
         self.assertIn("if (TalkReleased()) {", release)
         self.assertIn("StopListening();", release)
         self.assertIn("TalkClicked()", release)

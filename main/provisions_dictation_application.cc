@@ -437,10 +437,11 @@ bool Application::ConfirmOrbitMenu() {
     return timers;
 }
 
-// Entry is deliberately wired only after Dennis chooses the menu placement.
-void Application::StartOrbitWifiSetup() {
-    Schedule([this]() {
-        if (IsOrbitWifiSetup() || GetDeviceState() != kDeviceStateIdle ||
+// Recheck the physical hold on the application task; a release/lock invalidates queued entry.
+void Application::StartOrbitWifiSetup(std::function<bool()> still_allowed) {
+    Schedule([this, still_allowed = std::move(still_allowed)]() {
+        if (!still_allowed() || !IsOrbitMenuFace() || provisions_timer_ringing_ ||
+            IsOrbitWifiSetup() || GetDeviceState() != kDeviceStateIdle ||
             manual_listening_requested_.load() || provisions_network_busy_.load() ||
             provisions_response_pending_.load() || provisions_recording_saving_.load() ||
             !audio_service_.IsPlaybackIdle() || timer_player_.Fenced())

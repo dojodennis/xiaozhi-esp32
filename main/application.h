@@ -138,7 +138,7 @@ public:
     bool IsOrbitNotesFace() const;
     bool IsOrbitMenuFace() const;
     bool IsOrbitWifiSetup() const { return orbit_wifi_setup_.load(); }
-    void StartOrbitWifiSetup();
+    void StartOrbitWifiSetup(std::function<bool()> still_allowed);
     void CancelOrbitWifiSetup();
     // Finger swipe on the shopping face: down pages toward older items, up
     // toward newer. Snaps back to live on the newest page, a new add, or idle.
