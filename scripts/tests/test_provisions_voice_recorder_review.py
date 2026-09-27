@@ -632,6 +632,7 @@ struct AudioService {
  void CancelLocalFeedback(){}void CloseVoiceUploadGate(){}void ResetDecoder(){}bool IsLocalRecordingReady(uint32_t press){return local_recording_press_==press;}
 };
 struct Application {
+    bool wifi_setup=false;bool IsOrbitWifiSetup()const{return wifi_setup;}
  std::mutex provisions_recording_control_mutex_;ProvisionsReplyTurn provisions_physical_press_;
  std::shared_ptr<VoiceRecorder> provisions_recorder_=std::make_shared<VoiceRecorder>();AudioService audio_service_;
  std::shared_ptr<WebsocketProtocol> protocol=std::make_shared<WebsocketProtocol>();int event_group_=0,state=kDeviceStateIdle;

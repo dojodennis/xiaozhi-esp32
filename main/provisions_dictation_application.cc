@@ -326,6 +326,8 @@ void Application::ServiceDictation() {
     } else if (dictation_review_pending_ && !recording) {
         status = "Saving";
     }
+    if (IsOrbitWifiSetup())
+        return;
     if (orbit_view_.load() == OrbitView::Menu || orbit_view_.load() == OrbitView::Notes)
         return;
     if (orbit_view_.load() == OrbitView::Shopping) {
@@ -426,6 +428,8 @@ void Application::HandleShoppingSwipe(bool down) {
 }
 
 bool Application::ConfirmOrbitMenu() {
+    if (IsOrbitWifiSetup())
+        return true;
     if (orbit_view_.load() != OrbitView::Menu)
         return false;
     const bool timers = orbit_menu_index_ == 1;
@@ -433,7 +437,50 @@ bool Application::ConfirmOrbitMenu() {
     return timers;
 }
 
+// Entry is deliberately wired only after Dennis chooses the menu placement.
+void Application::StartOrbitWifiSetup() {
+    Schedule([this]() {
+        if (IsOrbitWifiSetup() || GetDeviceState() != kDeviceStateIdle ||
+            manual_listening_requested_.load() || provisions_network_busy_.load() ||
+            provisions_response_pending_.load() || provisions_recording_saving_.load() ||
+            !audio_service_.IsPlaybackIdle() || timer_player_.Fenced())
+            return;
+        LeaveDictationScreenOnMain();
+        orbit_wifi_setup_.store(true);
+        SetDeviceState(kDeviceStateWifiConfiguring);
+        ProvisionsShowOrbitWifiSetup("");
+        auto finish = [this](bool saved) {
+            Schedule([this, saved]() {
+                orbit_wifi_setup_.store(false);
+                ProvisionsHideOrbitWifiSetup();
+                SetDeviceState(kDeviceStateIdle);
+                orbit_view_.store(OrbitView::Menu);
+                PaintOrbitView();
+                Board::GetInstance().GetDisplay()->ShowNotification(
+                    saved ? "wi-fi saved — reconnecting" : "setup closed — retrying saved wi-fi");
+            });
+        };
+        if (!Board::GetInstance().StartWifiSetup(
+                [this](std::string payload) {
+                    Schedule([this, payload = std::move(payload)]() {
+                        if (IsOrbitWifiSetup())
+                            ProvisionsShowOrbitWifiSetup(payload);
+                    });
+                },
+                finish))
+            finish(false);
+    });
+}
+void Application::CancelOrbitWifiSetup() {
+    if (IsOrbitWifiSetup())
+        Board::GetInstance().CancelWifiSetup();
+}
+
 void Application::HandleOrbitMenuBlueOnMain() {
+    if (IsOrbitWifiSetup()) {
+        CancelOrbitWifiSetup();
+        return;
+    }
     if (orbit_view_.load() == OrbitView::Menu) {
         orbit_menu_index_ = static_cast<uint8_t>((orbit_menu_index_ + 1) % 3);
         PaintOrbitView();
@@ -487,6 +534,8 @@ void Application::ConfirmOrbitMenuOnMain() {
 
 void Application::HandleOrbitFaceSwipe(bool right) {
     Schedule([this, right]() {
+        if (IsOrbitWifiSetup())
+            return;
         // The menu is its own pager: a sideways swipe flips the logo
         // (list <-> timer) and stays there until yellow confirms.
         if (orbit_view_.load() == OrbitView::Menu) {

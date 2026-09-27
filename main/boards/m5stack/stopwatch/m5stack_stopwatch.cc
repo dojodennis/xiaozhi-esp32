@@ -234,6 +234,7 @@ private:
 
     using AlarmOutputChange = ProvisionsStopwatchOrbit::AlarmOutputChange;
 
+    lv_obj_t* wifi_setup_layer_ = nullptr;
     lv_obj_t* brand_label_ = nullptr;
     lv_obj_t* title_label_ = nullptr;
     lv_obj_t* brand_rule_ = nullptr;
@@ -1049,6 +1050,9 @@ private:
         SetVisible(standby_layer_, !display_awake && !orbit_locked_ui_);
         // The lock covers every face except a ringing timer, which still has
         // to be readable and tappable.
+        SetVisible(wifi_setup_layer_, display_awake && !show_alarm && !orbit_locked_ui_);
+        if (wifi_setup_layer_ && display_awake && !show_alarm && !orbit_locked_ui_)
+            lv_obj_move_foreground(wifi_setup_layer_);
         SetVisible(lock_layer_, orbit_locked_ui_ && !show_alarm);
         if (orbit_locked_ui_ && !show_alarm && lock_layer_ != nullptr)
             lv_obj_move_foreground(lock_layer_);
@@ -3018,6 +3022,50 @@ public:
         SetReplyLayoutLocked(false);
     }
 
+    void ShowOrbitWifiSetup(const std::string& payload) {
+#if CONFIG_LV_USE_QRCODE
+        DisplayLockGuard lock(this);
+        if (wifi_setup_layer_)
+            lv_obj_delete(wifi_setup_layer_);
+        wifi_setup_layer_ = lv_obj_create(lv_screen_active());
+        lv_obj_remove_style_all(wifi_setup_layer_);
+        lv_obj_set_size(wifi_setup_layer_, 466, 466);
+        lv_obj_set_style_bg_color(wifi_setup_layer_, lv_color_hex(0x202326), 0);
+        lv_obj_set_style_bg_opa(wifi_setup_layer_, LV_OPA_COVER, 0);
+        auto label = [this](const char* text, int y) {
+            auto* object = lv_label_create(wifi_setup_layer_);
+            lv_label_set_text(object, text);
+            lv_obj_set_style_text_font(object, &font_noto_sans_basic_16_4, 0);
+            lv_obj_set_style_text_color(object, lv_color_hex(0xeeeeee), 0);
+            lv_obj_set_style_text_align(object, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_set_width(object, 310);
+            lv_obj_align(object, LV_ALIGN_TOP_MID, 0, y);
+        };
+        label(payload.empty() ? "starting wi-fi" : "scan with your phone", 60);
+        if (!payload.empty()) {
+            auto* qr = lv_qrcode_create(wifi_setup_layer_);
+            lv_qrcode_set_size(qr, 252);
+            lv_qrcode_set_dark_color(qr, lv_color_black());
+            lv_qrcode_set_light_color(qr, lv_color_white());
+            lv_qrcode_set_quiet_zone(qr, true);
+            lv_obj_align(qr, LV_ALIGN_CENTER, 0, -5);
+            if (lv_qrcode_update(qr, payload.data(), payload.size()) != LV_RESULT_OK) {
+                lv_obj_delete(qr);
+                label("cannot draw code\npress blue and try again", 200);
+            }
+        }
+        label("then open 192.168.4.1\n2.4 GHz wi-fi · blue cancels", 374);
+        SetReplyLayoutLocked(false);
+#endif
+    }
+    void HideOrbitWifiSetup() {
+        DisplayLockGuard lock(this);
+        if (wifi_setup_layer_)
+            lv_obj_delete(wifi_setup_layer_);
+        wifi_setup_layer_ = nullptr;
+        SetReplyLayoutLocked(false);
+    }
+
     void SetOrbitLocked(bool locked) {
         DisplayLockGuard lock(this);
         orbit_locked_ui_ = locked;
@@ -3494,6 +3542,9 @@ private:
             }
             display_->SetOrbitLocked(locked);
             if (locked) {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                Application::GetInstance().CancelOrbitWifiSetup();
+#endif
                 GetBacklight()->SetBrightness(8, false);
                 return;
             }
@@ -3737,6 +3788,12 @@ private:
                         esp_timer_get_time() < deadline) {
                         return;
                     }
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                    if (Application::GetInstance().IsOrbitWifiSetup()) {
+                        self->ResetDisplayIdleTimer();
+                        return;
+                    }
+#endif
                     if (self->display_->HasTimerAlarm() || self->orbit_locked_.load()) {
                         if (self->display_->HasTimerAlarm())
                             self->ResetDisplayIdleTimer();
@@ -4093,6 +4150,17 @@ void ProvisionsShowOrbitMenu(uint8_t page) {
         return;
     }
     static_cast<RoundLcdDisplay*>(display)->ShowOrbitMenu(page);
+}
+
+void ProvisionsShowOrbitWifiSetup(const std::string& payload) {
+    auto* display = Board::GetInstance().GetDisplay();
+    if (display)
+        static_cast<RoundLcdDisplay*>(display)->ShowOrbitWifiSetup(payload);
+}
+void ProvisionsHideOrbitWifiSetup() {
+    auto* display = Board::GetInstance().GetDisplay();
+    if (display)
+        static_cast<RoundLcdDisplay*>(display)->HideOrbitWifiSetup();
 }
 
 void ProvisionsDismissSpokenFace() {

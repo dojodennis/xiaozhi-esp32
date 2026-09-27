@@ -107,6 +107,7 @@ struct Board:WifiBoard{
 };
 struct AudioService{void EnableVoiceProcessing(bool){}void EnableWakeWordDetection(bool){}};
 struct Application{
+    bool wifi_setup=false;bool IsOrbitWifiSetup()const{return wifi_setup;}
  static Application& GetInstance(){static Application a;return a;}
  std::atomic<bool> manual_listening_requested_{true};int listening_mode_=0;AudioService audio_service_;
  bool provisions_timer_ringing_=false,alarm_output_held_=false;

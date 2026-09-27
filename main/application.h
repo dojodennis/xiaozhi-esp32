@@ -137,6 +137,9 @@ public:
     bool IsOrbitShoppingFace() const;
     bool IsOrbitNotesFace() const;
     bool IsOrbitMenuFace() const;
+    bool IsOrbitWifiSetup() const { return orbit_wifi_setup_.load(); }
+    void StartOrbitWifiSetup();
+    void CancelOrbitWifiSetup();
     // Finger swipe on the shopping face: down pages toward older items, up
     // toward newer. Snaps back to live on the newest page, a new add, or idle.
     void HandleShoppingSwipe(bool down);
@@ -324,6 +327,7 @@ private:
     enum class OrbitView : uint8_t { Home, Menu, Shopping, Notes };
     std::atomic<OrbitView> orbit_view_{OrbitView::Home};
     uint8_t orbit_menu_index_ = 0;
+    std::atomic<bool> orbit_wifi_setup_{false};
     std::string shopping_list_face_;
     std::vector<std::string> shopping_list_items_;
     std::vector<std::string> notes_items_;
