@@ -19,3 +19,12 @@ SSID/64-byte PSK values safely; propagate save failures. Expiry/cancel/save orde
 and credential boundaries have native tests in `scripts/tests/test_orbit_wifi_session.py`.
 
 Physical tests of the radio, browser, heap, and reconnect behavior remain mandatory.
+
+28 September WIFI-04 review corrections: setup owns a temporary STA netif so
+credential tests can obtain DHCP before saving. Manager lifecycle serialization
+is separate from callback-state locking; IDF callback unregister never waits while
+holding the state mutex. Scan callbacks are drained before deleting their timer.
+DNS validates bounded questions and constructs bounded replies; shutdown joins
+the worker before closing its socket or freeing the owner. Regression tests execute
+the actual DNS parser, manager lifecycle and AP setup/cleanup methods with host
+hardware stubs in `scripts/tests/test_orbit_wifi_review.py`.

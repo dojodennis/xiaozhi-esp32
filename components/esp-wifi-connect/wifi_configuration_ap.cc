@@ -68,18 +68,7 @@ void WifiConfigurationAp::Start() {
     if (orbit_password_.size() < 12 || OrbitSetupResult() != OrbitWifiSession::Result::Active)
         return;
 #endif
-    // Register event handlers
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
-                                                        &WifiConfigurationAp::WifiEventHandler,
-                                                        this, &instance_any_id_));
-    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
-                                                        &WifiConfigurationAp::IpEventHandler, this,
-                                                        &instance_got_ip_));
-
-    StartAccessPoint();
-    StartWebServer();
-
-    // The scan timer must exist before the first scan completion callback.
+    // Create before registering callbacks or serving requests that use this timer.
     // Setup periodic WiFi scan timer.
     // skip_unhandled_events = false so the timer can wake the CPU from light
     // sleep on its own; otherwise the AP-mode scan list would stop refreshing
@@ -98,6 +87,18 @@ void WifiConfigurationAp::Start() {
                                           .name = "wifi_scan_timer",
                                           .skip_unhandled_events = false};
     ESP_ERROR_CHECK(esp_timer_create(&timer_args, &scan_timer_));
+
+    // Register event handlers
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
+                                                        &WifiConfigurationAp::WifiEventHandler,
+                                                        this, &instance_any_id_));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
+                                                        &WifiConfigurationAp::IpEventHandler, this,
+                                                        &instance_got_ip_));
+
+    StartAccessPoint();
+    StartWebServer();
+
     esp_wifi_scan_start(nullptr, false);
 }
 
@@ -125,6 +126,11 @@ void WifiConfigurationAp::StartAccessPoint() {
 
     // Create the default WiFi AP interface
     ap_netif_ = esp_netif_create_default_wifi_ap();
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    // WifiStation::Stop destroyed its interface. APSTA needs a new STA netif
+    // and DHCP client before a tested connection can emit IP_EVENT_STA_GOT_IP.
+    setup_station_netif_ = esp_netif_create_default_wifi_sta();
+#endif
 
     // Set the router IP address to 192.168.4.1
     esp_netif_ip_info_t ip_info;
@@ -928,6 +934,17 @@ void WifiConfigurationAp::Stop() {
     esp_smartconfig_stop();
 #endif
 
+    // Drain event callbacks before deleting the timer they can rearm.
+    // 注销事件处理器
+    if (instance_any_id_) {
+        esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, instance_any_id_);
+        instance_any_id_ = nullptr;
+    }
+    if (instance_got_ip_) {
+        esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, instance_got_ip_);
+        instance_got_ip_ = nullptr;
+    }
+
     // 停止定时器
     if (scan_timer_) {
         esp_timer_stop(scan_timer_);
@@ -947,20 +964,14 @@ void WifiConfigurationAp::Stop() {
         dns_server_.reset();
     }
 
-    // 注销事件处理器
-    if (instance_any_id_) {
-        esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, instance_any_id_);
-        instance_any_id_ = nullptr;
-    }
-    if (instance_got_ip_) {
-        esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, instance_got_ip_);
-        instance_got_ip_ = nullptr;
-    }
-
     // 停止WiFi（但不 deinit，WiFi 驱动由 WifiManager 管理）
     esp_wifi_stop();
 
     // 销毁网络接口
+    if (setup_station_netif_) {
+        esp_netif_destroy_default_wifi(setup_station_netif_);
+        setup_station_netif_ = nullptr;
+    }
     if (ap_netif_) {
         esp_netif_destroy_default_wifi(ap_netif_);
         ap_netif_ = nullptr;

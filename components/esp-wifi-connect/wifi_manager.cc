@@ -23,16 +23,14 @@ WifiManager& WifiManager::GetInstance() {
 WifiManager::WifiManager() = default;
 
 WifiManager::~WifiManager() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (station_active_ && station_) {
+    std::lock_guard<std::mutex> lifecycle(lifecycle_mutex_);
+    // Event callbacks may query manager state while unregister waits for them.
+    if (station_active_ && station_)
         station_->Stop();
-    }
-    if (config_mode_active_ && config_ap_) {
+    if (config_mode_active_ && config_ap_)
         config_ap_->Stop();
-    }
-    if (initialized_) {
+    if (initialized_)
         esp_wifi_deinit();
-    }
 }
 
 void WifiManager::NotifyEvent(WifiEvent event, const std::string& data) {
@@ -109,37 +107,23 @@ bool WifiManager::IsInitialized() const {
 // ==================== Station Mode ====================
 
 void WifiManager::StartStation() {
-    std::unique_lock<std::mutex> lock(mutex_);
-
-    if (!initialized_) {
-        ESP_LOGE(TAG, "Not initialized");
-        return;
-    }
-    if (station_active_) {
-        ESP_LOGW(TAG, "Station already active");
-        return;
-    }
-
-    // Auto-stop config AP if active
-    if (config_mode_active_) {
-        ESP_LOGI(TAG, "Stopping config AP before starting station");
-        config_ap_->Stop();
+    std::unique_lock<std::mutex> lifecycle(lifecycle_mutex_);
+    bool stopped_ap;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!initialized_ || station_active_)
+            return;
+        stopped_ap = config_mode_active_;
         config_mode_active_ = false;
-        // Notify outside lock
-        lock.unlock();
-        NotifyEvent(WifiEvent::ConfigModeExit);
-        lock.lock();
     }
-
-    ESP_LOGI(TAG, "Starting station");
-
-    // Apply configuration
+    // Do not hold mutex_ across IDF registration/unregistration or synchronous
+    // station callbacks: the event task needs it to publish/query manager state.
+    if (stopped_ap)
+        config_ap_->Stop();
     station_->SetScanIntervalRange(config_.station_scan_min_interval_seconds,
                                    config_.station_scan_max_interval_seconds);
     station_->SetFailureRetryCnt(config_.station_failure_retry_cnt);
     station_->SetHostname(config_.station_hostname);
-
-    // Setup callbacks
     station_->OnScanBegin([this]() { NotifyEvent(WifiEvent::Scanning); });
     station_->OnConnect(
         [this](const std::string& ssid) { NotifyEvent(WifiEvent::Connecting, ssid); });
@@ -147,26 +131,27 @@ void WifiManager::StartStation() {
         [this](const std::string& ssid) { NotifyEvent(WifiEvent::Connected, ssid); });
     station_->OnDisconnected(
         [this](int reason) { NotifyEvent(WifiEvent::Disconnected, std::to_string(reason)); });
-
     station_->Start();
-    station_active_ = true;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        station_active_ = true;
+    }
+    lifecycle.unlock();
+    if (stopped_ap)
+        NotifyEvent(WifiEvent::ConfigModeExit);
 }
 
 void WifiManager::StopStation() {
-    std::unique_lock<std::mutex> lock(mutex_);
-
-    if (!station_active_) {
-        return;
+    std::unique_lock<std::mutex> lifecycle(lifecycle_mutex_);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!station_active_)
+            return;
+        station_active_ = false;
     }
-
-    ESP_LOGI(TAG, "Stopping station");
     station_->Stop();
-    ESP_LOGI(TAG, "Station stopped");
-    station_active_ = false;
-
-    lock.unlock();
+    lifecycle.unlock();
     NotifyEvent(WifiEvent::Disconnected);
-    lock.lock();
 }
 
 bool WifiManager::IsConnected() const {
@@ -221,62 +206,45 @@ std::string WifiManager::GetMacAddress() const {
 // ==================== Config AP Mode ====================
 
 void WifiManager::StartConfigAp() {
-    std::unique_lock<std::mutex> lock(mutex_);
-
-    if (!initialized_) {
-        ESP_LOGE(TAG, "Not initialized");
-        return;
-    }
-    if (config_mode_active_) {
-        ESP_LOGW(TAG, "Config AP already active");
-        return;
-    }
-
-    // Auto-stop station if active
-    if (station_active_) {
-        ESP_LOGI(TAG, "Stopping station before starting config AP");
-        station_->Stop();
+    std::unique_lock<std::mutex> lifecycle(lifecycle_mutex_);
+    bool stopped_station;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!initialized_ || config_mode_active_)
+            return;
+        stopped_station = station_active_;
         station_active_ = false;
-        lock.unlock();
-        NotifyEvent(WifiEvent::Disconnected);
-        lock.lock();
     }
-
-    ESP_LOGI(TAG, "Starting config AP");
-
+    if (stopped_station)
+        station_->Stop();
     config_ap_->SetSsidPrefix(config_.ssid_prefix);
     config_ap_->SetLanguage(config_.language);
     config_ap_->SetShowOtaConfig(config_.show_ota_config);
     config_ap_->SetShowSleepConfig(config_.show_sleep_config);
-
-    // Web handler calls this when user submits config
-    config_ap_->OnExitRequested([this]() {
-        ESP_LOGI(TAG, "Config exit requested from web");
-        StopConfigAp();
-    });
-
+    config_ap_->OnExitRequested([this]() { StopConfigAp(); });
     config_ap_->Start();
-    config_mode_active_ = true;
-
-    lock.unlock();
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        config_mode_active_ = true;
+    }
+    lifecycle.unlock();
+    if (stopped_station)
+        NotifyEvent(WifiEvent::Disconnected);
     NotifyEvent(WifiEvent::ConfigModeEnter);
-    lock.lock();
 }
 
 void WifiManager::StopConfigAp() {
-    std::unique_lock<std::mutex> lock(mutex_);
-
-    if (!config_mode_active_) {
-        return;
+    std::unique_lock<std::mutex> lifecycle(lifecycle_mutex_);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!config_mode_active_)
+            return;
+        config_mode_active_ = false;
     }
-
-    ESP_LOGI(TAG, "Stopping config AP");
     config_ap_->Stop();
-    config_mode_active_ = false;
-
-    lock.unlock();
+    lifecycle.unlock();
+    // The board's ConfigModeExit callback starts the saved station profiles.
     NotifyEvent(WifiEvent::ConfigModeExit);
-    lock.lock();
 }
 
 bool WifiManager::IsConfigMode() const {
@@ -317,6 +285,7 @@ void WifiManager::SetEventCallback(std::function<void(WifiEvent, const std::stri
 
 // These methods never call user callbacks while holding the manager lock.
 bool WifiManager::PrepareOrbitSetup(const std::string& password) {
+    std::lock_guard<std::mutex> lifecycle(lifecycle_mutex_);
     std::lock_guard<std::mutex> lock(mutex_);
     if (!initialized_ || config_mode_active_ || password.size() < 12)
         return false;
@@ -324,6 +293,7 @@ bool WifiManager::PrepareOrbitSetup(const std::string& password) {
     return true;
 }
 void WifiManager::DiscardOrbitSetup() {
+    std::lock_guard<std::mutex> lifecycle(lifecycle_mutex_);
     std::lock_guard<std::mutex> lock(mutex_);
     if (!config_mode_active_)
         config_ap_->DiscardOrbitSetup();

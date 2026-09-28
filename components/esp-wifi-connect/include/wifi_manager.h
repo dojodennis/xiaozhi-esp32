@@ -95,8 +95,8 @@ public:
     void CancelOrbitSetup();
     void DiscardOrbitSetup();
     int OrbitSetupResult() const;
-    void StartConfigAp();  // Non-blocking, auto-stops station if active
-    void StopConfigAp();   // Non-blocking
+    void StartConfigAp();  // Worker-only: auto-stops station if active
+    void StopConfigAp();   // Worker-only: joins network services
 
     bool IsConfigMode() const;
     std::string GetApSsid() const;
@@ -125,6 +125,9 @@ private:
     std::unique_ptr<WifiStation> station_;
     std::unique_ptr<WifiConfigurationAp> config_ap_;
 
+    // Start/stop run on their caller's worker. Event callbacks only use mutex_,
+    // never this serializer, so IDF can finish callbacks during unregister.
+    std::mutex lifecycle_mutex_;
     mutable std::mutex mutex_;
     bool initialized_ = false;
     bool station_active_ = false;

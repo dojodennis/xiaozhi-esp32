@@ -1,11 +1,12 @@
 #ifndef _DNS_SERVER_H_
 #define _DNS_SERVER_H_
 
-#include <string>
-#include <atomic>
 #include <esp_netif_ip_addr.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <freertos/task.h>
+#include <atomic>
+#include <string>
 
 class DnsServer {
 public:
@@ -21,7 +22,8 @@ private:
     esp_ip4_addr_t gateway_;
     std::atomic<bool> running_{false};
     TaskHandle_t task_handle_ = nullptr;
+    SemaphoreHandle_t stopped_ = nullptr;
     void Run();
 };
 
-#endif // _DNS_SERVER_H_
+#endif  // _DNS_SERVER_H_

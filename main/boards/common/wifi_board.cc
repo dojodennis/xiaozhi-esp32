@@ -122,8 +122,8 @@ void WifiBoard::TryWifiConnect() {
         WifiManager::GetInstance().StartStation();
     } else {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-        // Normal chef use has no setup UI. Missing factory data fails closed
-        // until a technician rewrites the per-device NVS partition.
+        // Missing profiles remain offline until the chef deliberately opens
+        // QR setup from the menu; never expose a hotspot automatically.
         ESP_LOGE(TAG, "Factory WiFi profile is missing");
         in_config_mode_ = false;
         Application::GetInstance().SetDeviceState(kDeviceStateIdle);
