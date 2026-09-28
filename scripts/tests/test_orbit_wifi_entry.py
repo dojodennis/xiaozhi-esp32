@@ -100,7 +100,7 @@ int main(){
 #include <functional>
 #include <string>
 #include <vector>
-constexpr int kDeviceStateIdle=1,kDeviceStateWifiConfiguring=2;
+constexpr int kDeviceStateIdle=1,kDeviceStateWifiConfiguring=2,kDeviceStateStarting=3;
 enum class OrbitView { Menu,Other };
 int shown=0,hidden=0;
 void ProvisionsShowOrbitWifiSetup(const std::string&){++shown;}
@@ -126,12 +126,14 @@ struct Application{
 };
 __ENTRY__
 int main(){auto& b=Board::GetInstance();
- for(int guard=0;guard<10;++guard){Application a;b.starts=0;bool physical=true;a.StartOrbitWifiSetup([&](){return physical;});
+ for(int initial:{kDeviceStateIdle,kDeviceStateStarting})
+ for(int guard=0;guard<10;++guard){Application a;a.state=initial;b.starts=0;bool physical=true;a.StartOrbitWifiSetup([&](){return physical;});
  switch(guard){case 0:physical=false;break;case 1:a.orbit_view_=OrbitView::Other;break;case 2:a.provisions_timer_ringing_=true;break;
  case 3:a.state=99;break;case 4:a.manual_listening_requested_=true;break;case 5:a.provisions_network_busy_=true;break;
  case 6:a.provisions_response_pending_=true;break;case 7:a.provisions_recording_saving_=true;break;case 8:a.audio_service_.idle=false;break;case 9:a.timer_player_.fenced=true;break;}
  a.Drain();assert(b.starts==0&&!a.IsOrbitWifiSetup());}
- for(bool accepts:{true,false}){Application a;b.starts=0;b.accepts=accepts;a.StartOrbitWifiSetup([](){return true;});a.Drain();assert(b.starts==1);
+ for(int state:{kDeviceStateIdle,kDeviceStateStarting})
+ for(bool accepts:{true,false}){Application a;a.state=state;b.starts=0;b.accepts=accepts;a.StartOrbitWifiSetup([](){return true;});a.Drain();assert(b.starts==1);
  if(accepts){assert(a.IsOrbitWifiSetup()&&a.state==kDeviceStateWifiConfiguring);b.ready("WIFI:example");a.Drain();b.finished(true);a.Drain();}
  assert(!a.IsOrbitWifiSetup()&&a.state==kDeviceStateIdle&&a.painted==1);
  int before=shown;b.ready("late");a.Drain();assert(shown==before);

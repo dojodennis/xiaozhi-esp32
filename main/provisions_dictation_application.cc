@@ -440,8 +440,12 @@ bool Application::ConfirmOrbitMenu() {
 // Recheck the physical hold on the application task; a release/lock invalidates queued entry.
 void Application::StartOrbitWifiSetup(std::function<bool()> still_allowed) {
     Schedule([this, still_allowed = std::move(still_allowed)]() {
+        // A saved network may be unavailable at boot. The menu is usable while
+        // starting, and QR setup must let the chef replace that network.
+        const auto state = GetDeviceState();
         if (!still_allowed() || !IsOrbitMenuFace() || provisions_timer_ringing_ ||
-            IsOrbitWifiSetup() || GetDeviceState() != kDeviceStateIdle ||
+            IsOrbitWifiSetup() ||
+            (state != kDeviceStateIdle && state != kDeviceStateStarting) ||
             manual_listening_requested_.load() || provisions_network_busy_.load() ||
             provisions_response_pending_.load() || provisions_recording_saving_.load() ||
             !audio_service_.IsPlaybackIdle() || timer_player_.Fenced())
