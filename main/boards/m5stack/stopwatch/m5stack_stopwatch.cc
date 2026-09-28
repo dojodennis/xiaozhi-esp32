@@ -3055,7 +3055,7 @@ public:
                 label("cannot draw code\npress blue and try again", 200);
             }
         }
-        label("then open 192.168.4.1\n2.4 GHz wi-fi · blue cancels", 374);
+        label("keep this screen open\n192.168.4.1 · blue cancels", 374);
         SetReplyLayoutLocked(false);
 #endif
     }
