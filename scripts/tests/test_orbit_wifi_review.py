@@ -50,6 +50,9 @@ int main(){
             'void WifiManager::StopConfigAp()', 'bool WifiManager::IsConfigMode() const'))
         program=r'''
 #include <cassert>
+#include <cstdio>
+#include <cstdint>
+#include <cstring>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -58,6 +61,9 @@ int main(){
 #include <future>
 #include <chrono>
 using namespace std::chrono_literals;
+#define CONFIG_PROVISIONS_GATEWAY_REQUIRED 1
+uint32_t next_suffix=1;
+void esp_fill_random(void* output,size_t length){assert(length==sizeof(next_suffix));memcpy(output,&next_suffix,length);++next_suffix;}
 enum class WifiEvent{Scanning,Connecting,Connected,Disconnected,ConfigModeEnter,ConfigModeExit};
 struct WifiStation{
  std::function<void()> scan,stop;std::function<void(int)> disconnected;
@@ -68,8 +74,8 @@ struct WifiStation{
  void Stop(){if(stop)stop();}
 };
 struct WifiConfigurationAp{
- std::function<void()> stop,exit;int starts=0;
- void SetSsidPrefix(const std::string&){}void SetLanguage(const std::string&){}
+ std::function<void()> stop,exit;int starts=0;std::string ssid_prefix;std::vector<std::string> used_prefixes;
+ void SetSsidPrefix(const std::string& prefix){ssid_prefix=prefix;used_prefixes.push_back(prefix);}void SetLanguage(const std::string&){}
  void SetShowOtaConfig(bool){}void SetShowSleepConfig(bool){}
  void OnExitRequested(std::function<void()> f){exit=f;}void Start(){++starts;}void Stop(){if(stop)stop();}
 };
@@ -97,6 +103,9 @@ int main(){
  m.config_ap_->stop=[&](){std::thread event([&](){m.NotifyEvent(WifiEvent::Disconnected);});event.join();};
  for(int cycle=0;cycle<10;++cycle){m.StartConfigAp();assert(m.IsConfigMode());m.StopConfigAp();assert(!m.IsConfigMode());}
  assert(exited==10&&scanned==11);
+ assert(m.config_ap_->used_prefixes.size()==10);
+ for(size_t i=1;i<m.config_ap_->used_prefixes.size();++i)
+  assert(m.config_ap_->used_prefixes[i]!=m.config_ap_->used_prefixes[i-1]);
  m.StopStation();assert(!m.station_active_);
  // A blocked stop serializes competing lifecycle operations while state queries stay live.
  m.StartStation();std::promise<void> entered,release;auto gate=release.get_future();

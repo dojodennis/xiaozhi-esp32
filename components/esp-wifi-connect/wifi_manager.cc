@@ -10,8 +10,10 @@
 #include <esp_log.h>
 #include <esp_mac.h>
 #include <esp_netif.h>
+#include <esp_random.h>
 #include <esp_wifi.h>
 #include <nvs_flash.h>
+#include <cstdio>
 
 #define TAG "WifiManager"
 
@@ -217,7 +219,18 @@ void WifiManager::StartConfigAp() {
     }
     if (stopped_station)
         station_->Stop();
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    // The setup secret rotates on every session. Rotate the advertised name too:
+    // phones remember WPA credentials by SSID and can retry an old secret even
+    // after scanning a fresh QR code for the same fixed name.
+    uint32_t suffix;
+    esp_fill_random(&suffix, sizeof(suffix));
+    char suffix_text[9];
+    snprintf(suffix_text, sizeof(suffix_text), "%08X", static_cast<unsigned>(suffix));
+    config_ap_->SetSsidPrefix(config_.ssid_prefix.substr(0, 17) + "-" + suffix_text);
+#else
     config_ap_->SetSsidPrefix(config_.ssid_prefix);
+#endif
     config_ap_->SetLanguage(config_.language);
     config_ap_->SetShowOtaConfig(config_.show_ota_config);
     config_ap_->SetShowSleepConfig(config_.show_sleep_config);
