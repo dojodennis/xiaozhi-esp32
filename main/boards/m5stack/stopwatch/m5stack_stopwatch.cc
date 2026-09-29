@@ -3063,7 +3063,19 @@ public:
                 label("cannot draw code\npress blue and try again", 200);
             }
         }
-        label("join fails? Settings > Wi-Fi\nthen open 192.168.4.1\nblue cancels", 355);
+        if (!payload.empty()) {
+            const auto password_start = payload.find(";P:");
+            if (password_start != std::string::npos) {
+                const auto password_end = payload.find(";;", password_start + 3);
+                if (password_end != std::string::npos) {
+                    label("password for Settings > Wi-Fi", 355);
+                    const auto password =
+                        payload.substr(password_start + 3, password_end - password_start - 3);
+                    label(password.c_str(), 378);
+                }
+            }
+        }
+        label("join warning? open 192.168.4.1\nblue cancels", 408);
         SetReplyLayoutLocked(false);
 #endif
     }
