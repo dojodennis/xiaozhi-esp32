@@ -99,7 +99,9 @@ void WifiConfigurationAp::Start() {
     StartAccessPoint();
     StartWebServer();
 
+#if !CONFIG_PROVISIONS_GATEWAY_REQUIRED
     esp_wifi_scan_start(nullptr, false);
+#endif
 }
 
 std::string WifiConfigurationAp::GetSsid() {
@@ -822,6 +824,11 @@ void WifiConfigurationAp::WifiEventHandler(void* arg, esp_event_base_t event_bas
     if (event_id == WIFI_EVENT_AP_STACONNECTED) {
         wifi_event_ap_staconnected_t* event = (wifi_event_ap_staconnected_t*)event_data;
         ESP_LOGI(TAG, "Station " MACSTR " joined, AID=%d", MAC2STR(event->mac), event->aid);
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+        // Keep the AP on-channel while the phone joins from the QR. Its first
+        // nearby-network scan can start after association, before the page opens.
+        esp_wifi_scan_start(nullptr, false);
+#endif
     } else if (event_id == WIFI_EVENT_AP_STADISCONNECTED) {
         wifi_event_ap_stadisconnected_t* event = (wifi_event_ap_stadisconnected_t*)event_data;
         ESP_LOGI(TAG, "Station " MACSTR " left, AID=%d", MAC2STR(event->mac), event->aid);

@@ -105,7 +105,7 @@ enum class OrbitView { Menu,Other };
 int shown=0,hidden=0;
 void ProvisionsShowOrbitWifiSetup(const std::string&){++shown;}
 void ProvisionsHideOrbitWifiSetup(){++hidden;}
-struct Display{void ShowNotification(const char*){}};
+struct Display{void ShowNotification(const char*,int=3000){}};
 struct Board{
  int starts=0;bool accepts=true;Display display;
  std::function<void(std::string)> ready;std::function<void(bool)> finished;

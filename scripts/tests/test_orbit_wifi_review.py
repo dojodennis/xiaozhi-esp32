@@ -148,7 +148,7 @@ struct wifi_config_t{struct{unsigned char ssid[32],password[64];size_t ssid_len;
 int esp_wifi_set_storage(int){return 0;}int esp_wifi_set_mode(int){return 0;}int esp_wifi_set_ps(int){return 0;}
 int esp_wifi_set_config(int,wifi_config_t* c){assert(c->ap.max_connection==1&&c->ap.authmode==WIFI_AUTH_WPA2_PSK);return 0;}
 int esp_wifi_start(){assert(ap&&sta);return 0;}int esp_wifi_stop(){return 0;}int esp_wifi_set_band_mode(int){return 0;}
-int esp_wifi_scan_start(void*,bool){return 0;}int esp_wifi_set_max_tx_power(int){return 0;}int esp_wifi_get_max_tx_power(int8_t*){return 0;}
+int scans=0;int esp_wifi_scan_start(void*,bool){++scans;return 0;}int esp_wifi_set_max_tx_power(int){return 0;}int esp_wifi_get_max_tx_power(int8_t*){return 0;}
 int nvs_open(const char*,int,int*){return -1;}int nvs_get_str(int,const char*,char*,size_t*){return -1;}
 int nvs_get_i8(int,const char*,int8_t*){return -1;}int nvs_get_u8(int,const char*,uint8_t*){return -1;}void nvs_close(int){}
 size_t strlcpy(char* d,const char* s,size_t n){auto len=strlen(s);if(n){memcpy(d,s,std::min(len,n-1));d[std::min(len,n-1)]=0;}return len;}
@@ -175,7 +175,7 @@ struct WifiConfigurationAp{
 };
 __METHODS__
 int main(){WifiConfigurationAp setup;for(int cycle=0;cycle<20;++cycle){
- setup.orbit_password_=std::string(24,'a');setup.Start();assert(ap&&sta&&registered);
+ setup.orbit_password_=std::string(24,'a');setup.Start();assert(ap&&sta&&registered&&scans==0);
  setup.Stop();assert(!ap&&!sta&&!timer_exists&&!registered);assert(setup.orbit_password_.empty());
  }assert(drained==20);}
 '''

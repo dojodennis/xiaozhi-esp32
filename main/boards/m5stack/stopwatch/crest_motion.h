@@ -72,7 +72,7 @@ inline const char* Caption(State state) {
     }
 }
 
-// Only authenticated, existing gateway display labels may become captions.
+// Only approved gateway labels and fixed local setup outcomes may become captions.
 // Unknown strings and raw transcripts are never rendered as technical labels.
 inline const char* ResultCaption(const char* text) {
     if (text == nullptr)
@@ -100,6 +100,8 @@ inline const char* ResultCaption(const char* text) {
         {"Cancelled", "Cancelled"},
         {"Check app", "Check Provisions"},
         {"Not changed", "Nothing changed"},
+        {"wi-fi saved — reconnecting", "Wi-Fi saved\nReconnecting"},
+        {"setup closed — retrying saved wi-fi", "Setup closed\nRetrying saved Wi-Fi"},
     };
     for (const auto& mapping : mappings) {
         if (std::strcmp(text, mapping.input) == 0)

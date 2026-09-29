@@ -462,7 +462,8 @@ void Application::StartOrbitWifiSetup(std::function<bool()> still_allowed) {
                 orbit_view_.store(OrbitView::Menu);
                 PaintOrbitView();
                 Board::GetInstance().GetDisplay()->ShowNotification(
-                    saved ? "wi-fi saved — reconnecting" : "setup closed — retrying saved wi-fi");
+                    saved ? "wi-fi saved — reconnecting" : "setup closed — retrying saved wi-fi",
+                    saved ? 10000 : 6000);
             });
         };
         if (!Board::GetInstance().StartWifiSetup(

@@ -1815,6 +1815,14 @@ private:
             *title = "NO CHANGE";
             return VisualState::kWarning;
         }
+        if (std::strcmp(notification, "wi-fi saved — reconnecting") == 0) {
+            *title = "WI-FI SAVED";
+            return VisualState::kSuccess;
+        }
+        if (std::strcmp(notification, "setup closed — retrying saved wi-fi") == 0) {
+            *title = "SETUP CLOSED";
+            return VisualState::kNotice;
+        }
         *title = notification;
         return VisualState::kNotice;
     }
@@ -3055,7 +3063,7 @@ public:
                 label("cannot draw code\npress blue and try again", 200);
             }
         }
-        label("keep this screen open\n192.168.4.1 · blue cancels", 374);
+        label("join fails? Settings > Wi-Fi\nthen open 192.168.4.1\nblue cancels", 355);
         SetReplyLayoutLocked(false);
 #endif
     }
