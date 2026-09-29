@@ -99,7 +99,13 @@ void WifiConfigurationAp::Start() {
     StartAccessPoint();
     StartWebServer();
 
-#if !CONFIG_PROVISIONS_GATEWAY_REQUIRED
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    // Complete the nearby-network scan before the QR is shown. Scanning after
+    // the phone associates can interrupt its DHCP and captive-page handoff.
+    const esp_err_t scan_result = esp_wifi_scan_start(nullptr, true);
+    if (scan_result != ESP_OK)
+        ESP_LOGW(TAG, "Initial setup scan failed: %d", scan_result);
+#else
     esp_wifi_scan_start(nullptr, false);
 #endif
 }
@@ -824,11 +830,6 @@ void WifiConfigurationAp::WifiEventHandler(void* arg, esp_event_base_t event_bas
     if (event_id == WIFI_EVENT_AP_STACONNECTED) {
         wifi_event_ap_staconnected_t* event = (wifi_event_ap_staconnected_t*)event_data;
         ESP_LOGI(TAG, "Station " MACSTR " joined, AID=%d", MAC2STR(event->mac), event->aid);
-#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-        // Keep the AP on-channel while the phone joins from the QR. Its first
-        // nearby-network scan can start after association, before the page opens.
-        esp_wifi_scan_start(nullptr, false);
-#endif
     } else if (event_id == WIFI_EVENT_AP_STADISCONNECTED) {
         wifi_event_ap_stadisconnected_t* event = (wifi_event_ap_stadisconnected_t*)event_data;
         ESP_LOGI(TAG, "Station " MACSTR " left, AID=%d", MAC2STR(event->mac), event->aid);
@@ -846,8 +847,11 @@ void WifiConfigurationAp::WifiEventHandler(void* arg, esp_event_base_t event_bas
         self->ap_records_.resize(ap_num);
         esp_wifi_scan_get_ap_records(&ap_num, self->ap_records_.data());
 
+        // Do not hop channels while a phone is provisioning Orbit.
+#if !CONFIG_PROVISIONS_GATEWAY_REQUIRED
         // 扫描完成，等待10秒后再次扫描
         esp_timer_start_once(self->scan_timer_, 10 * 1000000);
+#endif
     }
 }
 

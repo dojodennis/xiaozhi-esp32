@@ -132,6 +132,7 @@ int main(){
 #define CONFIG_PROVISIONS_GATEWAY_REQUIRED 1
 #define CONFIG_IDF_TARGET_ESP32P4 1
 #define ESP_LOGI(...) ((void)0)
+#define ESP_LOGW(...) ((void)0)
 #define ESP_ERROR_CHECK(x) assert((x)==0)
 constexpr int ESP_OK=0,ESP_EVENT_ANY_ID=0,WIFI_EVENT=1,IP_EVENT=2,IP_EVENT_STA_GOT_IP=3,ESP_TIMER_TASK=0;
 constexpr int WIFI_AUTH_OPEN=0,WIFI_AUTH_WPA2_PSK=2,WIFI_STORAGE_RAM=0,WIFI_MODE_APSTA=3,WIFI_IF_AP=1,WIFI_PS_NONE=0,WIFI_BAND_MODE_2G_ONLY=0,NVS_READONLY=0;
@@ -148,7 +149,7 @@ struct wifi_config_t{struct{unsigned char ssid[32],password[64];size_t ssid_len;
 int esp_wifi_set_storage(int){return 0;}int esp_wifi_set_mode(int){return 0;}int esp_wifi_set_ps(int){return 0;}
 int esp_wifi_set_config(int,wifi_config_t* c){assert(c->ap.max_connection==1&&c->ap.authmode==WIFI_AUTH_WPA2_PSK);return 0;}
 int esp_wifi_start(){assert(ap&&sta);return 0;}int esp_wifi_stop(){return 0;}int esp_wifi_set_band_mode(int){return 0;}
-int scans=0;int esp_wifi_scan_start(void*,bool){++scans;return 0;}int esp_wifi_set_max_tx_power(int){return 0;}int esp_wifi_get_max_tx_power(int8_t*){return 0;}
+int scans=0;int esp_wifi_scan_start(void*,bool block){assert(block);++scans;return 0;}int esp_wifi_set_max_tx_power(int){return 0;}int esp_wifi_get_max_tx_power(int8_t*){return 0;}
 int nvs_open(const char*,int,int*){return -1;}int nvs_get_str(int,const char*,char*,size_t*){return -1;}
 int nvs_get_i8(int,const char*,int8_t*){return -1;}int nvs_get_u8(int,const char*,uint8_t*){return -1;}void nvs_close(int){}
 size_t strlcpy(char* d,const char* s,size_t n){auto len=strlen(s);if(n){memcpy(d,s,std::min(len,n-1));d[std::min(len,n-1)]=0;}return len;}
@@ -175,7 +176,7 @@ struct WifiConfigurationAp{
 };
 __METHODS__
 int main(){WifiConfigurationAp setup;for(int cycle=0;cycle<20;++cycle){
- setup.orbit_password_=std::string(24,'a');setup.Start();assert(ap&&sta&&registered&&scans==0);
+ setup.orbit_password_=std::string(24,'a');setup.Start();assert(ap&&sta&&registered&&scans==cycle+1);
  setup.Stop();assert(!ap&&!sta&&!timer_exists&&!registered);assert(setup.orbit_password_.empty());
  }assert(drained==20);}
 '''
