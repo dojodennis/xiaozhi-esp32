@@ -3,6 +3,41 @@ import unittest
 from test_provisions_audio_boundaries import ROOT, method, run_cpp
 
 class OrbitWifiReviewTests(unittest.TestCase):
+    def test_setup_password_is_readable_and_not_hex_ambiguous(self):
+        generate = method('main/boards/common/wifi_board.cc',
+                          'static std::string OrbitWifiPassword(')
+        program = r'''
+#include <cassert>
+#include <cstdint>
+#include <set>
+#include <string>
+__GENERATE__
+int main() {
+ uint8_t random[16]{};
+ std::set<char> first;
+ for (int value=0;value<16;++value) {
+  random[0]=value;
+  auto password=OrbitWifiPassword(random);
+  assert(password.size()==16);
+  assert(password.find_first_not_of("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")==std::string::npos);
+  assert(password[0]>='G'&&password[0]<='X');
+  first.insert(password[0]);
+ }
+ assert(first.size()==16);
+ random[0]=0;
+ for (int position=1;position<16;++position) {
+  std::set<char> choices;
+  for (int value=0;value<32;++value) {
+   random[position]=value;
+   choices.insert(OrbitWifiPassword(random)[position]);
+  }
+  assert(choices.size()==32);
+  random[position]=0;
+ }
+}
+'''
+        run_cpp(program.replace('__GENERATE__', generate))
+
     def test_actual_dns_reply_boundaries(self):
         program = r'''
 #include <array>

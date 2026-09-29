@@ -29,6 +29,23 @@ static const char *TAG = "WifiBoard";
 // Connection timeout in seconds
 static constexpr int CONNECT_TIMEOUT_SEC = 60;
 
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED && CONFIG_USE_HOTSPOT_WIFI_PROVISIONING
+static std::string OrbitWifiPassword(const uint8_t (&random)[16]) {
+    // A non-hex first character keeps Wi-Fi QR scanners from treating the
+    // passphrase as a hexadecimal key. The remaining characters are easy to
+    // read from the ring when Settings needs a manual password.
+    constexpr char first[] = "GHJKLMNPQRSTUVWX";
+    constexpr char alphabet[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    static_assert(sizeof(first) - 1 == 16 && sizeof(alphabet) - 1 == 32);
+    std::string password;
+    password.reserve(sizeof(random));
+    password.push_back(first[random[0] & 0x0f]);
+    for (size_t i = 1; i < sizeof(random); ++i)
+        password.push_back(alphabet[random[i] & 0x1f]);
+    return password;
+}
+#endif
+
 WifiBoard::WifiBoard() {
     // Create connection timeout timer
     esp_timer_create_args_t timer_args = {
@@ -428,14 +445,10 @@ bool WifiBoard::StartWifiSetup(std::function<void(std::string)> ready,
         [](void* raw) {
             std::unique_ptr<Work> work(static_cast<Work*>(raw));
             auto& wifi = WifiManager::GetInstance();
-            uint8_t random[12];
+            uint8_t random[16];
             esp_fill_random(random, sizeof(random));
-            constexpr char hex[] = "0123456789abcdef";
-            std::string password;
-            for (auto byte : random) {
-                password += hex[byte >> 4];
-                password += hex[byte & 15];
-            }
+            std::string password = OrbitWifiPassword(random);
+            std::fill(random, random + sizeof(random), 0);
             bool saved = false;
             if (wifi.PrepareOrbitSetup(password) && !work->board->orbit_setup_cancelled_.load()) {
                 wifi.StartConfigAp();
