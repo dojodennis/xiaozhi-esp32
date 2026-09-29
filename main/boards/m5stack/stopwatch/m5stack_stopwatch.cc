@@ -15,6 +15,8 @@
 #include "crest_motion.h"
 #include "cst820_touch.h"
 #include "menu_asset.h"
+#include "menu_crest.h"
+#include "menu_theme.h"
 #include "menu_wifi_hold.h"
 #include "orbit_dial.h"
 #include "provisions_hardware_facts.h"
@@ -306,6 +308,11 @@ private:
     uint16_t* menu_pixels_ = nullptr;
     lv_image_dsc_t menu_image_{};
     int menu_page_shown_ = -1;
+    // Drawing K: the crest itself is the menu. Which drawing a ring uses is
+    // an NVS setting (menu_theme.h); blue held on the menu flips it.
+    ProvisionsStopWatch::OrbitMenuCrest menu_crest_;
+    ProvisionsStopWatch::MenuTheme menu_theme_ = ProvisionsStopWatch::MenuTheme::Crest;
+    uint8_t menu_page_ = 0;
     // Small grey word above the List / Notes face so a glance tells them apart.
     lv_obj_t* face_caption_ = nullptr;
     std::string face_caption_text_;
@@ -413,6 +420,7 @@ private:
     void HideOrbitMenuLocked() {
         menu_layout_ = false;
         SetVisible(menu_mark_, false);
+        menu_crest_.Hide();
         SetVisible(face_caption_, false);
     }
 
@@ -647,6 +655,9 @@ private:
         lv_obj_remove_flag(menu_mark_, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_remove_flag(menu_mark_, LV_OBJ_FLAG_CLICKABLE);
         SetVisible(menu_mark_, false);
+        menu_theme_ = ProvisionsStopWatch::LoadMenuTheme();
+        menu_crest_.Create(dictation_panel_);
+        ESP_LOGI(TAG, "menu theme: %s", ProvisionsStopWatch::MenuThemeName(menu_theme_));
         face_caption_ = lv_label_create(dictation_panel_);
         lv_obj_set_size(face_caption_, 200, 24);
         lv_obj_set_style_text_font(face_caption_, &font_noto_sans_basic_16_4, 0);
@@ -995,6 +1006,11 @@ private:
         lv_arc_set_value(compact_timer_arc_, arc_value);
         lv_label_set_text(compact_timer_name_, name.c_str());
         lv_label_set_text(compact_timer_remaining_, remaining.c_str());
+        if (menu_layout_ && menu_crest_.Visible()) {
+            int sweep = 0;
+            const std::string readout = MenuTimerReadoutLocked(&sweep);
+            menu_crest_.UpdateTimer(sweep, readout.c_str());
+        }
         lv_obj_set_style_text_color(compact_timer_name_, lv_color_hex(color), 0);
         lv_obj_set_style_arc_color(compact_timer_arc_, lv_color_hex(color), LV_PART_INDICATOR);
         lv_label_set_text(compact_timer_eyebrow_, service_only ? "SERVICE" : "TIMER");
@@ -2938,6 +2954,58 @@ public:
             SetReplyLayoutLocked(false);
     }
 
+    // The Timers page of drawing K shows the focus timer the compact face
+    // shows: the soonest live timer, service timers last. Returns "--:--" and
+    // no sweep when nothing is running.
+    std::string MenuTimerReadoutLocked(int* sweep_permille) {
+        *sweep_permille = 0;
+        const int64_t now_ms = EffectiveServerNowMs();
+        const ProvisionsTimerSnapshot::Timer* focus = nullptr;
+        const ProvisionsTimerSnapshot::Timer* service = nullptr;
+        for (const auto& timer : timer_snapshot_.timers) {
+            if (timer.status != ProvisionsTimerSnapshot::TimerStatus::kActive &&
+                timer.status != ProvisionsTimerSnapshot::TimerStatus::kAttention)
+                continue;
+            if (service == nullptr && IsServiceLabel(timer.label)) {
+                service = &timer;
+                continue;
+            }
+            if (focus == nullptr ||
+                (timer.status == ProvisionsTimerSnapshot::TimerStatus::kActive &&
+                 focus->status == ProvisionsTimerSnapshot::TimerStatus::kAttention) ||
+                (timer.status == focus->status && timer.deadline_ms < focus->deadline_ms))
+                focus = &timer;
+        }
+        if (focus == nullptr)
+            focus = service;
+        if (focus == nullptr)
+            return "--:--";
+        const bool due = focus->status == ProvisionsTimerSnapshot::TimerStatus::kAttention ||
+                         (now_ms > 0 && focus->deadline_ms <= now_ms);
+        if (due) {
+            *sweep_permille = 1000;
+            return "Due";
+        }
+        for (const auto& slot : orbit_slot_board_.slots()) {
+            if (slot.occupied && slot.timer.id == focus->id) {
+                *sweep_permille = 1000 - static_cast<int>(
+                    ProvisionsStopwatchOrbit::RemainingFraction(slot, now_ms) * 1000.0F);
+                break;
+            }
+        }
+        return ProvisionsStopwatchOrbit::FormatRemaining(focus->deadline_ms, now_ms);
+    }
+
+    // Blue held on the menu: the other drawing, kept in NVS, repainted now.
+    void ToggleMenuTheme() {
+        DisplayLockGuard lock(this);
+        menu_theme_ = ProvisionsStopWatch::OtherMenuTheme(menu_theme_);
+        ProvisionsStopWatch::SaveMenuTheme(menu_theme_);
+        ESP_LOGI(TAG, "menu theme: %s", ProvisionsStopWatch::MenuThemeName(menu_theme_));
+        if (menu_layout_)
+            ShowOrbitMenuLocked(menu_page_);
+    }
+
     // Expand one menu page (256 colours in flash) into the RGB565 buffer the
     // menu image shows. The buffer is taken from PSRAM on first use and kept:
     // the menu opens often, and one 434 KB block does not fragment.
@@ -2982,6 +3050,10 @@ public:
             RoundLcdDisplay* self;
             ~Release() { self->Unlock(); }
         } release{this};
+        ShowOrbitMenuLocked(page);
+    }
+
+    void ShowOrbitMenuLocked(uint8_t page) {
         DismissSpokenFaceLocked();
         shopping_focus_layout_ = false;
         menu_layout_ = true;
@@ -3010,8 +3082,17 @@ public:
         SetHoldHintLocked(false);
         const bool shopping = page == 0;
         const bool notes = page == 2;
-        if (PaintMenuPageLocked(notes ? 2 : shopping ? 0 : 1)) {
-            // The picture carries the caption and the page dots.
+        menu_page_ = notes ? 2 : shopping ? 0 : 1;
+        if (menu_theme_ == ProvisionsStopWatch::MenuTheme::Crest) {
+            // Drawing K: LVGL objects over the crest, nothing from menu_asset.
+            SetVisible(menu_mark_, false);
+            SetVisible(dictation_item_, false);
+            int sweep = 0;
+            const std::string readout = MenuTimerReadoutLocked(&sweep);
+            menu_crest_.Show(menu_page_, sweep, readout.c_str());
+        } else if (PaintMenuPageLocked(menu_page_)) {
+            // Drawing V: the picture carries the caption and the page dots.
+            menu_crest_.Hide();
             SetVisible(menu_mark_, true);
             SetVisible(dictation_item_, false);
         } else {
@@ -3827,6 +3908,11 @@ private:
                 if (orbit_locked_.load())
                     return;
                 auto& app = Application::GetInstance();
+                // Blue held on the menu flips the menu drawing (crest / Nausicaa).
+                if (app.IsOrbitMenuFace() && !app.IsOrbitWifiSetup()) {
+                    static_cast<RoundLcdDisplay*>(display_)->ToggleMenuTheme();
+                    return;
+                }
                 if (!app.IsDictationScreen())
                     app.RetrySavedVoiceRecording();
             });

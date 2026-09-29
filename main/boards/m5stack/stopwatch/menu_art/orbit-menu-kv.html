@@ -1,0 +1,272 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+@font-face { font-family: Noto; src: url("file:///Users/dojo/orbit-claude/firmware/.worktrees/faces/managed_components/lvgl__lvgl/tests/src/test_files/fonts/noto/NotoSansSC-Regular.ttf"); }
+html, body { margin: 0; background: #141414; }
+body { padding: 28px 40px; font-family: Noto, sans-serif; color: #8A9096; }
+.row { margin-bottom: 30px; }
+.row h2 { margin: 0 0 10px; font: 500 20px Noto, sans-serif; color: #d6dade; letter-spacing: .5px; }
+.row h2 span { color: #8A9096; font-weight: 400; }
+.faces { display: flex; gap: 40px; align-items: flex-start; }
+.faces figure { margin: 0; }
+.faces figcaption { margin-top: 8px; font: 400 13px Noto, sans-serif; color: #8A9096; width: 466px; }
+svg { display: block; }
+</style>
+</head>
+<body>
+<div id="sheet"></div>
+<script>
+// Orbit menu, drawings K (crest) and V (Nausicaä, the 1984 film), 29 Sept 2026.
+// Open in Chrome for the sheet; #export=<k|v>-<list|timers|notes> for one 466 px frame.
+// crest-band.png / crest-star.png are the crest split at r 95, white on transparent,
+// the same two shapes the ring draws at idle (OrbitCrest::kBandImage, kStarImage).
+const S = 466, C = 233;
+const GOLD = '#C5A46D', IVORY = '#E8E0D2', TRACK = '#2A261C', DIM = '#4A4437';
+let uid = 0;
+const polar = (r, deg) => { const a = (deg - 90) * Math.PI / 180; return [C + r * Math.cos(a), C + r * Math.sin(a)]; };
+const arcPath = (r, d0, d1) => { const [x0, y0] = polar(r, d0), [x1, y1] = polar(r, d1); return `M ${x0} ${y0} A ${r} ${r} 0 ${d1 - d0 > 180 ? 1 : 0} 1 ${x1} ${y1}`; };
+const stops = arr => arr.map((c, i) => `<stop offset="${i / (arr.length - 1)}" stop-color="${c}"/>`).join('');
+const rad = (id, arr, cx = .36, cy = .3, r = .8) => `<radialGradient id="${id}" cx="${cx}" cy="${cy}" r="${r}">${stops(arr)}</radialGradient>`;
+const lin = (id, arr, x2, y2) => `<linearGradient id="${id}" x1="0" y1="0" x2="${x2}" y2="${y2}">${stops(arr)}</linearGradient>`;
+
+// ============================================================ K · the crest
+// The crest stays exactly where the idle face draws it: band 348 px centred,
+// star 104 x 100 at (181,179). Each page is what the centre of the crest does.
+// Band and star are tinted through a flood filter so one PNG serves every colour.
+function tint(id, color) {
+  return `<filter id="${id}" color-interpolation-filters="sRGB"><feFlood flood-color="${color}"/><feComposite in2="SourceAlpha" operator="in"/></filter>`;
+}
+function band(color, opacity = 1, rotate = 0) {
+  const id = 'b' + uid++;
+  return `<defs>${tint(id, color)}</defs><g transform="rotate(${rotate} ${C} ${C})"><image href="crest-band.png" x="59" y="59" width="348" height="348" filter="url(#${id})" opacity="${opacity}"/></g>`;
+}
+function star(color, opacity = 1) {
+  const id = 's' + uid++;
+  return `<defs>${tint(id, color)}</defs><image href="crest-star.png" x="59" y="59" width="348" height="348" filter="url(#${id})" opacity="${opacity}"/>`;
+}
+const K_CAPTION_Y = 66, K_DOT_Y = 90;
+function kCaption(text, page) {
+  let g = `<text x="${C}" y="${C + K_CAPTION_Y}" text-anchor="middle" font-family="Noto" font-size="19" fill="${IVORY}" opacity=".78">${text}</text>`;
+  for (let i = 0; i < 3; i++) g += `<circle cx="${C + (i - 1) * 16}" cy="${C + K_DOT_Y}" r="3.2" fill="${i === page ? GOLD : DIM}"/>`;
+  return g;
+}
+const kBar = (x, y, w, color) => `<rect x="${x}" y="${y - 5}" width="${w}" height="10" rx="5" fill="${color}"/>`;
+
+// List: the star gives way to a checklist. Gold bullet, ivory bar; the last
+// bar shorter so it reads as a list, not the three-bar menu glyph.
+function kList(t = 1) {
+  let g = band(GOLD) + star(IVORY, 1 - t);
+  const rows = [[-34, 96], [-2, 96], [30, 64]];
+  rows.forEach(([dy, w], i) => {
+    const a = Math.max(0, Math.min(1, t * 3 - i));              // bullets land one after another
+    const y = C - 4 + dy;
+    g += `<g opacity="${a}">` + `<circle cx="${C - 50}" cy="${y}" r="5" fill="${GOLD}"/>` + kBar(C - 32, y, w * a, IVORY) + `</g>`;
+  });
+  return g;
+}
+// Timers: the band is the timer. Over the elapsed sweep, from twelve, the
+// band is gold; the rest is the dim track. The readout sits where the star
+// was. The firmware composes this per pixel from the band alpha (angle
+// threshold) into the PSRAM page buffer once a second; no new image in flash.
+function wedge(deg) {
+  const id = 'w' + uid++;
+  const [x1, y1] = polar(300, deg);
+  const d = deg <= 0 ? '' : deg >= 360 ? `M 0 0 H ${S} V ${S} H 0 Z` : `M ${C} ${C} L ${C} ${C - 300} A 300 300 0 ${deg > 180 ? 1 : 0} 1 ${x1} ${y1} Z`;
+  return [id, `<clipPath id="${id}"><path d="${d}"/></clipPath>`];
+}
+function kTimers(t = 1, elapsed = .72, breath = 0) {
+  const sweep = 360 * elapsed * t;
+  const [wid, wdef] = wedge(sweep);
+  let g = `<defs>${wdef}</defs>` + band(TRACK) + `<g clip-path="url(#${wid})">${band(GOLD)}</g>` + star(IVORY, 1 - t);
+  // the leading edge breathes so the face is never still
+  if (breath > 0 && sweep > 10) {
+    const id = 'e' + uid++, [ax, ay] = polar(300, sweep - 9), [bx, by] = polar(300, Math.min(360, sweep + 5));
+    g += `<defs><clipPath id="${id}"><path d="M ${C} ${C} L ${ax} ${ay} A 300 300 0 0 1 ${bx} ${by} Z"/></clipPath></defs><g clip-path="url(#${id})">${band(IVORY, .45 * breath)}</g>`;
+  }
+  g += `<text x="${C}" y="${C + 14}" text-anchor="middle" font-family="Noto" font-size="46" fill="${IVORY}" opacity="${t}" letter-spacing="1">04:30</text>`;
+  return g;
+}
+// Notes: the lines are moved. A gold title line and two ivory lines, ragged,
+// left-aligned like writing; the band sits half a lobe off (15°) so the crest
+// itself reads as "a note was taken". Lines write themselves in on arrival.
+function kNotes(t = 1) {
+  let g = band(GOLD, 1, 15 * t) + star(IVORY, 1 - t);
+  const rows = [[-36, 44, GOLD], [-6, 84, IVORY], [24, 62, IVORY]];
+  rows.forEach(([dy, w, color], i) => {
+    const a = Math.max(0, Math.min(1, t * 3 - i));
+    g += kBar(C - 44, C - 4 + dy, w * a, color);
+  });
+  return g;
+}
+function kFace(content, caption, page) {
+  return `<svg width="${S}" height="${S}" viewBox="0 0 ${S} ${S}"><rect width="${S}" height="${S}" fill="#000"/><clipPath id="c${uid}"><circle cx="${C}" cy="${C}" r="${C}"/></clipPath>
+    <g clip-path="url(#c${uid++})">${content}${kCaption(caption, page)}</g></svg>`;
+}
+
+// ==================================================== V · Nausicaä, the film
+// After the 1984 film, not the yacht: the Ohmu's plated shell as the bezel,
+// its fourteen eyes calm blue (red when a timer rings), the golden field for
+// what is done, spores drifting on the glass, the Mehve as the timer's hand.
+const V = {
+  shell: ['#8C8272', '#5E574B', '#3D3831', '#221F1B'],
+  seam: '#A0563C',
+  eye: '#2BD2FF', eyeCore: '#DDF7FF', rage: '#FF3B2F',
+  field: ['#FFE8A3', '#E8B94A', '#B27E1C'],
+  glass: ['#1B2140', '#0C1026', '#050712'],
+  spore: '#DDF7FF',
+};
+const neon = (d, w, c = V.eye, core = V.eyeCore) => `<path d="${d}" fill="none" stroke="${c}" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round" filter="url(#g)"/>` +
+  `<path d="${d}" fill="none" stroke="${c}" stroke-width="${w * .8}" stroke-linecap="round" stroke-linejoin="round"/>` +
+  `<path d="${d}" fill="none" stroke="${core}" stroke-width="${w * .34}" stroke-linecap="round" stroke-linejoin="round"/>`;
+const BEZEL_IN = 204, V_CAPTION_Y = 112, V_EYE_Y = 150;
+function vFrame(rage = false) {
+  const id = 'f' + uid++;
+  let g = `<defs>${rad(id + 'b', V.shell, .34, .26, .9)}${rad(id + 'g', V.glass, .42, .3, .8)}
+    <clipPath id="${id}c"><circle cx="${C}" cy="${C}" r="${BEZEL_IN}"/></clipPath></defs>`;
+  // shell: the Ohmu's plates overlap front to back, each a lobed arc
+  g += `<circle cx="${C}" cy="${C}" r="${C}" fill="url(#${id}b)"/><circle cx="${C}" cy="${C}" r="${C}" fill="url(#grain)" opacity=".5"/>`;
+  for (let k = 0; k < 14; k++) {
+    const deg = k * 360 / 14 + 360 / 28;
+    const [x0, y0] = polar(BEZEL_IN, deg), [x1, y1] = polar(C, deg);
+    g += `<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" stroke="${V.seam}" stroke-width="2.2" opacity=".55"/>`;
+    g += `<line x1="${x0}" y1="${y0}" x2="${x1}" y2="${y1}" stroke="#000" stroke-width="1" opacity=".5" transform="translate(1 1)"/>`;
+    g += `<path d="${arcPath(218, deg + 3, deg + 360 / 14 - 3)}" fill="none" stroke="#fff" stroke-width="1.2" opacity=".08"/>`;
+  }
+  // glass: the night over the Sea of Decay, spores drifting
+  g += `<circle cx="${C}" cy="${C}" r="${BEZEL_IN}" fill="url(#${id}g)"/><circle cx="${C}" cy="${C}" r="${BEZEL_IN}" fill="none" stroke="#000" stroke-width="3"/>`;
+  let seed = 11;
+  const rnd = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+  g += `<g clip-path="url(#${id}c)">`;
+  for (let i = 0; i < 28; i++) {
+    const a = rnd() * 360, r = 40 + rnd() * 190, [x, y] = polar(r, a), rr = .8 + rnd() * 1.8;
+    g += `<circle cx="${x}" cy="${y}" r="${rr}" fill="${V.spore}" opacity="${.15 + rnd() * .35}"/>`;
+  }
+  g += `</g>`;
+  // fourteen eyes along the lower shell, the three pages among them
+  return g;
+}
+function vEyes(page, rage = false) {
+  let g = '';
+  const c = rage ? V.rage : V.eye;
+  for (let i = 0; i < 3; i++) {
+    const x = C + (i - 1) * 24, y = C + V_EYE_Y, on = i === page;
+    g += on ? `<ellipse cx="${x}" cy="${y}" rx="8" ry="5.5" fill="${c}" filter="url(#g)"/><ellipse cx="${x}" cy="${y}" rx="5" ry="3.2" fill="${rage ? '#FFD0C8' : V.eyeCore}"/>`
+            : `<ellipse cx="${x}" cy="${y}" rx="8" ry="5.5" fill="#1A2238" stroke="#2C3552" stroke-width="1"/>`;
+  }
+  return g;
+}
+function vCaption(text) {
+  return `<text x="${C}" y="${C + V_CAPTION_Y}" text-anchor="middle" font-family="Noto" font-size="19" fill="#C9D3E2" opacity=".8">${text}</text>`;
+}
+// List: three hull windows become three furrows of the golden field.
+// Done is gold wheat, to get is lit Ohmu blue.
+function vList() {
+  let g = `<defs>${lin('fld', V.field, 0, 1)}</defs>`;
+  const rows = [[-66, 150, true], [-20, 190, false], [26, 120, false]];
+  for (const [dy, len, done] of rows) {
+    const y = C + dy;
+    g += `<rect x="${C - 128}" y="${y - 15}" width="256" height="30" rx="15" fill="#06081A" stroke="#000" stroke-width="1.5"/>`;
+    if (done) {
+      g += `<line x1="${C - 106}" y1="${y}" x2="${C - 106 + len}" y2="${y}" stroke="${V.field[2]}" stroke-width="9" stroke-linecap="round"/>`;
+      g += `<line x1="${C - 104}" y1="${y - 1.5}" x2="${C - 108 + len}" y2="${y - 1.5}" stroke="${V.field[1]}" stroke-width="4" stroke-linecap="round"/>`;
+      for (let k = 0; k < 6; k++) { const x = C - 96 + k * (len - 20) / 5; g += `<path d="M ${x} ${y - 4} l 3 -9 l 3 9" fill="none" stroke="${V.field[0]}" stroke-width="1.6" opacity=".8"/>`; }
+    } else {
+      g += neon(`M ${C - 106} ${y} L ${C - 106 + len} ${y}`, 9);
+    }
+  }
+  // a spore cluster where the clip was, at twelve
+  g += `<circle cx="${C}" cy="${C - 214}" r="14" fill="#06081A" stroke="${V.seam}" stroke-width="2"/><circle cx="${C}" cy="${C - 214}" r="5" fill="${V.spore}" filter="url(#g)"/>`;
+  return g;
+}
+// Timers: the elapsed band is the Ohmu's eye-light; the Mehve sweeps as the
+// hand, wind streaks behind it; the readout below the hub.
+function mehve(deg) {
+  const [x, y] = polar(150, deg);
+  return `<g transform="translate(${x} ${y}) rotate(${deg})">
+    <path d="M -34 6 Q -12 -8 0 -10 Q 12 -8 34 6 Q 12 -1 0 2 Q -12 -1 -34 6 Z" fill="#F2F4F6"/>
+    <path d="M -34 6 Q -12 -8 0 -10 Q 12 -8 34 6" fill="none" stroke="#9AA3AE" stroke-width="1"/>
+    <path d="M -3 -10 L 0 -22 L 3 -10 Z" fill="#E8B94A"/></g>`;
+}
+function vTimers(rage = false) {
+  const end = 360 * .72;
+  let g = '';
+  g += `<circle cx="${C}" cy="${C}" r="186" fill="none" stroke="#10142A" stroke-width="12"/>`;
+  g += neon(arcPath(186, 0, end), 12, rage ? V.rage : V.eye, rage ? '#FFD0C8' : V.eyeCore);
+  // wind behind the glider
+  for (let k = 1; k <= 3; k++) g += `<path d="${arcPath(150 - k * 9, end - 28 - k * 8, end - 6)}" fill="none" stroke="#F2F4F6" stroke-width="1.6" stroke-linecap="round" opacity="${.5 - k * .12}"/>`;
+  g += mehve(end);
+  g += `<circle cx="${C}" cy="${C}" r="7" fill="${V.field[1]}"/>`;
+  g += `<text x="${C}" y="${C + 62}" text-anchor="middle" font-family="Noto" font-size="40" fill="${rage ? V.rage : V.eye}" filter="url(#g)" letter-spacing="1">04:30</text>`;
+  g += `<text x="${C}" y="${C + 62}" text-anchor="middle" font-family="Noto" font-size="40" fill="${rage ? '#FFD0C8' : V.eyeCore}" letter-spacing="1">04:30</text>`;
+  // the crown: a spore
+  g += `<circle cx="${C}" cy="${C - 214}" r="14" fill="#06081A" stroke="${V.seam}" stroke-width="2"/><circle cx="${C}" cy="${C - 214}" r="5" fill="${V.spore}" filter="url(#g)"/>`;
+  return g;
+}
+// Notes: the writing is wind. Three streaks on faint rules, a spore at the
+// pen's tip; the pen is an Ohmu feeler in gold, not a yacht pen.
+function wave(x0, x1, y, amp, len) {
+  let d = `M ${x0} ${y}`;
+  for (let x = x0; x < x1; x += len) { const e = Math.min(x1, x + len), m = (x + e) / 2; d += ` Q ${(x + m) / 2} ${y - amp} ${m} ${y} Q ${(m + e) / 2} ${y + amp} ${e} ${y}`; }
+  return d;
+}
+function vNotes() {
+  let g = '';
+  for (const dy of [-64, -24, 16, 56]) { const y = C + dy, half = Math.sqrt(190 * 190 - dy * dy); g += `<line x1="${C - half}" y1="${y + 12}" x2="${C + half}" y2="${y + 12}" stroke="#182040" stroke-width="1"/>`; }
+  g += neon(wave(C - 150, C + 110, C - 70, 5, 44), 4.4);
+  g += neon(wave(C - 160, C + 84, C - 30, 5, 44), 4.4);
+  g += neon(wave(C - 160, C - 20, C + 10, 5, 46), 4.4);
+  // feeler: a tapered gold stalk from the last word out past the shell
+  g += `<defs>${lin('stalk', [V.field[2], V.field[1], V.field[0], V.field[1], V.field[2]], 0, 1)}</defs>`;
+  const tip = [C - 14, C + 8];
+  g += `<g transform="translate(${tip[0]} ${tip[1]}) rotate(-42)"><path d="M 0 0 L 60 -9 L 330 -14 L 330 14 L 60 9 Z" fill="url(#stalk)"/>
+    <path d="M 40 -6 L 330 -10" fill="none" stroke="#fff" stroke-width="1.6" opacity=".35"/>
+    <g fill="${V.field[2]}" opacity=".6">${[90, 150, 210, 270].map(x => `<rect x="${x}" y="-11" width="4" height="22" rx="2"/>`).join('')}</g></g>`;
+  g += `<circle cx="${tip[0]}" cy="${tip[1]}" r="4.5" fill="${V.spore}" filter="url(#g)"/>`;
+  return g;
+}
+const DEFS = `<filter id="noise"><feTurbulence type="fractalNoise" baseFrequency="1.2" numOctaves="2" seed="7"/><feColorMatrix values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 .5 -.2"/></filter>
+  <pattern id="grain" width="466" height="466" patternUnits="userSpaceOnUse"><rect width="466" height="466" filter="url(#noise)"/></pattern>
+  <filter id="g" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3.4" result="a"/><feMerge><feMergeNode in="a"/><feMergeNode in="a"/><feMergeNode in="SourceGraphic"/></feMerge></filter>`;
+function vFace(content, caption, page, rage = false) {
+  const id = 'v' + uid++;
+  return `<svg width="${S}" height="${S}" viewBox="0 0 ${S} ${S}"><defs>${DEFS}<clipPath id="${id}"><circle cx="${C}" cy="${C}" r="${C}"/></clipPath></defs>
+    <g clip-path="url(#${id})">${vFrame(rage)}${content}${vEyes(page, rage)}${vCaption(caption)}</g></svg>`;
+}
+
+// ------------------------------------------------------------------ sheet
+const fig = (svg, cap) => `<figure>${svg}<figcaption>${cap}</figcaption></figure>`;
+const rows = [
+  ['K · the crest<span> · the crest stays where idle draws it; the centre becomes the page</span>', [
+    fig(kFace(kList(), 'List', 0), 'Star fades, a checklist takes its place. Gold bullets land one after another.'),
+    fig(kFace(kTimers(), 'Timers', 1), 'The band is the timer: gold over the elapsed sweep from twelve, dim for the rest. The readout sits where the star was.'),
+    fig(kFace(kNotes(), 'Notes', 2), 'The lines are moved: a gold title, two ragged lines, and the band sits half a lobe off.'),
+  ]],
+  ['K · in motion<span> · what the ring animates; every part is an LVGL object, nothing new in flash</span>', [
+    fig(kFace(kTimers(.4, .72, 0), 'Timers', 1), 'Arriving: the star still fading, the gold sweeping round the band up to the elapsed time (360 ms, the crest transition).'),
+    fig(kFace(kTimers(1, .72, 1), 'Timers', 1), 'Running: the leading edge of the gold breathes, once every 2.4 s like the listening face; the band creeps one degree per 1/360 of the timer.'),
+    fig(kFace(kNotes(.55), 'Notes', 2), 'Arriving: the lines write themselves in, left to right, and the band settles onto its half-lobe offset.'),
+  ]],
+  ['V · Nausicaä, the film<span> · Ohmu shell, calm blue eyes, the golden field, spores on the glass</span>', [
+    fig(vFace(vList(), 'list', 0), 'Fourteen shell plates with rust seams. Done items are furrows of the golden field; to get, Ohmu blue. A spore where the clip was.'),
+    fig(vFace(vTimers(), 'timers', 1), 'The Mehve sweeps as the hand with wind behind it; the elapsed band is the Ohmu\'s eye-light.'),
+    fig(vFace(vNotes(), 'notes', 2), 'Writing as wind streaks; an Ohmu feeler in gold rests where the yacht pen was; a spore at its tip.'),
+  ]],
+  ['V · ringing<span> · when a timer rings the eyes turn red, as an Ohmu in rage</span>', [
+    fig(vFace(vTimers(true), 'timers', 1, true), 'The elapsed band, the readout and the page eyes go red until the ring is pressed or told to stop.'),
+  ]],
+];
+const exp = location.hash.match(/^#export=(k|v)-(list|timers|notes)$/);
+if (exp) {
+  const page = ['list', 'timers', 'notes'].indexOf(exp[2]);
+  document.body.style.cssText = 'margin:0;padding:0;background:#000';
+  document.getElementById('sheet').innerHTML = exp[1] === 'k'
+    ? kFace([kList, kTimers, kNotes][page](), ['List', 'Timers', 'Notes'][page], page)
+    : vFace([vList, vTimers, vNotes][page](), ['list', 'timers', 'notes'][page], page);
+} else {
+  document.getElementById('sheet').innerHTML = rows.map(([h, faces]) => `<div class="row"><h2>${h}</h2><div class="faces">${faces.join('')}</div></div>`).join('');
+}
+</script>
+</body>
+</html>
