@@ -2997,8 +2997,17 @@ public:
     }
 
     // Blue held on the menu: the other drawing, kept in NVS, repainted now.
+    // Never park the main loop behind a starved LVGL task: a missed paint
+    // shows on the next blue press, with the new drawing.
     void ToggleMenuTheme() {
-        DisplayLockGuard lock(this);
+        if (!Lock(400)) {
+            ESP_LOGW(TAG, "menu theme flip: display busy");
+            return;
+        }
+        struct Release {
+            RoundLcdDisplay* self;
+            ~Release() { self->Unlock(); }
+        } release{this};
         menu_theme_ = ProvisionsStopWatch::OtherMenuTheme(menu_theme_);
         ProvisionsStopWatch::SaveMenuTheme(menu_theme_);
         ESP_LOGI(TAG, "menu theme: %s", ProvisionsStopWatch::MenuThemeName(menu_theme_));
