@@ -232,6 +232,10 @@ void OrbitMenuCrest::ComposeBand(int sweep_permille, float breath) {
     if (timer_pixels_ == nullptr)
         return;
     sweep_permille = std::clamp(sweep_permille, 0, 1000);
+    // With no elapsed sweep there is no leading edge to breathe. Keep the
+    // empty timer band dim and avoid repainting it on every breath tick.
+    if (sweep_permille == 0)
+        breath = 0.0F;
     if (sweep_permille == shown_sweep_permille_ && breath == shown_breath_)
         return;
     shown_sweep_permille_ = sweep_permille;

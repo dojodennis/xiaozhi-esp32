@@ -1,0 +1,2 @@
+#pragma once
+#define CONFIG_PROVISIONS_GATEWAY_REQUIRED 1
