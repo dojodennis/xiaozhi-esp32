@@ -1,6 +1,6 @@
 # ORBIT-ADD-01 — Keep List/Notes capture on the face
 
-Current: implemented, rendered and built; visual preview accepted; installed on Ring 2; normal boot and preferred Wi-Fi verified; physical add-screen acceptance pending. Codex owner. Dennis requested this on
+Current: implemented, rendered and built; visual preview accepted; installed on Ring 2; normal boot and preferred Wi-Fi verified; physical add-screen/capture check accepted by Dennis. Codex owner. Dennis requested this on
 30 September 2026 as part of the existing Orbit menu workstream. Related:
 MENU-KV-01/02 and WIFI-05. Based on menu candidate 4f96977 (including Wi-Fi
 3519f4b); Ring 2 was updated from corrected 96888cc to 235d9c4 after fresh recovery verification.
@@ -19,12 +19,9 @@ inspect flash headroom. Independent review and hardware acceptance remain separa
 Dennis authorized installation on 30 September. No merge or Ring 1 rollout; keep
 existing physical tests pending.
 
-For Dennis: on Ring 2, press blue for the menu, swipe to List or Notes and tap
-yellow to open it. An empty screen should retain the Home crest and show the
-small destination/speaking cue; existing items remain visible on a populated
-screen (do not delete them for this test). Hold yellow and speak, then release.
-Return whether the face looks right and capture starts/stops correctly. No phone
-app or further reset is needed. Blocks physical add-screen/capture acceptance.
+For Dennis: the requested add-screen/capture check is accepted from “everything
+works” on 30 September. No repeat test is requested for ORBIT-ADD-01. Independent
+source review/integration and unrelated menu/Wi-Fi checks remain separate.
 
 Change log — 30 September 2026 — Codex — ORBIT-ADD-01: began replacement of the
 blank hold-to-add screen with the existing face crest and a small capture cue.
@@ -82,3 +79,11 @@ was observed. USB opening may restart the ring; no raw logs retained. Evidence:
 protected package `boot-observation-after-physical-reset.json`. No firmware
 changes. Earlier DOWNLOAD/reset-pending snapshots are superseded. Visual/capture
 acceptance and previously pending Wi-Fi/menu/voice checks remain open.
+
+
+Change log — 30 September 2026 — ORBIT-ADD-01 — Codex: Dennis reported “everything
+works” in response to the installed screen/capture checklist. Recorded physical
+acceptance of this bounded redesign on 235d9c4. This does not close separate
+Wi-Fi lifecycle, menu-theme, independent review or merge gates. Dennis next
+requested onboard stock queries; inspect the existing read authority and exact
+yacht assignment in the shared Orbit workstream before changing that connection.
