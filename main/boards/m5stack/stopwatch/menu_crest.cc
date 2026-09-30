@@ -108,8 +108,10 @@ void OrbitMenuCrest::Create(lv_obj_t* parent) {
     for (int i = 0; i < 3; ++i) {
         bullets_[i] = Pill(layer_, 10, 10, kGold);
         bars_[i] = Pill(layer_, 10, 10, kIvory);
+    }
+    for (int i = 0; i < 4; ++i) {
         dots_[i] = Pill(layer_, 6, 6, kDim);
-        lv_obj_align(dots_[i], LV_ALIGN_CENTER, (i - 1) * 16, kDotY);
+        lv_obj_align(dots_[i], LV_ALIGN_CENTER, i * 16 - 24, kDotY);
     }
 
     readout_ = lv_label_create(layer_);
@@ -281,9 +283,9 @@ void OrbitMenuCrest::Show(int page, int sweep_permille, const char* readout) {
     SetShown(layer_, true);
     lv_obj_move_foreground(layer_);
 
-    static const char* const kCaptions[3] = {"List", "Timers", "Notes"};
-    lv_label_set_text(caption_, kCaptions[std::clamp(page, 0, 2)]);
-    for (int i = 0; i < 3; ++i)
+    static const char* const kCaptions[4] = {"List", "Timers", "Notes", "Stock"};
+    lv_label_set_text(caption_, kCaptions[std::clamp(page, 0, 3)]);
+    for (int i = 0; i < 4; ++i)
         lv_obj_set_style_bg_color(dots_[i], lv_color_hex(i == page ? kGold : kDim), 0);
 
     const bool timers = page == 1;
@@ -294,16 +296,20 @@ void OrbitMenuCrest::Show(int page, int sweep_permille, const char* readout) {
     lv_image_set_rotation(band_, notes ? kNotesBandTenths : 0);
     lv_obj_set_style_opa(band_, LV_OPA_COVER, 0);
 
-    // The star fades as the page arrives.
+    // Stock keeps the same crest as the ready-to-speak face.
+    const bool stock = page == 3;
+    // The star fades as the other pages arrive.
     SetShown(star_, true);
-    if (arriving)
+    if (stock)
+        lv_obj_set_style_opa(star_, LV_OPA_COVER, 0);
+    else if (arriving)
         Animate(star_, SetOpa, LV_OPA_COVER, LV_OPA_TRANSP, kArriveMs, 0);
     else
         lv_obj_set_style_opa(star_, LV_OPA_TRANSP, 0);
 
     const Bar* rows = notes ? kNotesBars : kListBars;
     for (int i = 0; i < 3; ++i) {
-        const bool used = !timers;
+        const bool used = !timers && !stock;
         SetShown(bars_[i], used);
         SetShown(bullets_[i], page == 0);
         if (!used)
