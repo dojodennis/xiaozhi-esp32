@@ -1,5 +1,24 @@
 # StopWatch
 
+## Current capture profile: Wi-Fi setup (WIFI-03)
+
+On an unlocked Orbit showing the List / Timers / Notes menu, hold yellow alone
+for five seconds to show the setup QR. Shorter yellow presses select on release;
+menu holds never open the microphone. Talk holds outside the menu retain recording.
+Blue or the pocket-lock chord cancels a pending hold. Setup refuses entry during
+recording, playback, active alarms or network work. Blue cancels active setup.
+
+Scan with the phone Camera, join the protected `Provisions-XXXX` hotspot, then
+use the captive page or Safari/Chrome at `http://192.168.4.1`. Choose a 2.4 GHz
+network and connect. Setup closes after saving, cancellation or five minutes;
+Wi-Fi saved/reconnecting does not yet prove gateway readiness. One phone at a time.
+No Provisions iOS app is required. The draft must pass review and device acceptance
+before rollout; source/build completion does not imply installation.
+
+Plan, change log and device checklist:
+https://github.com/dojodennis/provisions-ios/pull/384 (WIFI-01 through WIFI-06).
+The older bench sections below describe their own profiles, not this gesture change.
+
 ## Orbit crest bench test
 
 The Provisions-only face uses the supplied crest at rest, tight input-reactive

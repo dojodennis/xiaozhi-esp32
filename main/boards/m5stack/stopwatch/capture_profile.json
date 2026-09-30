@@ -33,6 +33,7 @@
                 "CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK=n",
                 "CONFIG_APP_ANTI_ROLLBACK=n",
                 "CONFIG_PROVISIONS_LOCAL_CAPTURE=y",
+                "CONFIG_LV_USE_QRCODE=y",
                 "CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO=n",
                 "CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH=n"
             ]

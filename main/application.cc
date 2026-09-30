@@ -2375,6 +2375,10 @@ void Application::ReconnectVoiceGateway() {
 
 void Application::HandleProvisionsGatewayMaintenance() {
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    if (IsOrbitWifiSetup())
+        return;
+#endif
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
     if (manual_listening_requested_.load())
         return;
     if (auto recorder = std::atomic_load(&provisions_recorder_)) {
@@ -2526,6 +2530,10 @@ void Application::HandleProvisionsGatewayMaintenance() {
 void Application::ToggleChatState() { xEventGroupSetBits(event_group_, MAIN_EVENT_TOGGLE_CHAT); }
 
 void Application::StartListening() {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    if (IsOrbitWifiSetup())
+        return;
+#endif
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     if (!provisions_physical_press_.Begin()) {
         manual_listening_requested_.store(false, std::memory_order_release);
@@ -2773,6 +2781,8 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
 
 void Application::HandleStartListeningEvent() {
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    if (IsOrbitWifiSetup())
+        return;
     // Physical atomics already revoked old output and closed released input.
     // Perform the heavy work here, outside the button's ESP_TIMER_TASK stack.
     AbortSpeaking(kAbortReasonNone);

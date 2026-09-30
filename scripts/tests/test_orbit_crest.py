@@ -96,6 +96,8 @@ int main() {
     assert(meter.mean_absolute == 0);
     assert(std::strcmp(Caption(State::Thinking), "") == 0);
     assert(std::strcmp(ResultCaption("No match"), "No match") == 0);
+    assert(std::strcmp(ResultCaption("wi-fi saved — reconnecting"), "Wi-Fi saved\nReconnecting") == 0);
+    assert(std::strcmp(ResultCaption("setup closed — retrying saved wi-fi"), "Setup closed\nRetrying saved Wi-Fi") == 0);
     assert(std::strstr(ResultCaption("Added"), "Not sent"));
     for (auto input : {"Saved", "HTTP 403", "token expired", "a long technical paragraph", ""})
         assert(ResultCaption(input)[0] == '\0');

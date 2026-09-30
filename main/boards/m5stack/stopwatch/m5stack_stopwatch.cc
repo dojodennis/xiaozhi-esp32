@@ -9,15 +9,16 @@
 #include "M5PM1.h"
 #include "config.h"
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-#include "cst820_touch.h"
+#include "button_chord.h"
 #include "crest_asset.h"
 #include "crest_audio.h"
 #include "crest_motion.h"
+#include "cst820_touch.h"
 #include "menu_asset.h"
-#include "button_chord.h"
+#include "menu_wifi_hold.h"
 #include "orbit_dial.h"
-#include "provisions_local_capture_feedback.h"
 #include "provisions_hardware_facts.h"
+#include "provisions_local_capture_feedback.h"
 #include "provisions_timer_snapshot.h"
 #include "provisions_voice_feedback.h"
 #include "utf8_ellipsis.h"
@@ -234,6 +235,7 @@ private:
 
     using AlarmOutputChange = ProvisionsStopwatchOrbit::AlarmOutputChange;
 
+    lv_obj_t* wifi_setup_layer_ = nullptr;
     lv_obj_t* brand_label_ = nullptr;
     lv_obj_t* title_label_ = nullptr;
     lv_obj_t* brand_rule_ = nullptr;
@@ -1049,6 +1051,9 @@ private:
         SetVisible(standby_layer_, !display_awake && !orbit_locked_ui_);
         // The lock covers every face except a ringing timer, which still has
         // to be readable and tappable.
+        SetVisible(wifi_setup_layer_, display_awake && !show_alarm && !orbit_locked_ui_);
+        if (wifi_setup_layer_ && display_awake && !show_alarm && !orbit_locked_ui_)
+            lv_obj_move_foreground(wifi_setup_layer_);
         SetVisible(lock_layer_, orbit_locked_ui_ && !show_alarm);
         if (orbit_locked_ui_ && !show_alarm && lock_layer_ != nullptr)
             lv_obj_move_foreground(lock_layer_);
@@ -1809,6 +1814,14 @@ private:
         if (std::strcmp(notification, "Not changed") == 0) {
             *title = "NO CHANGE";
             return VisualState::kWarning;
+        }
+        if (std::strcmp(notification, "wi-fi saved — reconnecting") == 0) {
+            *title = "WI-FI SAVED";
+            return VisualState::kSuccess;
+        }
+        if (std::strcmp(notification, "setup closed — retrying saved wi-fi") == 0) {
+            *title = "SETUP CLOSED";
+            return VisualState::kNotice;
         }
         *title = notification;
         return VisualState::kNotice;
@@ -3018,6 +3031,62 @@ public:
         SetReplyLayoutLocked(false);
     }
 
+    void ShowOrbitWifiSetup(const std::string& payload) {
+#if CONFIG_LV_USE_QRCODE
+        DisplayLockGuard lock(this);
+        if (wifi_setup_layer_)
+            lv_obj_delete(wifi_setup_layer_);
+        wifi_setup_layer_ = lv_obj_create(lv_screen_active());
+        lv_obj_remove_style_all(wifi_setup_layer_);
+        lv_obj_set_size(wifi_setup_layer_, 466, 466);
+        lv_obj_set_style_bg_color(wifi_setup_layer_, lv_color_hex(0x202326), 0);
+        lv_obj_set_style_bg_opa(wifi_setup_layer_, LV_OPA_COVER, 0);
+        auto label = [this](const char* text, int y) {
+            auto* object = lv_label_create(wifi_setup_layer_);
+            lv_label_set_text(object, text);
+            lv_obj_set_style_text_font(object, &font_noto_sans_basic_16_4, 0);
+            lv_obj_set_style_text_color(object, lv_color_hex(0xeeeeee), 0);
+            lv_obj_set_style_text_align(object, LV_TEXT_ALIGN_CENTER, 0);
+            lv_obj_set_width(object, 310);
+            lv_obj_align(object, LV_ALIGN_TOP_MID, 0, y);
+        };
+        label(payload.empty() ? "starting wi-fi" : "scan with your phone", 60);
+        if (!payload.empty()) {
+            auto* qr = lv_qrcode_create(wifi_setup_layer_);
+            lv_qrcode_set_size(qr, 252);
+            lv_qrcode_set_dark_color(qr, lv_color_black());
+            lv_qrcode_set_light_color(qr, lv_color_white());
+            lv_qrcode_set_quiet_zone(qr, true);
+            lv_obj_align(qr, LV_ALIGN_CENTER, 0, -5);
+            if (lv_qrcode_update(qr, payload.data(), payload.size()) != LV_RESULT_OK) {
+                lv_obj_delete(qr);
+                label("cannot draw code\npress blue and try again", 200);
+            }
+        }
+        if (!payload.empty()) {
+            const auto password_start = payload.find(";P:");
+            if (password_start != std::string::npos) {
+                const auto password_end = payload.find(";;", password_start + 3);
+                if (password_end != std::string::npos) {
+                    label("password for Settings > Wi-Fi", 355);
+                    const auto password =
+                        payload.substr(password_start + 3, password_end - password_start - 3);
+                    label(password.c_str(), 378);
+                }
+            }
+        }
+        label("join warning? open 192.168.4.1\nblue cancels", 408);
+        SetReplyLayoutLocked(false);
+#endif
+    }
+    void HideOrbitWifiSetup() {
+        DisplayLockGuard lock(this);
+        if (wifi_setup_layer_)
+            lv_obj_delete(wifi_setup_layer_);
+        wifi_setup_layer_ = nullptr;
+        SetReplyLayoutLocked(false);
+    }
+
     void SetOrbitLocked(bool locked) {
         DisplayLockGuard lock(this);
         orbit_locked_ui_ = locked;
@@ -3082,6 +3151,10 @@ private:
     std::function<void()> chord_talk_start_;
     esp_timer_handle_t chord_timer_ = nullptr;
     esp_timer_handle_t lock_timer_ = nullptr;
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    esp_timer_handle_t wifi_hold_timer_ = nullptr;
+    ProvisionsStopWatch::MenuWifiHold wifi_hold_;
+#endif
     // Pocket lock. Single presses and swipes do nothing until both buttons
     // are held together again. A ringing timer can still be dismissed.
     std::atomic<bool> orbit_locked_{false};
@@ -3476,6 +3549,32 @@ private:
         };
         if (esp_timer_create(&lock_args, &lock_timer_) != ESP_OK)
             lock_timer_ = nullptr;
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        esp_timer_create_args_t wifi_args = {
+            .callback =
+                [](void* arg) {
+                    auto* self = static_cast<M5StackStopwatchBoard*>(arg);
+                    uint32_t generation;
+                    {
+                        std::lock_guard<std::mutex> lock(self->chord_mutex_);
+                        if (!self->wifi_hold_.Fire(esp_timer_get_time()))
+                            return;
+                        generation = self->wifi_hold_.Generation();
+                    }
+                    Application::GetInstance().StartOrbitWifiSetup([self, generation]() {
+                        std::lock_guard<std::mutex> lock(self->chord_mutex_);
+                        return !self->orbit_locked_.load() &&
+                               self->wifi_hold_.StillHeld(generation);
+                    });
+                },
+            .arg = this,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "orbit_wifi_hold",
+            .skip_unhandled_events = true,
+        };
+        if (esp_timer_create(&wifi_args, &wifi_hold_timer_) != ESP_OK)
+            wifi_hold_timer_ = nullptr;
+#endif
     }
 
     void CancelLockHold() {
@@ -3494,6 +3593,9 @@ private:
             }
             display_->SetOrbitLocked(locked);
             if (locked) {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                Application::GetInstance().CancelOrbitWifiSetup();
+#endif
                 GetBacklight()->SetBrightness(8, false);
                 return;
             }
@@ -3552,6 +3654,14 @@ private:
     }
 
     void BluePressed() {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        {
+            std::lock_guard<std::mutex> lock(chord_mutex_);
+            wifi_hold_.Cancel();
+        }
+        if (wifi_hold_timer_)
+            esp_timer_stop(wifi_hold_timer_);
+#endif
         ProvisionsStopWatch::ButtonChord::Edge edge;
         {
             std::lock_guard<std::mutex> lock(chord_mutex_);
@@ -3578,6 +3688,14 @@ private:
     // Both buttons are down. The lock commits only if they are still down
     // kLockHoldUs later; a quick chord does not change the face.
     void OnButtonChord() {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        {
+            std::lock_guard<std::mutex> lock(chord_mutex_);
+            wifi_hold_.Cancel();
+        }
+        if (wifi_hold_timer_)
+            esp_timer_stop(wifi_hold_timer_);
+#endif
         if (lock_timer_ == nullptr) {
             ToggleOrbitLock();
             return;
@@ -3612,7 +3730,27 @@ private:
                 return;
             }
             ResetDisplayIdleTimer();
-            ArmTalkStart([]() {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+            const bool menu = Application::GetInstance().IsOrbitMenuFace() &&
+                              !Application::GetInstance().IsOrbitWifiSetup() &&
+                              !display_->HasTimerAlarm();
+            {
+                std::lock_guard<std::mutex> lock(chord_mutex_);
+                wifi_hold_.Begin(esp_timer_get_time(), menu, orbit_locked_.load());
+                if (chord_.BlueHeld())
+                    wifi_hold_.Cancel();
+            }
+            if (menu && wifi_hold_timer_) {
+                esp_timer_stop(wifi_hold_timer_);
+                esp_timer_start_once(wifi_hold_timer_, ProvisionsStopWatch::MenuWifiHold::kHoldUs);
+            }
+#else
+            const bool menu = false;
+#endif
+            ArmTalkStart([menu]() {
+                // Menu selection moves to release, leaving the five-second hold available.
+                if (menu)
+                    return;
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
                 if (Application::GetInstance().ConfirmOrbitMenu())
                     return;
@@ -3621,6 +3759,27 @@ private:
             });
         });
         button1_.OnPressUp([this]() {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+            if (wifi_hold_timer_)
+                esp_timer_stop(wifi_hold_timer_);
+            ProvisionsStopWatch::MenuWifiHold::Release release;
+            {
+                std::lock_guard<std::mutex> lock(chord_mutex_);
+                release = wifi_hold_.End(esp_timer_get_time());
+            }
+            if (release != ProvisionsStopWatch::MenuWifiHold::Release::Unhandled) {
+                TalkReleased();
+                TalkClicked();  // Drain the chord helper's short-click flag.
+                if (release == ProvisionsStopWatch::MenuWifiHold::Release::Confirm) {
+                    Application::GetInstance().Schedule([this]() {
+                        auto& app = Application::GetInstance();
+                        if (!orbit_locked_.load() && app.IsOrbitMenuFace())
+                            app.ConfirmOrbitMenu();
+                    });
+                }
+                return;
+            }
+#endif
             if (TalkReleased()) {
                 if (!orbit_locked_.load())
                     Application::GetInstance().StopListening();
@@ -3737,6 +3896,12 @@ private:
                         esp_timer_get_time() < deadline) {
                         return;
                     }
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                    if (Application::GetInstance().IsOrbitWifiSetup()) {
+                        self->ResetDisplayIdleTimer();
+                        return;
+                    }
+#endif
                     if (self->display_->HasTimerAlarm() || self->orbit_locked_.load()) {
                         if (self->display_->HasTimerAlarm())
                             self->ResetDisplayIdleTimer();
@@ -4093,6 +4258,17 @@ void ProvisionsShowOrbitMenu(uint8_t page) {
         return;
     }
     static_cast<RoundLcdDisplay*>(display)->ShowOrbitMenu(page);
+}
+
+void ProvisionsShowOrbitWifiSetup(const std::string& payload) {
+    auto* display = Board::GetInstance().GetDisplay();
+    if (display)
+        static_cast<RoundLcdDisplay*>(display)->ShowOrbitWifiSetup(payload);
+}
+void ProvisionsHideOrbitWifiSetup() {
+    auto* display = Board::GetInstance().GetDisplay();
+    if (display)
+        static_cast<RoundLcdDisplay*>(display)->HideOrbitWifiSetup();
 }
 
 void ProvisionsDismissSpokenFace() {

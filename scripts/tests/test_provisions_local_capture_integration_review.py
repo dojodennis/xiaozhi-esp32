@@ -110,6 +110,7 @@ struct AudioService {
     }
 };
 struct Application {
+    bool wifi_setup=false;bool IsOrbitWifiSetup()const{return wifi_setup;}
     bool provisions_recording_was_dictation_=false;
     std::atomic<bool> dictation_screen_{false};std::atomic<uint32_t> dictation_closed_press_{0};bool IsLiteMode()const{return false;}
     uint32_t dictation_authorization_seen_=0;bool dictation_has_assignment_proof_=false;std::string dictation_assignment_proof_;
@@ -153,6 +154,13 @@ struct Signal {
     void Wait(){std::unique_lock<std::mutex> lock(mutex);assert(changed.wait_for(lock,std::chrono::seconds(2),[&]{return set;}));}
 };
 int main(){
+    {
+        Application app;app.wifi_setup=true;app.StartListening();
+        assert(!app.manual_listening_requested_.load());
+        app.wifi_setup=false;app.StartListening();
+        assert(app.manual_listening_requested_.load());
+        app.StopListening();
+    }
     {
         Application app;app.StartAndRun();app.StopAndRun();
         app.HandleVoiceRecordingResult(Result::DictationRecorded,1);
@@ -476,6 +484,7 @@ struct WebsocketProtocol {
     void InterruptStoredRecording(){++interruptions;}
 };
 struct Application {
+    bool wifi_setup=false;bool IsOrbitWifiSetup()const{return wifi_setup;}
     bool provisions_recording_was_dictation_=false;
     std::atomic<bool> dictation_screen_{false};std::atomic<uint32_t> dictation_closed_press_{0};bool IsLiteMode()const{return false;}
     uint32_t dictation_authorization_seen_=0;bool dictation_has_assignment_proof_=false;std::string dictation_assignment_proof_;
@@ -718,6 +727,7 @@ struct Protocol {bool open=false;bool IsAudioChannelOpened(){return open;}};
 struct Ota {bool HasServerTime(){return true;}void MarkCurrentVersionValid(){}};
 struct Audio {int sounds=0;void PlaySound(std::string_view){++sounds;}};
 struct Application {
+    bool wifi_setup=false;bool IsOrbitWifiSetup()const{return wifi_setup;}
     bool provisions_recording_was_dictation_=false;
     std::atomic<bool> dictation_screen_{false};std::atomic<uint32_t> dictation_closed_press_{0};bool IsLiteMode()const{return false;}
     uint32_t dictation_authorization_seen_=0;bool dictation_has_assignment_proof_=false;std::string dictation_assignment_proof_;
@@ -804,6 +814,7 @@ struct Recorder {
     bool CanRetry(){return false;}bool RetryPending(){return false;}
 };
 struct Application {
+    bool wifi_setup=false;bool IsOrbitWifiSetup()const{return wifi_setup;}
     bool provisions_recording_was_dictation_=false;
     std::atomic<bool> dictation_screen_{false};std::atomic<uint32_t> dictation_closed_press_{0};bool IsLiteMode()const{return false;}
     uint32_t dictation_authorization_seen_=0;bool dictation_has_assignment_proof_=false;std::string dictation_assignment_proof_;

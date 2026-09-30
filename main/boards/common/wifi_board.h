@@ -1,15 +1,18 @@
 #ifndef WIFI_BOARD_H
 #define WIFI_BOARD_H
 
-#include "board.h"
+#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
-#include <esp_timer.h>
+#include <atomic>
+#include "board.h"
 
 class WifiBoard : public Board {
 protected:
     esp_timer_handle_t connect_timer_ = nullptr;
     bool in_config_mode_ = false;
+    std::atomic<bool> orbit_setup_running_{false};
+    std::atomic<bool> orbit_setup_cancelled_{false};
     NetworkEventCallback network_event_callback_ = nullptr;
 
     virtual std::string GetBoardJson() override;
@@ -59,7 +62,10 @@ public:
      * Enter WiFi configuration mode (thread-safe, can be called from any task)
      */
     void EnterWifiConfigMode();
-    
+    bool StartWifiSetup(std::function<void(std::string)> ready,
+                        std::function<void(bool)> finished) override;
+    void CancelWifiSetup() override;
+
     /**
      * Check if in WiFi config mode
      */

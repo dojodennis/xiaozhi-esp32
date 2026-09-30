@@ -6,11 +6,14 @@
 #include "settings.h"
 #include "assets/lang_config.h"
 
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
-#include <esp_network.h>
 #include <esp_log.h>
 #include <esp_mac.h>
+#include <esp_network.h>
+#include <esp_random.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <orbit_wifi_session.h>
+#include <new>
 #include <utility>
 
 #include <material_symbols.h>
@@ -25,6 +28,23 @@ static const char *TAG = "WifiBoard";
 
 // Connection timeout in seconds
 static constexpr int CONNECT_TIMEOUT_SEC = 60;
+
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED && CONFIG_USE_HOTSPOT_WIFI_PROVISIONING
+static std::string OrbitWifiPassword(const uint8_t (&random)[16]) {
+    // A non-hex first character keeps Wi-Fi QR scanners from treating the
+    // passphrase as a hexadecimal key. The remaining characters are easy to
+    // read from the ring when Settings needs a manual password.
+    constexpr char first[] = "GHJKLMNPQRSTUVWX";
+    constexpr char alphabet[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    static_assert(sizeof(first) - 1 == 16 && sizeof(alphabet) - 1 == 32);
+    std::string password;
+    password.reserve(sizeof(random));
+    password.push_back(first[random[0] & 0x0f]);
+    for (size_t i = 1; i < sizeof(random); ++i)
+        password.push_back(alphabet[random[i] & 0x1f]);
+    return password;
+}
+#endif
 
 WifiBoard::WifiBoard() {
     // Create connection timeout timer
@@ -62,6 +82,7 @@ void WifiBoard::StartNetwork() {
     config.show_sleep_config = false;
     esp_log_level_set("WifiStation", ESP_LOG_WARN);
     esp_log_level_set("SsidManager", ESP_LOG_WARN);
+    esp_log_level_set("wifi", ESP_LOG_WARN);
 #else
     config.ssid_prefix = "Xiaozhi";
     config.language = Lang::CODE;
@@ -118,8 +139,8 @@ void WifiBoard::TryWifiConnect() {
         WifiManager::GetInstance().StartStation();
     } else {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-        // Normal chef use has no setup UI. Missing factory data fails closed
-        // until a technician rewrites the per-device NVS partition.
+        // Missing profiles remain offline until the chef deliberately opens
+        // QR setup from the menu; never expose a hotspot automatically.
         ESP_LOGE(TAG, "Factory WiFi profile is missing");
         in_config_mode_ = false;
         Application::GetInstance().SetDeviceState(kDeviceStateIdle);
@@ -144,7 +165,12 @@ void WifiBoard::OnNetworkEvent(NetworkEvent event, const std::string& data) {
 #endif
             in_config_mode_ = false;
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-            ESP_LOGI(TAG, "Connected to the configured WiFi profile");
+            {
+                const auto& profiles = SsidManager::GetInstance().GetSsidList();
+                const bool preferred = !profiles.empty() && data == profiles.front().ssid;
+                ESP_LOGI(TAG, "Connected to %s saved WiFi profile",
+                         preferred ? "preferred" : "fallback");
+            }
 #else
             ESP_LOGI(TAG, "Connected to WiFi: %s", data.c_str());
 #endif
@@ -188,11 +214,15 @@ void WifiBoard::SetNetworkEventCallback(NetworkEventCallback callback) {
 
 void WifiBoard::OnWifiConnectTimeout(void* arg) {
     auto* board = static_cast<WifiBoard*>(arg);
+    if (board->orbit_setup_running_.load())
+        return;
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     // WifiStation owns reconnect/backoff. Do not race a late Connected event by
     // stopping it from the timer task; only update the UI on the application task.
     ESP_LOGW(TAG, "Configured WiFi connection is still unavailable");
     Application::GetInstance().Schedule([board]() {
+        if (board->orbit_setup_running_.load())
+            return;
         if (WifiManager::GetInstance().IsConnected()) {
             return;
         }
@@ -397,4 +427,72 @@ std::string WifiBoard::GetDeviceStatusJson() {
     cJSON_free(str);
     cJSON_Delete(root);
     return result;
+}
+
+bool WifiBoard::StartWifiSetup(std::function<void(std::string)> ready,
+                               std::function<void(bool)> finished) {
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED && CONFIG_USE_HOTSPOT_WIFI_PROVISIONING
+    if (orbit_setup_running_.exchange(true))
+        return false;
+    orbit_setup_cancelled_.store(false);
+    struct Work {
+        WifiBoard* board;
+        std::function<void(std::string)> ready;
+        std::function<void(bool)> finished;
+    };
+    auto* work = new (std::nothrow) Work{this, std::move(ready), std::move(finished)};
+    if (!work) {
+        orbit_setup_running_.store(false);
+        return false;
+    }
+    esp_timer_stop(connect_timer_);
+    auto started = xTaskCreate(
+        [](void* raw) {
+            std::unique_ptr<Work> work(static_cast<Work*>(raw));
+            auto& wifi = WifiManager::GetInstance();
+            uint8_t random[16];
+            esp_fill_random(random, sizeof(random));
+            std::string password = OrbitWifiPassword(random);
+            std::fill(random, random + sizeof(random), 0);
+            bool saved = false;
+            if (wifi.PrepareOrbitSetup(password) && !work->board->orbit_setup_cancelled_.load()) {
+                wifi.StartConfigAp();
+                if (wifi.IsConfigMode()) {
+                    work->ready("WIFI:T:WPA;S:" + wifi.GetApSsid() + ";P:" + password + ";;");
+                    int result;
+                    do {
+                        vTaskDelay(pdMS_TO_TICKS(100));
+                        result = wifi.OrbitSetupResult();
+                    } while (result == static_cast<int>(OrbitWifiSession::Result::Active));
+                    saved = result == static_cast<int>(OrbitWifiSession::Result::Saved);
+                    // Let the bounded HTTP response finish before closing services.
+                    if (saved)
+                        vTaskDelay(pdMS_TO_TICKS(250));
+                    wifi.StopConfigAp();  // Existing ConfigModeExit restarts saved station
+                                          // profiles.
+                }
+            }
+            wifi.DiscardOrbitSetup();
+            std::fill(password.begin(), password.end(), '\0');
+            work->board->orbit_setup_running_.store(false);
+            work->finished(saved);
+            work.reset();
+            vTaskDelete(nullptr);
+        },
+        "orbit_wifi_setup", 6144, work, 4, nullptr);
+    if (started != pdPASS) {
+        delete work;
+        orbit_setup_running_.store(false);
+        return false;
+    }
+    return true;
+#else
+    return false;
+#endif
+}
+void WifiBoard::CancelWifiSetup() {
+    if (orbit_setup_running_.load()) {
+        orbit_setup_cancelled_.store(true);
+        WifiManager::GetInstance().CancelOrbitSetup();
+    }
 }

@@ -76,6 +76,12 @@ public:
     virtual Camera* GetCamera();
     virtual NetworkInterface* GetNetwork() = 0;
     virtual void StartNetwork() = 0;
+    // Optional bounded Wi-Fi provisioning. Callbacks may originate on a worker.
+    virtual bool StartWifiSetup(std::function<void(std::string)> ready,
+                                std::function<void(bool)> finished) {
+        return false;
+    }
+    virtual void CancelWifiSetup() {}
     virtual void SetNetworkEventCallback(NetworkEventCallback callback) { (void)callback; }
     virtual const char* GetNetworkStateIcon() = 0;
     virtual bool GetBatteryLevel(int &level, bool& charging, bool& discharging);
