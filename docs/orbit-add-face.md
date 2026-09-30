@@ -1,6 +1,6 @@
 # ORBIT-ADD-01 — Keep List/Notes capture on the face
 
-Current: implemented, rendered and built; visual preview accepted; installed and full-device verified on Ring 2; reset pending. Codex owner. Dennis requested this on
+Current: implemented, rendered and built; visual preview accepted; installed on Ring 2; normal boot and preferred Wi-Fi verified; physical add-screen acceptance pending. Codex owner. Dennis requested this on
 30 September 2026 as part of the existing Orbit menu workstream. Related:
 MENU-KV-01/02 and WIFI-05. Based on menu candidate 4f96977 (including Wi-Fi
 3519f4b); Ring 2 was updated from corrected 96888cc to 235d9c4 after fresh recovery verification.
@@ -19,11 +19,12 @@ inspect flash headroom. Independent review and hardware acceptance remain separa
 Dennis authorized installation on 30 September. No merge or Ring 1 rollout; keep
 existing physical tests pending.
 
-For Dennis: after verified installation, briefly reset Ring 2 once if DOWNLOAD
-mode remains, then confirm the face returns. On an empty List/Notes screen, check
-the same crest remains and holding yellow begins recording, with release to send.
-Return visual/capture pass or the failing step. No phone app is needed for this
-check. Hardware acceptance is pending; preview approval is recorded separately.
+For Dennis: on Ring 2, press blue for the menu, swipe to List or Notes and tap
+yellow to open it. An empty screen should retain the Home crest and show the
+small destination/speaking cue; existing items remain visible on a populated
+screen (do not delete them for this test). Hold yellow and speak, then release.
+Return whether the face looks right and capture starts/stops correctly. No phone
+app or further reset is needed. Blocks physical add-screen/capture acceptance.
 
 Change log — 30 September 2026 — Codex — ORBIT-ADD-01: began replacement of the
 blank hold-to-add screen with the existing face crest and a small capture cue.
@@ -70,3 +71,14 @@ unchanged; no branch merged. Protected installation/recovery records are saved.
 Ring 2 remains in DOWNLOAD mode pending one brief physical reset. Normal boot,
 preferred-network connection and physical add-screen/capture checks remain open
 for this revision. Independent review remains separate from preview approval.
+
+Change log — 30 September 2026, 15:24 UTC — ORBIT-ADD-01 / WIFI-05 — Codex:
+Dennis confirmed the face returned. A 40-second USB observation verified normal
+flash boot, crest theme, preferred saved-network connection, activation and idle.
+Protected profile verification identifies the preferred network as Koji. The
+observation also saw idle → listening → idle, which does not by itself prove
+saved dictation or its contents. No panic, watchdog, stack overflow or assertion
+was observed. USB opening may restart the ring; no raw logs retained. Evidence:
+protected package `boot-observation-after-physical-reset.json`. No firmware
+changes. Earlier DOWNLOAD/reset-pending snapshots are superseded. Visual/capture
+acceptance and previously pending Wi-Fi/menu/voice checks remain open.
