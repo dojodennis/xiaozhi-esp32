@@ -14,6 +14,7 @@
 #include "lvgl.h"
 #include "menu_crest.h"
 #include "menu_asset.h"
+#include "add_face.h"
 
 uint32_t test_time_ms = 0;
 constexpr int kSize = 466;
@@ -65,6 +66,43 @@ int main(int argc, char** argv) {
     auto* screen = lv_screen_active();
     lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
+    // Actual empty-screen renderer uses the same objects/assets as Home.
+    auto* band = lv_image_create(screen);
+    lv_image_set_src(band, &OrbitCrest::kBandImage);
+    lv_obj_set_pos(band, OrbitCrest::kBandX, OrbitCrest::kBandY);
+    auto* star = lv_image_create(screen);
+    lv_image_set_src(star, &OrbitCrest::kStarImage);
+    lv_obj_set_pos(star, OrbitCrest::kStarX, OrbitCrest::kStarY);
+    for (auto* mark : {band, star}) {
+        lv_obj_set_style_image_recolor(mark, lv_color_hex(OrbitCrest::kIvory), 0);
+        lv_obj_set_style_image_recolor_opa(mark, LV_OPA_COVER, 0);
+    }
+    Advance(10);
+    auto home = Frame();
+    Save(output / "home.ppm");
+    auto* title = lv_label_create(screen);
+    auto* hint = lv_label_create(screen);
+    for (const char* destination : {"List", "Notes", "List"}) {
+        ProvisionsStopWatch::PaintAddFace(band, star, title, hint, destination);
+        Advance(10);
+        assert(lv_obj_get_x(band) == OrbitCrest::kBandX);
+        assert(lv_obj_get_y(star) == OrbitCrest::kStarY);
+        auto ready = Frame();
+        // Only the two labels below the star may differ from Home.
+        for (int y = 0; y < kSize; ++y)
+            for (int x = 0; x < kSize; ++x)
+                if (y < 287 || y > 336)
+                    assert(ready[y * kSize + x] == home[y * kSize + x]);
+        Save(output / (std::string("add-") + destination + ".ppm"));
+        // The same crest objects can transition into existing listening motion.
+        const auto listening = OrbitCrest::Rings(OrbitCrest::State::Listening, 500, .5F, false);
+        const auto start = OrbitCrest::Transition(OrbitCrest::Frame{}, listening, 0, false);
+        assert(start.band_opacity == 255 && start.star_opacity == 255);
+        // Re-entering the empty view restores a previously dimmed crest.
+        lv_obj_set_style_image_opa(band, 20, 0);
+        lv_obj_set_style_image_opa(star, 20, 0);
+    }
+    for (auto* obj : {band, star, title, hint}) lv_obj_delete(obj);
     ProvisionsStopWatch::OrbitMenuCrest crest;
     crest.Create(screen);
     crest.Show(0, 0, "--:--");
@@ -138,5 +176,5 @@ int main(int argc, char** argv) {
         }
     }
     crest.Hide();
-    std::puts("PASS: K/V pages, idle timer, live progress, animation, removal and 12 switches");
+    std::puts("PASS: add-face Home geometry and restoration; K/V pages, idle timer, live progress, animation, removal and 12 switches");
 }

@@ -9,6 +9,7 @@
 #include "M5PM1.h"
 #include "config.h"
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+#include "add_face.h"
 #include "button_chord.h"
 #include "crest_asset.h"
 #include "crest_audio.h"
@@ -2936,20 +2937,34 @@ public:
         SetLabelText(dictation_eyebrow_, &dictation_eyebrow_text_, above);
         SetLabelText(dictation_status_, &dictation_status_text_, focus);
         SetLabelText(dictation_item_, &dictation_item_text_, below);
-        // Empty list: one quiet line, not the galley-sized prompt.
-        const bool prompt = above.empty() && focus == "hold to add";
-        lv_obj_set_style_text_font(dictation_status_,
-                                   prompt ? &font_noto_sans_basic_16_4
-                                          : &font_noto_sans_basic_30_4,
-                                   0);
-        lv_obj_set_style_text_color(dictation_status_,
-                                    lv_color_hex(prompt ? 0x8B877C : OrbitCrest::kIvory), 0);
-        lv_obj_set_style_text_opa(dictation_status_, prompt ? LV_OPA_60 : LV_OPA_COVER, 0);
-        // Face word sits above the lines; the lines stay where they were.
+        const bool prompt = above.empty() && below.empty() && focus == "hold to add";
         SetLabelText(face_caption_, &face_caption_text_, caption_text);
         SetVisible(face_caption_, !caption_text.empty());
+        if (prompt) {
+            // Stay on the same crest geometry as Home. Talk already starts
+            // capture on press after the pocket-lock chord window, not a hold
+            // threshold; release finishes it. No separate confirmation screen.
+            crest_state_ = OrbitCrest::State::Idle;
+            crest_frame_ = OrbitCrest::Frame{};
+            crest_transition_from_ = crest_frame_;
+            crest_transition_ms_ = CrestNowMs();
+            ProvisionsStopWatch::PaintAddFace(crest_band_, crest_star_, face_caption_,
+                                             dictation_status_, caption_text.c_str());
+        } else {
+            // A real item replaces the empty face, including on an in-place
+            // refresh; do not leave its crest behind the list text.
+            SetVisible(crest_band_, false);
+            SetVisible(crest_star_, false);
+            lv_obj_set_style_text_font(dictation_status_, &font_noto_sans_basic_30_4, 0);
+            lv_obj_set_style_text_color(dictation_status_, lv_color_hex(OrbitCrest::kIvory), 0);
+            lv_obj_set_style_text_opa(dictation_status_, LV_OPA_COVER, 0);
+            lv_obj_set_size(face_caption_, 200, 24);
+            lv_obj_align(face_caption_, LV_ALIGN_CENTER, 0, -150);
+            lv_obj_set_style_text_color(face_caption_, lv_color_hex(0x8B877C), 0);
+            lv_obj_set_style_text_letter_space(face_caption_, 2, 0);
+        }
         SetPromptEmphasisLocked(false);
-        SetHoldHintLocked(prompt);
+        SetHoldHintLocked(false);
         if (!already)
             SetReplyLayoutLocked(false);
     }
