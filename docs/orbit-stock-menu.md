@@ -1,6 +1,6 @@
 # ORBIT-STOCK-01 — Dedicated onboard stock entry
 
-Current: implemented; navigation and native rendering pass; first target build passes. Owner: Codex. Related: ORBIT-ADD-01 and
+Current: installed on Ring 2 as 30acebf; DOWNLOAD mode, physical reset and Stock acceptance pending. Owner: Codex. Related: ORBIT-ADD-01 and
 shared-line tool parity row 4. Dennis approved installation on 30 September 2026.
 The prior Home-only stock test instructions are superseded by this menu flow.
 
@@ -44,3 +44,13 @@ assertion, Lite erasure count, obsolete upload harness symbol, incomplete blue
 button harness). No new full-suite failure. Native Stock/Menu and caption
 restoration checks pass; Stock exits expanded timer details and keeps ringing
 alarm priority. Self-review only; independent review/integration remain open.
+
+Change log — 30 September 2026 — ORBIT-STOCK-01 — Codex: installed signed
+30acebf on Ring 2, replacing 235d9c4. Verified exact device/security, prior app,
+active slot, partition and preferred Koji profile before writing. Fresh 16 MB
+recovery verified; app-only write at 0x20000 followed by app and whole-device
+verification. All other flash bytes, including saved Wi-Fi, are unchanged.
+Signed image 4,001,792 bytes, 126,976 bytes OTA headroom. Protected package:
+orbit-stock-menu-30acebf. Device remains in DOWNLOAD mode pending one brief
+physical reset. Boot/Wi-Fi and dedicated Stock menu/spoken-answer acceptance
+remain open. Ring 1 unchanged; no merge or gateway deployment.
