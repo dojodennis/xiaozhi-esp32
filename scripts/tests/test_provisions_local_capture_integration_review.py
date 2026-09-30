@@ -110,6 +110,10 @@ struct AudioService {
     }
 };
 struct Application {
+    bool service=false;std::string service_state,service_detail;
+    bool IsOrbitService()const{return service;}
+    static Application& GetInstance(){static Application value;return value;}
+    void OrbitServiceFrame(const std::string& state,const std::string& detail=""){service_state=state;service_detail=detail;}
     bool wifi_setup=false;bool IsOrbitWifiSetup()const{return wifi_setup;}
     bool provisions_recording_was_dictation_=false;
     std::atomic<bool> dictation_screen_{false};std::atomic<uint32_t> dictation_closed_press_{0};bool IsLiteMode()const{return false;}
@@ -484,6 +488,10 @@ struct WebsocketProtocol {
     void InterruptStoredRecording(){++interruptions;}
 };
 struct Application {
+    bool service=false;std::string service_state,service_detail;
+    bool IsOrbitService()const{return service;}
+    static Application& GetInstance(){static Application value;return value;}
+    void OrbitServiceFrame(const std::string& state,const std::string& detail=""){service_state=state;service_detail=detail;}
     bool wifi_setup=false;bool IsOrbitWifiSetup()const{return wifi_setup;}
     bool provisions_recording_was_dictation_=false;
     std::atomic<bool> dictation_screen_{false};std::atomic<uint32_t> dictation_closed_press_{0};bool IsLiteMode()const{return false;}
@@ -597,11 +605,12 @@ TaskHandle_t xTaskGetCurrentTaskHandle(){return current_task;}
 void xEventGroupSetBits(int,int){}
 namespace provisions {
 struct VoiceReplay {VoiceCapture capture;size_t bytes=0;uint8_t* frames=nullptr;};
-std::string VoiceCaptureStart(const VoiceReplay&,const std::string&,uint32_t turn,bool deferred,bool alarm_stop,bool shopping=false){
+std::string VoiceCaptureStart(const VoiceReplay&,const std::string&,uint32_t turn,bool deferred,bool alarm_stop,bool shopping=false,bool notes=false){(void)notes;
     return "start:"+std::to_string(turn)+(deferred?":deferred":":live")+(alarm_stop?":alarm_stop":"")+(shopping?":shopping":"");
 }
 }
 bool ProvisionsListenShopping(){return false;}
+bool ProvisionsListenNotes(){return false;}
 struct Observed {
     std::vector<std::string> frames;TaskHandle_t disposal=nullptr;
     unsigned closes=0;bool connected=true;
@@ -727,6 +736,10 @@ struct Protocol {bool open=false;bool IsAudioChannelOpened(){return open;}};
 struct Ota {bool HasServerTime(){return true;}void MarkCurrentVersionValid(){}};
 struct Audio {int sounds=0;void PlaySound(std::string_view){++sounds;}};
 struct Application {
+    bool service=false;std::string service_state,service_detail;
+    bool IsOrbitService()const{return service;}
+    static Application& GetInstance(){static Application value;return value;}
+    void OrbitServiceFrame(const std::string& state,const std::string& detail=""){service_state=state;service_detail=detail;}
     bool wifi_setup=false;bool IsOrbitWifiSetup()const{return wifi_setup;}
     bool provisions_recording_was_dictation_=false;
     std::atomic<bool> dictation_screen_{false};std::atomic<uint32_t> dictation_closed_press_{0};bool IsLiteMode()const{return false;}
@@ -814,6 +827,10 @@ struct Recorder {
     bool CanRetry(){return false;}bool RetryPending(){return false;}
 };
 struct Application {
+    bool service=false;std::string service_state,service_detail;
+    bool IsOrbitService()const{return service;}
+    static Application& GetInstance(){static Application value;return value;}
+    void OrbitServiceFrame(const std::string& state,const std::string& detail=""){service_state=state;service_detail=detail;}
     bool wifi_setup=false;bool IsOrbitWifiSetup()const{return wifi_setup;}
     bool provisions_recording_was_dictation_=false;
     std::atomic<bool> dictation_screen_{false};std::atomic<uint32_t> dictation_closed_press_{0};bool IsLiteMode()const{return false;}
@@ -888,6 +905,25 @@ int main(){
         WebsocketProtocol p;p.ParseServerHello(root);assert(p.gateway_authenticated_&&p.dictation_enabled_.load()==(variant==2));
         p.RejectServerHello("disconnect");assert(!p.dictation_enabled_);cJSON_Delete(root);
     }
+#endif
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    Application::GetInstance().service=true;
+    for(int variant=0;variant<5;++variant){
+        auto* root=cJSON_Parse(hello);auto* caps=cJSON_GetObjectItemCaseSensitive(root,"provisions");
+        auto* service=cJSON_CreateObject();cJSON_AddItemToObject(caps,"dojo_service",service);
+        if(variant<2){cJSON_AddStringToObject(service,"state","pairing");
+            cJSON_AddStringToObject(service,"code",variant==0?"short":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");}
+        else {cJSON_AddStringToObject(service,"state",variant==4?"recovery":"ready");
+            cJSON_AddStringToObject(service,"table","2");cJSON_AddTrueToObject(caps,"audio_capture");
+            cJSON_AddItemToObject(caps,"capture_context",cJSON_Parse(context));
+            if(variant>=3)cJSON_AddTrueToObject(caps,"dictation_v1");}
+        WebsocketProtocol p;p.ParseServerHello(root);
+        assert(p.gateway_authenticated_.load()==(variant==1||variant>=3));
+        assert(p.capture_enabled_.load()==(variant>=3));
+        if(variant==1)assert(!p.dictation_enabled_&&!p.capture_enabled_);
+        cJSON_Delete(root);
+    }
+    Application::GetInstance().service=false;
 #endif
     Application app;
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE

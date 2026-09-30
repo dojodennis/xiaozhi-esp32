@@ -292,6 +292,10 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
 #endif
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     std::string url = ProvisionsEndpointPolicy::WebsocketUrl();
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    if (Application::GetInstance().IsOrbitService())
+        url = ProvisionsEndpointPolicy::ServiceWebsocketUrl();
+#endif
     Settings provisions_settings("provisions", false);
     std::string token = provisions_settings.GetString("device_token");
     version_ = 1;
@@ -746,9 +750,13 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
     }
 
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-    if (ParseLiteServerHello(root)) {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    if (!Application::GetInstance().IsOrbitService() && ParseLiteServerHello(root))
         return;
-    }
+#else
+    if (ParseLiteServerHello(root))
+        return;
+#endif
     auto version = cJSON_GetObjectItem(root, "version");
     auto provisions = cJSON_GetObjectItem(root, "provisions");
     auto authenticated =
@@ -793,6 +801,40 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
     server_sample_rate_ = sample_rate->valueint;
     server_frame_duration_ = frame_duration->valueint;
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    const auto service = cJSON_GetObjectItemCaseSensitive(provisions, "dojo_service");
+    const auto service_state = cJSON_GetObjectItemCaseSensitive(service, "state");
+    if (Application::GetInstance().IsOrbitService()) {
+        if (!cJSON_IsObject(service) || !cJSON_IsString(service_state)) {
+            RejectServerHello("Dojo Service unavailable");
+            return;
+        }
+        if (strcmp(service_state->valuestring, "pairing") == 0) {
+            auto code = cJSON_GetObjectItemCaseSensitive(service, "code");
+            if (!cJSON_IsString(code) || strlen(code->valuestring) != 43 ||
+                strspn(code->valuestring, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-") != 43) {
+                RejectServerHello("Invalid Dojo approval code");
+                return;
+            }
+            capture_enabled_.store(false);
+            dictation_enabled_.store(false);
+            timers_enabled_.store(false);
+            gateway_authenticated_.store(true);
+            gateway_hello_pending_.store(false);
+            last_gateway_activity_us_.store(esp_timer_get_time());
+            Application::GetInstance().OrbitServiceFrame("pairing", code->valuestring);
+            xEventGroupSetBits(event_group_handle_, WEBSOCKET_PROTOCOL_SERVER_HELLO_EVENT);
+            return;
+        }
+        auto table = cJSON_GetObjectItemCaseSensitive(service, "table");
+        if ((strcmp(service_state->valuestring, "ready") != 0 && strcmp(service_state->valuestring, "recovery") != 0) || !cJSON_IsString(table) ||
+            strlen(table->valuestring) == 0 || strlen(table->valuestring) > 10) {
+            RejectServerHello("Invalid Dojo table");
+            return;
+        }
+    } else if (service) {
+        RejectServerHello("Unexpected Dojo context");
+        return;
+    }
     unsigned timer_flags = 0, recovery_flags = 0, dictation_flags = 0;
     const cJSON* feature;
     cJSON_ArrayForEach (feature, provisions) {
@@ -821,6 +863,14 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
         std::lock_guard<std::mutex> lock(capture_context_mutex_);
         capture_context_ = context;
         capture_enabled_.store(true);
+    }
+    if (service) {
+        if (!dictation_enabled_.load()) {
+            RejectServerHello("Dojo recording unavailable");
+            return;
+        }
+        auto table = cJSON_GetObjectItemCaseSensitive(service, "table");
+        Application::GetInstance().OrbitServiceFrame(service_state->valuestring, table->valuestring);
     }
 #endif
 #if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
@@ -926,6 +976,7 @@ bool WebsocketProtocol::ParseLiteServerHello(const cJSON* root) {
 void WebsocketProtocol::RejectServerHello(const char* message) {
     gateway_authenticated_.store(false);
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    capture_enabled_.store(false);
     timers_enabled_.store(false);
     dictation_enabled_.store(false);
 #endif

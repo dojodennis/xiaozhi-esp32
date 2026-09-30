@@ -3147,7 +3147,7 @@ public:
         SetReplyLayoutLocked(false);
     }
 
-    void ShowOrbitWifiSetup(const std::string& payload) {
+    void ShowOrbitWifiSetup(const std::string& payload, bool service = false) {
 #if CONFIG_LV_USE_QRCODE
         DisplayLockGuard lock(this);
         if (wifi_setup_layer_)
@@ -3166,7 +3166,7 @@ public:
             lv_obj_set_width(object, 310);
             lv_obj_align(object, LV_ALIGN_TOP_MID, 0, y);
         };
-        label(payload.empty() ? "starting wi-fi" : "scan with your phone", 60);
+        label(service ? "Dojo Service · scan in desk" : payload.empty() ? "starting wi-fi" : "scan with your phone", 60);
         if (!payload.empty()) {
             auto* qr = lv_qrcode_create(wifi_setup_layer_);
             lv_qrcode_set_size(qr, 252);
@@ -3191,7 +3191,7 @@ public:
                 }
             }
         }
-        label("join warning? open 192.168.4.1\nblue cancels", 408);
+        label(service ? "approve this shift and table\nblue opens mode menu" : "join warning? open 192.168.4.1\nblue cancels", 408);
         SetReplyLayoutLocked(false);
 #endif
     }
@@ -3711,6 +3711,7 @@ private:
             if (locked) {
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
                 Application::GetInstance().CancelOrbitWifiSetup();
+                Application::GetInstance().StopOrbitServiceCapture();
 #endif
                 GetBacklight()->SetBrightness(8, false);
                 return;
@@ -3868,6 +3869,10 @@ private:
                 if (menu)
                     return;
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                if (Application::GetInstance().IsOrbitService())
+                    return; // A service tap is committed only on release, after chord handling.
+#endif
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
                 if (Application::GetInstance().ConfirmOrbitMenu())
                     return;
 #endif
@@ -3897,6 +3902,12 @@ private:
             }
 #endif
             if (TalkReleased()) {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                if (!orbit_locked_.load() && Application::GetInstance().IsOrbitService()) {
+                    Application::GetInstance().OrbitServiceTap();
+                    return;
+                }
+#endif
                 if (!orbit_locked_.load())
                     Application::GetInstance().StopListening();
                 return;
@@ -3905,8 +3916,12 @@ private:
             // A tap shorter than the 150 ms window used to do nothing, so the
             // menu only confirmed on a deliberate hold. Confirm on the click;
             // the microphone stays closed (the return value is not consulted).
-            if (!orbit_locked_.load() && TalkClicked())
-                Application::GetInstance().ConfirmOrbitMenu();
+            if (!orbit_locked_.load() && TalkClicked()) {
+                if (Application::GetInstance().IsOrbitService() && !Application::GetInstance().IsOrbitMenuFace())
+                    Application::GetInstance().OrbitServiceTap();
+                else
+                    Application::GetInstance().ConfirmOrbitMenu();
+            }
 #endif
         });
         button2_.OnPressDown([this]() { BluePressed(); });
@@ -3943,6 +3958,10 @@ private:
                 if (orbit_locked_.load())
                     return;
                 auto& app = Application::GetInstance();
+                if (app.IsOrbitService()) {
+                    app.OrbitServicePairing();
+                    return;
+                }
                 // Blue held on the menu flips the menu drawing (crest / Nausicaa).
                 if (app.IsOrbitMenuFace() && !app.IsOrbitWifiSetup()) {
                     static_cast<RoundLcdDisplay*>(display_)->ToggleMenuTheme();
@@ -4381,6 +4400,11 @@ void ProvisionsShowOrbitMenu(uint8_t page) {
     static_cast<RoundLcdDisplay*>(display)->ShowOrbitMenu(page);
 }
 
+void ProvisionsShowOrbitServicePair(const std::string& payload) {
+    auto* display = Board::GetInstance().GetDisplay();
+    if (display)
+        static_cast<RoundLcdDisplay*>(display)->ShowOrbitWifiSetup(payload, true);
+}
 void ProvisionsShowOrbitWifiSetup(const std::string& payload) {
     auto* display = Board::GetInstance().GetDisplay();
     if (display)

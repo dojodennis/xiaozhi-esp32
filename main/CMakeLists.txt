@@ -906,7 +906,7 @@ if(PROVISIONS_STOPWATCH_PROFILE)
     if(CONFIG_PROVISIONS_LOCAL_CAPTURE)
         list(APPEND SOURCES "provisions_voice_recording.cc" "provisions_voice_recorder.cc"
             "provisions_dictation.cc" "provisions_dictation_store.cc" "provisions_dictation_recorder.cc"
-            "provisions_dictation_application.cc"
+            "provisions_dictation_application.cc" "provisions_service_application.cc"
             "provisions_voice_wire.cc" "protocols/provisions_websocket.cc"
             "provisions_timers.cc" "provisions_timer_store.cc" "provisions_timer_player.cc"
             "provisions_timer_dial_link.cc" "provisions_timer_dismissal.cc"

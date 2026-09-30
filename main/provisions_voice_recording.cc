@@ -84,40 +84,125 @@ bool VoiceRecording::Begin(uint32_t press, const VoiceContext& context, uint64_t
     }
     return false;
 }
-bool VoiceRecording::Append(uint32_t press, const int16_t* pcm, size_t frames, size_t channels) {
+bool VoiceRecording::NeedsContinuation(uint32_t press) const {
     std::lock_guard<std::mutex> lock(mutex_);
+    bool active = false, empty = false;
+    for (const auto& buffer : buffers_) {
+        if (buffer.state == State::Armed)
+            return false;
+        active |= buffer.state == State::Recording && buffer.press == press &&
+                  buffer.capture.IsDictation() && !buffer.failed;
+        empty |= buffer.state == State::Empty;
+    }
+    return active && empty;
+}
+bool VoiceRecording::ArmContinuation(uint32_t press, const VoiceCapture& capture) {
+    if (!capture.IsDictation() || !Nonzero(capture.request_id) || capture.chunk_sequence >= 60)
+        return false;
+    std::lock_guard<std::mutex> lock(mutex_);
+    const Buffer* active = nullptr;
+    for (const auto& buffer : buffers_) {
+        if (buffer.state == State::Armed)
+            return false;
+        if (buffer.state == State::Recording && buffer.press == press && !buffer.failed)
+            active = &buffer;
+    }
+    if (!active || !active->capture.IsDictation() ||
+        capture.dictation_session_id != active->capture.dictation_session_id ||
+        capture.conversation_id != active->capture.conversation_id ||
+        capture.chunk_sequence != active->capture.chunk_sequence + 1 ||
+        order_ == std::numeric_limits<uint64_t>::max())
+        return false;
     for (auto& buffer : buffers_) {
-        if (buffer.state != State::Recording || buffer.press != press)
+        if (buffer.state != State::Empty)
             continue;
-        if (buffer.failed)
-            return false;
-        if (pcm == nullptr || frames == 0 || frames > kMaxInputSamples ||
-            (channels != 1 && channels != 2) ||
-            (!buffer.capture.IsDictation() && frames > capacity_ - buffer.samples)) {
-            buffer.failed = true;
-            return false;
-        }
-        // Stereo codecs use the microphone on the left, matching AudioService's
-        // existing local testing path. Never include the playback reference.
-        if (buffer.capture.IsDictation())
-            frames = std::min(frames, capacity_ - buffer.samples);
-        for (size_t i = 0; i < frames; ++i) {
-            const int16_t sample = pcm[i * channels];
-            buffer.pcm[buffer.samples + i] = sample;
-            const auto magnitude = static_cast<uint16_t>(std::abs(static_cast<int32_t>(sample)));
-            buffer.levels.peak = std::max(buffer.levels.peak, magnitude);
-            buffer.levels.sum_squares += static_cast<uint64_t>(magnitude) * magnitude;
-            if (sample != 0 && buffer.levels.first_nonzero == SIZE_MAX)
-                buffer.levels.first_nonzero = buffer.samples + i;
-        }
-        buffer.samples += frames;
-        if (buffer.capture.IsDictation() && buffer.samples == capacity_) {
-            buffer.capped = true;
-            buffer.state = State::Released;
-        }
+        buffer.state = State::Armed;
+        buffer.press = press;
+        buffer.capture = capture;
+        buffer.capture.source_request_id = active->capture.source_request_id;
+        buffer.capture.source_revision = active->capture.source_revision;
+        buffer.capture.captured_unix_ms = active->capture.captured_unix_ms + kMaxSamples / 16;
+        buffer.samples = 0;
+        buffer.failed = buffer.capped = false;
+        buffer.levels = {};
+        buffer.order = ++order_;
         return true;
     }
     return false;
+}
+bool VoiceRecording::CancelContinuation(VoiceCapture& capture) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    Buffer* tail = nullptr;
+    for (auto& buffer : buffers_)
+        if ((buffer.state == State::Armed ||
+             (buffer.state == State::Released && buffer.samples == 0 &&
+              buffer.capture.IsDictation())) &&
+            (!tail || buffer.order > tail->order))
+            tail = &buffer;
+    if (!tail)
+        return false;
+    capture = tail->capture;
+    tail->state = State::Empty;
+    return true;
+}
+bool VoiceRecording::HasReleased() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return std::any_of(buffers_.begin(), buffers_.end(),
+                       [](const Buffer& buffer) { return buffer.state == State::Released; });
+}
+bool VoiceRecording::Append(uint32_t press, const int16_t* pcm, size_t frames, size_t channels) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const size_t input_frames = frames;
+    size_t consumed = 0;
+    // An input block may straddle a segment boundary. Transfer its remainder
+    // into the already armed buffer under the same bounded PCM lock.
+    for (size_t pass = 0; pass < kBufferCount; ++pass) {
+        for (auto& buffer : buffers_) {
+            if (buffer.state != State::Recording || buffer.press != press)
+                continue;
+            if (buffer.failed)
+                return false;
+            if (pcm == nullptr || input_frames == 0 || input_frames > kMaxInputSamples ||
+                (channels != 1 && channels != 2) ||
+                (!buffer.capture.IsDictation() && frames > capacity_ - buffer.samples)) {
+                buffer.failed = true;
+                return false;
+            }
+            // Stereo codecs use the microphone on the left, matching AudioService's
+            // existing local testing path. Never include the playback reference.
+            if (buffer.capture.IsDictation())
+                frames = std::min(frames, capacity_ - buffer.samples);
+            for (size_t i = 0; i < frames; ++i) {
+                const int16_t sample = pcm[(consumed + i) * channels];
+                buffer.pcm[buffer.samples + i] = sample;
+                const auto magnitude =
+                    static_cast<uint16_t>(std::abs(static_cast<int32_t>(sample)));
+                buffer.levels.peak = std::max(buffer.levels.peak, magnitude);
+                buffer.levels.sum_squares += static_cast<uint64_t>(magnitude) * magnitude;
+                if (sample != 0 && buffer.levels.first_nonzero == SIZE_MAX)
+                    buffer.levels.first_nonzero = buffer.samples + i;
+            }
+            buffer.samples += frames;
+            consumed += frames;
+            if (buffer.capture.IsDictation() && buffer.samples == capacity_) {
+                buffer.capped = true;
+                buffer.state = State::Released;
+                for (auto& next : buffers_) {
+                    if (next.state == State::Armed && next.press == press) {
+                        next.state = State::Recording;
+                        break;
+                    }
+                }
+            }
+            if (consumed == input_frames)
+                return true;
+            frames = input_frames - consumed;
+            break;
+        }
+    }
+    // The final bounded segment is still valid when no continuation was
+    // prepared. IsCapped closes input immediately and the UI reports a stop.
+    return consumed > 0;
 }
 void VoiceRecording::Fail(uint32_t press) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -168,6 +253,10 @@ bool VoiceRecording::IsRecording(uint32_t press) const {
 }
 bool VoiceRecording::IsCapped(uint32_t press) const {
     std::lock_guard<std::mutex> lock(mutex_);
+    // A prepared continuation keeps the same physical microphone lease open.
+    for (const auto& buffer : buffers_)
+        if (buffer.state == State::Recording && buffer.press == press && !buffer.failed)
+            return false;
     return std::any_of(buffers_.begin(), buffers_.end(), [press](const Buffer& buffer) {
         return buffer.press == press && buffer.capped;
     });

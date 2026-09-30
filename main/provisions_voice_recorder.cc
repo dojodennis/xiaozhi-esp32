@@ -221,7 +221,8 @@ bool VoiceRecorder::Append(uint32_t press, const int16_t* pcm, size_t frames, si
             dictation_closed_through_ = std::max(dictation_closed_through_, press);
         }
         Wake();
-    }
+    } else if (appended && recording_->HasReleased())
+        Wake();
     return appended;
 }
 void VoiceRecorder::Fail(uint32_t press) {
@@ -445,11 +446,13 @@ void VoiceRecorder::Save(const VoiceRecording::Work& work) {
     }
     RefreshCount();
     if (work.capture.IsDictation()) {
-        dictation_busy_.store(false);
         dictation_error_.store(false);
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            dictation_ready_press_ = 0;
+            const bool active = dictation_continuous_.load() && recording_->IsRecording(work.press);
+            dictation_busy_.store(active);
+            if (!active)
+                dictation_ready_press_ = 0;
         }
         PublishDictation();
         if (!empty_dictation) {
@@ -940,13 +943,17 @@ void VoiceRecorder::Run() {
         }
         VoiceRecording::Work work;
         PrepareDictation();
+        PrepareDictationContinuation();
         if (dictation_retry_work_ && esp_timer_get_time() >= dictation_retry_after_) {
             const auto retry = *dictation_retry_work_;
             dictation_retry_work_.reset();
             Save(retry);
         }
-        while (recording_->Take(work))
+        // A failed save retains its Processing lease. Do not overwrite its
+        // retry handle with the second buffer if storage remains unavailable.
+        while (!dictation_retry_work_ && recording_->Take(work))
             Save(work);
+        PrepareDictationContinuation();
         ServiceDictation();
         for (size_t i = 0; i < count; ++i)
             ApplyReceipt(receipts[i]);

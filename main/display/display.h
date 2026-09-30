@@ -85,6 +85,7 @@ void ProvisionsShowShoppingFocus(const std::string& above, const std::string& fo
 // Menu page: a timer ring or a list mark, swiped between. Not a Display
 // virtual — a new vtable slot panics on connect.
 void ProvisionsShowOrbitMenu(uint8_t page);
+void ProvisionsShowOrbitServicePair(const std::string& payload);
 void ProvisionsShowOrbitWifiSetup(const std::string& payload);
 void ProvisionsHideOrbitWifiSetup();
 // Drop the spoken confirmation ("timer set" / reply hold) so a swipe or a

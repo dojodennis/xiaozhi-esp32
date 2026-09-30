@@ -108,13 +108,14 @@ struct Board:WifiBoard{
 struct AudioService{void EnableVoiceProcessing(bool){}void EnableWakeWordDetection(bool){}};
 struct Application{
     bool wifi_setup=false;bool IsOrbitWifiSetup()const{return wifi_setup;}
+ bool service=false;bool IsOrbitService()const{return service;}int aborts=0;
  static Application& GetInstance(){static Application a;return a;}
  std::atomic<bool> manual_listening_requested_{true};int listening_mode_=0;AudioService audio_service_;
  bool provisions_timer_ringing_=false,alarm_output_held_=false;
  int64_t alarm_hold_since_us_=0,alarm_hold_until_us_=0;
  std::vector<std::function<void()>> scheduled;bool begin_allowed=false;
  void Schedule(std::function<void()> fn){scheduled.push_back(fn);}
- void AbortSpeaking(int){}bool BeginLocalRecordingOnMain(){return begin_allowed;}
+ void AbortSpeaking(int){++aborts;}bool BeginLocalRecordingOnMain(){return begin_allowed;}
  int GetDeviceState(){return 0;}void StopNotification(){}void SetDeviceState(int){}
  void HandleStartListeningEvent();
  void Drain(){auto work=std::move(scheduled);scheduled.clear();for(auto& fn:work)fn();}
@@ -130,6 +131,9 @@ int main(){
   assert(board.display_idle_deadline_us_==clock_us+45000000);
  }
  assert(board.light.restores==4&&restarted==4);
+ assert(app.aborts==4);
+ app.service=true;app.HandleStartListeningEvent();app.Drain();
+ assert(app.aborts==4); // Service has no Chef abort protocol or output turn.
 }
 '''
         reset = method("main/boards/m5stack/stopwatch/m5stack_stopwatch.cc", "void ResetDisplayIdleTimer()")

@@ -325,6 +325,7 @@ namespace ProvisionsEndpointPolicy {
 const char* BootstrapUrl() { return CONFIG_OTA_URL; }
 
 const char* WebsocketUrl() { return CONFIG_PROVISIONS_PREVIEW_WEBSOCKET_URL; }
+std::string ServiceWebsocketUrl() { return std::string(WebsocketUrl()) + "/service"; }
 
 const char* OtaManifestUrl() { return kExpectedOtaManifestUrl.data(); }
 
@@ -335,7 +336,8 @@ bool IsAllowedBootstrapUrl(const std::string& url) {
 }
 
 bool IsAllowedWebsocketUrl(const std::string& url) {
-    return IsExactEndpoint(url, "wss", "/kitchen-helper/preview/v1/device");
+    return IsExactEndpoint(url, "wss", "/kitchen-helper/preview/v1/device") ||
+           IsExactEndpoint(url, "wss", "/kitchen-helper/preview/v1/device/service");
 }
 
 bool IsAllowedOtaManifestUrl(const std::string& url) {

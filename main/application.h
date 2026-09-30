@@ -138,6 +138,11 @@ public:
     bool IsOrbitNotesFace() const;
     bool IsOrbitStockFace() const;
     bool IsOrbitMenuFace() const;
+    bool IsOrbitService() const { return orbit_service_mode_.load(); }
+    void OrbitServiceTap();
+    void OrbitServicePairing();
+    void StopOrbitServiceCapture();
+    void OrbitServiceFrame(const std::string& state, const std::string& detail = "");
     bool IsOrbitWifiSetup() const { return orbit_wifi_setup_.load(); }
     void StartOrbitWifiSetup(std::function<bool()> still_allowed);
     void CancelOrbitWifiSetup();
@@ -325,7 +330,17 @@ private:
     void CloseDictationInputOnMain();
     void HandleDictationControlOnMain();
     void ServiceDictation();
-    enum class OrbitView : uint8_t { Home, Menu, Shopping, Notes, Stock };
+    void TickOrbitService();
+    void SelectOrbitService();
+    void PaintOrbitService();
+    std::atomic<bool> orbit_service_mode_{false};
+    std::atomic<bool> orbit_service_recording_{false};
+    bool orbit_service_ready_ = false;
+    bool orbit_service_recovery_ = false;
+    std::string orbit_service_table_;
+    std::string orbit_service_code_;
+    std::string orbit_service_status_ = "Connect to approve Service";
+    enum class OrbitView : uint8_t { Home, Menu, Shopping, Notes, Stock, Service };
     std::atomic<OrbitView> orbit_view_{OrbitView::Home};
     uint8_t orbit_menu_index_ = 0;
     std::atomic<bool> orbit_wifi_setup_{false};

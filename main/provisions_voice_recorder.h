@@ -93,6 +93,7 @@ public:
     bool MarkUploadedAwaitingReceipt(const VoiceReplay& replay, uint64_t uploaded_unix_ms);
     bool Begin(uint32_t press, uint64_t captured_unix_ms);
     bool BeginDictation(uint32_t press, uint64_t captured_unix_ms);
+    void SetContinuousDictation(bool enabled);
     bool CanDictate(uint32_t press, const VoiceId& conversation, int64_t now_ms) const;
     bool DictationPreparing(uint32_t press) const;
     bool MatchesConversation(const VoiceId& conversation) const {
@@ -221,6 +222,7 @@ private:
     VoiceId dictation_command_conversation_{};
     VoiceId dictation_replace_previous_{};
     std::atomic<bool> dictation_replacing_{false};
+    std::atomic<bool> dictation_continuous_{false};
     bool CanReplaceEmptyDictationLocked(const VoiceId& conversation) const;
     bool ReplaceEmptyDictation(const VoiceId& previous, const VoiceId& conversation);
     bool dictation_stop_requested_ = false;
@@ -229,6 +231,7 @@ private:
     bool dictation_missing_parts_ = false;  // Worker-owned reboot recovery finding.
     int64_t dictation_retry_after_ = 0;
     void PrepareDictation();
+    void PrepareDictationContinuation();
     void ServiceDictation();
     void PublishDictation();
     void Wake();

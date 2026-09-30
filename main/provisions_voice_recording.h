@@ -39,7 +39,7 @@ public:
     static constexpr size_t kMaxSamples = 160000;
     static constexpr size_t kBufferCount = 2;
     static constexpr size_t kMaxInputSamples = 160;
-    enum class State { Empty, Recording, Released, Processing };
+    enum class State { Empty, Armed, Recording, Released, Processing };
     struct Work {
         size_t slot = kBufferCount;
         uint32_t press = 0;
@@ -53,6 +53,12 @@ public:
     VoiceRecording(int16_t* first, int16_t* second, size_t capacity);
     bool Begin(uint32_t press, const VoiceContext& context, uint64_t captured_unix_ms,
                const VoiceCapture* dictation = nullptr);
+    // The worker reserves the next immutable ordinal before arming it. At the
+    // sample boundary Append can switch buffers without I/O or a microphone gap.
+    bool NeedsContinuation(uint32_t press) const;
+    bool ArmContinuation(uint32_t press, const VoiceCapture& capture);
+    bool CancelContinuation(VoiceCapture& capture);
+    bool HasReleased() const;
     bool Append(uint32_t press, const int16_t* pcm, size_t frames, size_t channels);
     void Fail(uint32_t press);
     void Release(uint32_t press);

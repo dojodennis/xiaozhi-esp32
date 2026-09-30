@@ -28,7 +28,8 @@ int64_t esp_timer_get_time(){return now_us;}
 int esp_timer_stop(void*){return 0;}
 int esp_timer_start_once(void*,int64_t){return 0;}
 struct Application {
- bool menu=true,setup=false;int starts=0,stops=0,confirms=0,entries=0;
+ bool menu=true,setup=false,service=false;int starts=0,stops=0,confirms=0,entries=0,taps=0;
+ bool IsOrbitService(){return service;}void OrbitServiceTap(){++taps;}
  std::vector<std::function<void()>> work;
  static Application& GetInstance(){static Application a;return a;}
  bool IsOrbitMenuFace(){return menu;}bool IsOrbitWifiSetup(){return setup;}
@@ -63,6 +64,15 @@ int main(){
   assert(a.starts==0&&a.confirms==0);now_us=duration;b.button1_.up();a.Drain();
   assert(a.confirms==1&&a.entries==0&&a.starts==0&&a.stops==0);
  }
+ // Service commits exactly one tap on release; holding it never opens Chef Talk.
+ for(int64_t duration:{100000LL,300000LL}){
+  a=Application{};a.service=true;a.menu=false;M5StackStopwatchBoard b;b.Init();now_us=0;b.button1_.down();
+  if(duration>150000){now_us=150000;b.Window();}assert(a.taps==0&&a.starts==0);
+  now_us=duration;b.button1_.up();a.Drain();assert(a.taps==1&&a.starts==0&&a.stops==0);
+ }
+ // A service chord does not also toggle recording.
+ a=Application{};a.service=true;a.menu=false;{M5StackStopwatchBoard b;b.Init();now_us=0;
+ b.button1_.down();now_us=100000;b.BluePressed();b.button1_.up();a.Drain();assert(a.taps==0&&a.starts==0);}
  // Exact five-second threshold fires once; releasing never selects a menu page.
  a=Application{};{M5StackStopwatchBoard b;b.Init();now_us=0;b.button1_.down();now_us=150000;b.Window();
  now_us=4999999;b.Fire();a.Drain();assert(a.entries==0);

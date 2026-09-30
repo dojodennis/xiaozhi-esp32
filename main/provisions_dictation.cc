@@ -338,8 +338,20 @@ bool Journal::Start(const VoiceId& id, const VoiceId& conversation) {
     return Commit(next);
 }
 bool CanRetireEmpty(const Record& record) {
-    return Valid(record) && record.state != State::Empty && record.pending == Action::None &&
-           !record.stop_requested && record.count == 0;
+    if (!Valid(record) || record.state == State::Empty || record.pending != Action::None ||
+        record.stop_requested)
+        return false;
+    if (record.count == 0)
+        return true;
+    // A completed transcript has durable receipts for every sealed segment.
+    // Moving to a new app context may retire its local journal, never audio
+    // that is still waiting for a matching server receipt.
+    if (record.state != State::Reviewed)
+        return false;
+    for (uint32_t i = 0; i < record.count; ++i)
+        if (!record.segments[i].terminal)
+            return false;
+    return true;
 }
 bool Journal::ReplaceEmpty(const VoiceId& previous, const VoiceId& id,
                            const VoiceId& conversation) {

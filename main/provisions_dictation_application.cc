@@ -220,12 +220,12 @@ void Application::ServiceDictation() {
         CloseDictationInputOnMain();
     }
     const int64_t tick = esp_timer_get_time();
-    const bool resume_stopped = dictation_screen_.load() && negotiated && !lite &&
-                                context.conversation_id == r.conversation_id &&
+    const bool resume_stopped = !IsOrbitService() && dictation_screen_.load() && negotiated &&
+                                !lite && context.conversation_id == r.conversation_id &&
                                 r.pending == Action::None && r.state == State::Stopped &&
                                 !recorder->DictationBusy() && !recorder->DictationFaulted() &&
                                 !timer_player_.Fenced();
-    const bool start_empty = dictation_screen_.load() && negotiated && !lite &&
+    const bool start_empty = !IsOrbitService() && dictation_screen_.load() && negotiated && !lite &&
                              context.conversation_id == r.conversation_id &&
                              r.pending == Action::None && r.state == State::Empty &&
                              !start_blocked() && !recorder->DictationBusy() &&
@@ -252,6 +252,11 @@ void Application::ServiceDictation() {
             dictation_sent_control_ = control;
             dictation_last_send_us_ = now;
         }
+    }
+    if (IsOrbitService()) {
+        if (orbit_view_.load() != OrbitView::Menu)
+            PaintOrbitService();
+        return;
     }
     std::string action = "Pending";
     const bool foreign =
@@ -432,9 +437,11 @@ void Application::HandleShoppingSwipe(bool down) {
 bool Application::ConfirmOrbitMenu() {
     if (IsOrbitWifiSetup())
         return true;
+    if (IsOrbitService() && orbit_view_.load() != OrbitView::Menu)
+        return true;
     if (orbit_view_.load() != OrbitView::Menu)
         return false;
-    const bool timers = orbit_menu_index_ == 1;
+    const bool timers = orbit_menu_index_ == 1 || orbit_menu_index_ == 3;
     Schedule([this]() { ConfirmOrbitMenuOnMain(); });
     return timers;
 }
@@ -489,6 +496,19 @@ void Application::HandleOrbitMenuBlueOnMain() {
         CancelOrbitWifiSetup();
         return;
     }
+    if (IsOrbitService()) {
+        if (!orbit_service_code_.empty()) {
+            orbit_service_code_.clear();
+            ProvisionsHideOrbitWifiSetup();
+        }
+        if (orbit_service_recording_.load())
+            StopOrbitServiceCapture();
+        orbit_menu_index_ = 3;
+        orbit_view_.store(orbit_view_.load() == OrbitView::Menu ? OrbitView::Service
+                                                                : OrbitView::Menu);
+        PaintOrbitView();
+        return;
+    }
     if (orbit_view_.load() == OrbitView::Menu) {
         orbit_menu_index_ = static_cast<uint8_t>((orbit_menu_index_ + 1) % 4);
         PaintOrbitView();
@@ -538,6 +558,10 @@ void Application::OpenOrbitStockOnMain() {
 void Application::ConfirmOrbitMenuOnMain() {
     if (orbit_view_.load() != OrbitView::Menu)
         return;
+    if (orbit_menu_index_ == 3) {
+        SelectOrbitService();
+        return;
+    }
     if (orbit_menu_index_ == 0)
         OpenOrbitShoppingOnMain();
     else if (orbit_menu_index_ == 2)
@@ -552,6 +576,10 @@ void Application::HandleOrbitFaceSwipe(bool right) {
     Schedule([this, right]() {
         if (IsOrbitWifiSetup())
             return;
+        if (IsOrbitService()) {
+            HandleOrbitMenuBlueOnMain();
+            return;
+        }
         // The menu is its own pager: a sideways swipe flips the logo
         // and stays there until yellow confirms.
         if (orbit_view_.load() == OrbitView::Menu) {
@@ -865,7 +893,17 @@ void Application::PaintOrbitView() {
             display->SetDictationScreen(false, "", "");
         return;
     }
+    if (view == OrbitView::Service) {
+        PaintOrbitService();
+        return;
+    }
     if (view == OrbitView::Menu) {
+        if (orbit_menu_index_ == 3) {
+            ProvisionsShowShoppingFocus("", IsOrbitService() ? "Chef" : "Service",
+                                        "press yellow to select",
+                                        IsOrbitService() ? "Provisions" : "Dojo");
+            return;
+        }
         ProvisionsShowOrbitMenu(orbit_menu_index_);
         return;
     }

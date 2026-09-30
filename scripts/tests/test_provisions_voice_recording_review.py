@@ -34,7 +34,49 @@ void done(VoiceRecording& core,const VoiceRecording::Work& work) {
     // The real worker clears the memory while it still owns Processing.
     memset(const_cast<int16_t*>(work.pcm),0,VoiceRecording::kMaxSamples*sizeof(int16_t));core.Finish(work);
 }
+VoiceCapture segment(unsigned sequence) {
+    VoiceCapture c;c.purpose=VoicePurpose::Dictation;c.request_id[0]=sequence+10;
+    c.dictation_session_id[0]=4;c.conversation_id=context().conversation_id;c.chunk_sequence=sequence;return c;
+}
+void continuous_cases() {
+    Storage storage;VoiceRecording core(storage.first(),storage.second(),VoiceRecording::kMaxSamples);
+    auto first=segment(0);assert(core.Begin(1,context(),100000,&first));
+    assert(core.NeedsContinuation(1));assert(!core.ArmContinuation(1,segment(2)));
+    assert(core.ArmContinuation(1,segment(1)));assert(!core.NeedsContinuation(1));
+    std::array<int16_t,160> input;
+    // Deliberately cross the boundary mid-block. Every accepted sample must
+    // appear exactly once, even while the worker holds the preceding buffer.
+    size_t fed=0;auto append=[&](size_t count){for(size_t i=0;i<count;++i)input[i]=(fed+i)%30000;
+        assert(core.Append(1,input.data(),count,1));fed+=count;};
+    append(7);for(unsigned i=0;i<1000;++i)append(160);
+    assert(fed==160007&&core.IsRecording(1)&&!core.IsCapped(1));
+    VoiceRecording::Work work;assert(core.Take(work)&&work.samples==160000);
+    for(size_t i=0;i<work.samples;++i)assert(work.pcm[i]==i%30000);
+    assert(work.capture.request_id==segment(0).request_id);
+    append(160);assert(!core.NeedsContinuation(1));done(core,work);
+    assert(core.NeedsContinuation(1)&&core.ArmContinuation(1,segment(2)));
+    for(unsigned i=0;i<998;++i)append(160);append(153);
+    assert(fed==320000&&core.IsRecording(1));assert(core.Take(work)&&work.samples==160000);
+    assert(work.capture.chunk_sequence==1&&work.capture.captured_unix_ms==110000);
+    for(size_t i=0;i<work.samples;++i)assert(work.pcm[i]==(160000+i)%30000);
+    done(core,work);
+    append(160);core.Release(1);assert(!core.IsRecording(1));
+    assert(core.Take(work)&&work.samples==160&&work.capture.chunk_sequence==2);
+    for(size_t i=0;i<work.samples;++i)assert(work.pcm[i]==(320000+i)%30000);done(core,work);
+    storage.guards();
+    // An unconsumed prepared ordinal has no samples and may be cancelled on
+    // Stop; the live ordinal stays intact. No prepared buffer means a hard cap.
+    auto next=segment(0);assert(core.Begin(2,context(),200000,&next));
+    assert(core.ArmContinuation(2,segment(1)));VoiceCapture unused;
+    assert(core.CancelContinuation(unused)&&unused.chunk_sequence==1);
+    assert(!core.CancelContinuation(unused));input.fill(9);
+    for(unsigned i=0;i<1000;++i)assert(core.Append(2,input.data(),160,1));
+    assert(core.IsCapped(2)&&!core.IsRecording(2));
+    assert(!core.Append(2,input.data(),160,1));
+    assert(core.Take(work)&&work.samples==160000&&!work.failed);done(core,work);
+}
 int main() {
+    continuous_cases();
     Storage memory;VoiceRecording core(memory.first(),memory.second(),VoiceRecording::kMaxSamples);
     auto samples=mono();VoiceRecording::Work first,second,other;
     assert(!core.Take(other) && other.pcm==nullptr && other.slot==VoiceRecording::kBufferCount);

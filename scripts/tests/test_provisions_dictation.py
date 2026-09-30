@@ -92,7 +92,30 @@ void wire_rejections(){
  }
 }
 void receipt_no_authority(){NvsStore s;Journal j(s);assert(j.Initialize());assert(j.Start(id(2),id(3)));assert(j.Apply(ack(j.Get())));assert(j.Stop());assert(j.Apply(ack(j.Get(),false,State::Stopped)));assert(j.RequestReceipt());auto r=ack(j.Get());assert(j.Apply(r));assert(j.Get().state==State::Open&&!j.Get().authorized&&!j.CanCapture(id(3),1));}
-int main(){reset();cycle();reset();pending_stop();reset();bounds();compact_corruption();reset();faults();reset();receipt_no_authority();wire_rejections();std::cout<<"Dictation durable controls, CAS, reservations, restart and receipt authority passed\n";}
+void completed_retirement(){
+ NvsStore s;Journal j(s);assert(j.Initialize());assert(j.Start(id(2),id(3)));assert(j.Apply(ack(j.Get())));
+ assert(j.Reserve(id(10)));VoiceCapture c;c.purpose=VoicePurpose::Dictation;c.conversation_id=id(3);c.dictation_session_id=id(2);c.request_id=id(10);c.sample_count=160;
+ assert(j.Seal(c));assert(j.Stop());assert(j.Apply(ack(j.Get(),false,State::Reviewed)));
+ // A server completion without the exact segment receipt cannot retire audio.
+ assert(!CanRetireEmpty(j.Get())&&!j.ReplaceEmpty(id(2),id(5),id(6)));
+ assert(j.Terminal(c));assert(CanRetireEmpty(j.Get()));
+ assert(!j.ReplaceEmpty(id(9),id(5),id(6)));assert(!j.ReplaceEmpty(id(2),id(5),id(3)));
+ assert(j.ReplaceEmpty(id(2),id(5),id(6)));assert(j.Get().pending==Action::Start&&j.Get().count==0&&!j.Get().authorized);
+ Journal reboot(s);assert(reboot.Initialize()&&reboot.Get().id==id(5)&&reboot.Get().conversation_id==id(6));
+}
+void expired_start_recovery(){
+ for(bool stopped:{false,true}) {
+  reset();NvsStore s;Journal j(s);assert(j.Initialize());assert(j.Start(id(2),id(3)));
+  if(stopped)assert(j.Stop());
+  auto receipt=ack(j.Get());receipt.expires_ms=1;
+  assert(j.Apply(receipt));assert(!j.CanCapture(id(3),1788712345678LL));
+  if(!stopped)assert(j.Stop());
+  assert(j.Get().pending==Action::Stop&&!j.Get().authorized&&j.Get().frozen_count==0);
+  auto end=ack(j.Get(),false,State::Reviewed);end.expires_ms=1;
+  assert(j.Apply(end)&&j.Get().state==State::Reviewed&&!j.Get().authorized);
+ }
+}
+int main(){reset();cycle();reset();pending_stop();reset();bounds();compact_corruption();reset();faults();reset();receipt_no_authority();wire_rejections();reset();completed_retirement();expired_start_recovery();std::cout<<"Dictation durable controls, CAS, reservations, restart and receipt authority passed\n";}
 '''
 class ShoppingSwipeScrollTest(unittest.TestCase):
     def test_swipe_pages_and_snaps_back(self):

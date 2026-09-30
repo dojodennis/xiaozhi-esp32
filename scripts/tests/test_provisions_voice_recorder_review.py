@@ -109,6 +109,14 @@ bool hold_replay=false;
 bool fail_encoder=false;
 bool pause_worker=false;
 std::function<void(VoiceRecorder::Result)> notify_hook;
+namespace provisions {
+std::function<void()> before_dictation_control;
+void TestBeforeDictationControl() {
+    if(before_dictation_control) {
+        auto hook=std::move(before_dictation_control);before_dictation_control={};hook();
+    }
+}
+}
 size_t notice_count(VoiceRecorder::Result result) {
     return std::count_if(notices.begin(),notices.end(),[&](const auto& notice){return notice.first==result;});
 }
@@ -583,7 +591,108 @@ void dictation_cases() {
     join();
     std::cout<<"Dictation worker reservation, cap, Stop sealing, exact retry and restart cases passed\n";
 }
-int main(){normal_cases();lite_consumed_cases();context_cases();explicit_retry_cases();bounded_offer_cases();queued_retry_scope_case();dictation_ack_stop_race();dictation_cases();}
+void continuous_dictation_cases() {
+  for(bool empty:{false,true}) {
+    fresh();
+    {
+      VoiceRecorder recorder;initialize(recorder);authorize(recorder);
+      assert(recorder.RequestDictationControl(dictation::Action::Start));drain();
+      dictation_ack(recorder,dictation::State::Open);recorder.SetContinuousDictation(true);
+      begin_dictation(recorder,1);drain();assert(recorder.DictationRecord().count==2);
+      int16_t pcm[160];std::fill_n(pcm,160,123);
+      if(!empty) {
+        for(unsigned i=0;i<1000;++i)assert(recorder.Append(1,pcm,160,1));
+        assert(!recorder.DictationCapped(1));
+        // Second buffer accepts the very next sample block while the first
+        // one is being encoded. The worker then reserves the third ordinal.
+        assert(recorder.Append(1,pcm,160,1));drain();
+        assert(recorder.DictationRecord().count==3&&recorder.PendingCount()==1);
+        assert(recorder.DictationBusy()&&!recorder.DictationFaulted());
+      }
+      recorder.SetContinuousDictation(false);recorder.Release(1);
+      assert(recorder.RequestDictationControl(dictation::Action::Stop));drain();
+      const auto r=recorder.DictationRecord();
+      assert(!recorder.DictationFaulted()&&!recorder.DictationBusy());
+      assert(r.pending==dictation::Action::Stop&&r.frozen_count==(empty?0u:2u));
+      assert(r.count==r.frozen_count);
+      if(!empty)assert(r.segments[0].samples==160000&&r.segments[1].samples==160);
+    }
+    join();
+  }
+  fresh();
+  {
+    VoiceRecorder recorder;initialize(recorder);authorize(recorder);
+    assert(recorder.RequestDictationControl(dictation::Action::Start));drain();
+    dictation_ack(recorder,dictation::State::Open);recorder.SetContinuousDictation(true);
+    begin_dictation(recorder,1);drain();int16_t pcm[160]{};
+    for(unsigned part=0;part<4;++part) {
+      for(unsigned i=0;i<1000;++i)assert(recorder.Append(1,pcm,160,1));
+      assert(recorder.DictationCapped(1)==(part==3));drain();
+    }
+    assert(recorder.PendingCount()==4&&recorder.DictationRecord().count==4);
+    recorder.SetContinuousDictation(false);recorder.Release(1);
+    assert(recorder.RequestDictationControl(dictation::Action::Stop));drain();
+    assert(recorder.DictationRecord().frozen_count==4&&!recorder.DictationFaulted());
+  }
+  join();
+  for(unsigned blocks:{1000u,1001u}) {
+  fresh();
+  {
+    VoiceRecorder recorder;initialize(recorder);authorize(recorder);
+    assert(recorder.RequestDictationControl(dictation::Action::Start));drain();
+    dictation_ack(recorder,dictation::State::Open);recorder.SetContinuousDictation(true);
+    begin_dictation(recorder,1);drain();int16_t pcm[160]{};
+    {std::lock_guard<std::mutex> lock(task->mutex);pause_worker=true;}
+    fail_encoder=true;
+    for(unsigned i=0;i<blocks;++i)assert(recorder.Append(1,pcm,160,1));
+    {std::lock_guard<std::mutex> lock(task->mutex);pause_worker=false;task->changed.notify_all();}
+    drain();assert(recorder.DictationFaulted());
+    recorder.SetContinuousDictation(false);recorder.Release(1);
+    assert(recorder.RequestDictationControl(dictation::Action::Stop));drain();
+    const unsigned expected=blocks==1000?1:2;
+    assert(recorder.DictationRecord().frozen_count==expected&&recorder.PendingCount()==0);
+    fail_encoder=false;clock_us+=30000001;recorder.RequestReplay();drain();
+    const auto r=recorder.DictationRecord();
+    assert(!recorder.DictationFaulted()&&recorder.PendingCount()==expected);
+    assert(r.segments[0].samples==160000);
+    if(expected==2)assert(r.segments[1].samples==160&&r.segments[0].request_id!=r.segments[1].request_id);
+  }
+  join();
+  }
+  std::cout<<"Continuous reserved rollover, immediate next block and empty-tail stop cases passed\n";
+}
+void continuous_stop_publication_race() {
+  for(unsigned blocks:{1000u,1001u}) {
+    fresh();
+    {
+      VoiceRecorder recorder;initialize(recorder);authorize(recorder);
+      assert(recorder.RequestDictationControl(dictation::Action::Start));drain();
+      dictation_ack(recorder,dictation::State::Open);recorder.SetContinuousDictation(true);
+      begin_dictation(recorder,1);drain();int16_t pcm[160]{};
+      {std::lock_guard<std::mutex> lock(task->mutex);pause_worker=true;}
+      fail_encoder=true;
+      for(unsigned i=0;i<blocks;++i)assert(recorder.Append(1,pcm,160,1));
+      {std::lock_guard<std::mutex> lock(task->mutex);pause_worker=false;task->changed.notify_all();}
+      drain();assert(recorder.DictationFaulted());
+      // Deterministically publish the real public Release + Stop precisely
+      // after the worker's second cleanup but before it snapshots controls.
+      before_dictation_control=[&](){
+        recorder.SetContinuousDictation(false);recorder.Release(1);
+        assert(recorder.RequestDictationControl(dictation::Action::Stop));
+      };
+      recorder.RequestReplay();drain();const unsigned expected=blocks==1000?1:2;
+      assert(recorder.DictationRecord().frozen_count==expected);
+      fail_encoder=false;clock_us+=30000001;recorder.RequestReplay();drain();
+      const auto r=recorder.DictationRecord();
+      assert(!recorder.DictationFaulted()&&r.frozen_count==expected&&recorder.PendingCount()==expected);
+      assert(r.segments[0].samples==160000);
+      if(expected==2)assert(r.segments[1].samples==160);
+    }
+    join();
+  }
+  std::cout<<"Stop publication after rollover cleanup preserves exact sampled manifest\n";
+}
+int main(){continuous_stop_publication_race();continuous_dictation_cases();normal_cases();lite_consumed_cases();context_cases();explicit_retry_cases();bounded_offer_cases();queued_retry_scope_case();dictation_ack_stop_race();dictation_cases();}
 
 '''
 
@@ -633,6 +742,7 @@ struct AudioService {
 };
 struct Application {
     bool wifi_setup=false;bool IsOrbitWifiSetup()const{return wifi_setup;}
+    bool IsOrbitService()const{return false;}void PaintOrbitService(){}
  std::mutex provisions_recording_control_mutex_;ProvisionsReplyTurn provisions_physical_press_;
  std::shared_ptr<VoiceRecorder> provisions_recorder_=std::make_shared<VoiceRecorder>();AudioService audio_service_;
  std::shared_ptr<WebsocketProtocol> protocol=std::make_shared<WebsocketProtocol>();int event_group_=0,state=kDeviceStateIdle;
@@ -912,6 +1022,15 @@ class VoiceRecorderReviewTests(unittest.TestCase):
                 header.parent.mkdir(parents=True, exist_ok=True)
                 header.write_text(source)
             (path / "review.cc").write_text(PRELUDE + SUPPORT + WORKER)
+            # Test-only scheduling hook; compile the current production method
+            # unchanged apart from yielding at its entry to public operations.
+            recorder_source = (ROOT / "main/provisions_dictation_recorder.cc").read_text()
+            self.assertEqual(recorder_source.count("void VoiceRecorder::ServiceDictation() {"), 1)
+            recorder_source = recorder_source.replace(
+                "namespace provisions {", "namespace provisions {\nvoid TestBeforeDictationControl();", 1
+            ).replace("void VoiceRecorder::ServiceDictation() {",
+                      "void VoiceRecorder::ServiceDictation() {\n    TestBeforeDictationControl();", 1)
+            (path / "dictation_recorder.cc").write_text(recorder_source)
             binary = path / "review"
             cjson = ROOT / "managed_components/espressif__cjson/cJSON"
             subprocess.run(["cc", "-fsanitize=address,undefined", "-I", str(cjson), "-c", str(cjson / "cJSON.c"), "-o", str(path / "json.o")], check=True)
@@ -922,7 +1041,7 @@ class VoiceRecorderReviewTests(unittest.TestCase):
                             str(ROOT / "main/provisions_voice_outbox_esp.cc"),
                             str(ROOT / "main/provisions_voice_recording.cc"),
                             str(ROOT / "main/provisions_voice_recorder.cc"),
-                            str(ROOT / "main/provisions_dictation_recorder.cc"),
+                            str(path / "dictation_recorder.cc"),
                             str(ROOT / "main/provisions_dictation.cc"), str(ROOT / "main/provisions_dictation_store.cc"),
                             str(ROOT / "main/provisions_voice_wire.cc"), str(ROOT / "main/provisions_timers.cc"),
                             str(ROOT / "main/provisions_hardware_facts.cc"), str(path / "json.o"), "-lcrypto",

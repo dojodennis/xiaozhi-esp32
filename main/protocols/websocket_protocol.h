@@ -50,6 +50,12 @@ public:
     bool SendDictationControl(const std::string& text) {
         return DictationNegotiated() && SendText(text);
     }
+    bool RequestServicePair() {
+        return IsAudioChannelOpened() && SendText("{\"type\":\"dojo_service\",\"action\":\"pair\",\"session_id\":\"" + session_id() + "\"}");
+    }
+    bool RequestChefMode() {
+        return IsAudioChannelOpened() && SendText("{\"type\":\"dojo_service\",\"action\":\"chef\",\"session_id\":\"" + session_id() + "\"}");
+    }
     bool GetCaptureContext(provisions::VoiceContext& context) const;
     bool AcceptCaptureContext(const provisions::VoiceContext& context, bool reassignment = false);
     // Run on the application's bounded network task, never the button/audio task.

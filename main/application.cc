@@ -158,6 +158,13 @@ Application::~Application() {
 bool Application::SetDeviceState(DeviceState state) { return state_machine_.TransitionTo(state); }
 
 void Application::Initialize() {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    orbit_service_mode_.store(Settings("provisions", false).GetInt("dojo_service", 0) == 1);
+    if (IsOrbitService()) {
+        orbit_view_.store(OrbitView::Service);
+        dictation_screen_.store(true);
+    }
+#endif
     auto& board = Board::GetInstance();
     SetDeviceState(kDeviceStateStarting);
 
@@ -509,6 +516,7 @@ void Application::Run() {
         // when down/up both arrive before the main task handles their events.
         ServiceTimers();
         ServiceDictation();
+        TickOrbitService();
 #endif
         if (bits & MAIN_EVENT_CLOCK_TICK) {
             clock_ticks_++;
@@ -1072,6 +1080,25 @@ void Application::InitializeProtocol() {
             ESP_LOGW(TAG, "Incoming JSON message has no type");
             return;
         }
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        if (IsOrbitService() && strcmp(type->valuestring, "dojo_service") == 0) {
+            auto state = cJSON_GetObjectItemCaseSensitive(root, "state");
+            auto session = cJSON_GetObjectItemCaseSensitive(root, "session_id");
+            if (cJSON_IsString(state) && cJSON_IsString(session) &&
+                protocol->session_id() == session->valuestring) {
+                auto code = cJSON_GetObjectItemCaseSensitive(root, "code");
+                if (strcmp(state->valuestring, "pairing") != 0)
+                    OrbitServiceFrame(state->valuestring);
+                else if (cJSON_IsString(code) && strlen(code->valuestring) == 43 &&
+                         strspn(
+                             code->valuestring,
+                             "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-") ==
+                             43)
+                    OrbitServiceFrame("pairing", code->valuestring);
+            }
+            return;
+        }
+#endif
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
         if (protocol->IsLiteMode()) {
             // Orbit Lite accepts bounded voice controls plus negotiated timer
@@ -2251,8 +2278,11 @@ void Application::SendVoiceRecording(std::shared_ptr<const provisions::VoiceRepl
     if (timer_player_.Fenced() && !alarm_stop)
         return;
     auto protocol = GetProtocol();
-    if (!protocol || !protocol->IsAudioChannelOpened() || manual_listening_requested_.load() ||
-        GetDeviceState() != kDeviceStateIdle || provisions_response_pending_.load())
+    const bool service_upload = IsOrbitService() && replay && replay->capture.IsDictation();
+    if (!protocol || !protocol->IsAudioChannelOpened() ||
+        (!service_upload &&
+         (manual_listening_requested_.load() || GetDeviceState() != kDeviceStateIdle)) ||
+        provisions_response_pending_.load())
         return;
     bool expected = false;
     if (!provisions_network_busy_.compare_exchange_strong(expected, true))
@@ -2293,9 +2323,10 @@ void Application::SendVoiceRecording(std::shared_ptr<const provisions::VoiceRepl
                         ->SendStoredRecording(
                             *work->replay, work->deferred,
                             [app, physical = work->physical, protocol = work->protocol]() {
-                                return !app->manual_listening_requested_.load() &&
-                                       app->provisions_physical_press_.id() == physical &&
-                                       app->GetProtocol() == protocol;
+                                return app->GetProtocol() == protocol &&
+                                       (app->IsOrbitService() ||
+                                        (!app->manual_listening_requested_.load() &&
+                                         app->provisions_physical_press_.id() == physical));
                             },
                             work->alarm_stop);
                 app->Schedule([app, protocol = work->protocol, physical = work->physical, sent,
@@ -2584,8 +2615,10 @@ bool Application::BeginLocalRecordingOnMain() {
     if (press <= dictation_closed_press_.load())
         return false;
     audio_service_.CancelLocalFeedback();
-    if (auto protocol = GetProtocol())
-        static_cast<WebsocketProtocol*>(protocol.get())->InterruptStoredRecording();
+    if (!IsOrbitService()) {
+        if (auto protocol = GetProtocol())
+            static_cast<WebsocketProtocol*>(protocol.get())->InterruptStoredRecording();
+    }
     uint64_t captured_ms = 0;
     if (has_server_time_) {
         timeval now{};
@@ -2785,7 +2818,8 @@ void Application::HandleStartListeningEvent() {
         return;
     // Physical atomics already revoked old output and closed released input.
     // Perform the heavy work here, outside the button's ESP_TIMER_TASK stack.
-    AbortSpeaking(kAbortReasonNone);
+    if (!IsOrbitService())
+        AbortSpeaking(kAbortReasonNone);
     Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
     if (provisions_timer_ringing_) {
         // A physical stop attempt must not record the vibration motor through

@@ -168,7 +168,8 @@ int main() {
 
     def test_actual_hello_short_circuits_before_any_gateway_requirement(self) -> None:
         hello = method(WEBSOCKET, "void WebsocketProtocol::ParseServerHello(const cJSON* root)")
-        lite = hello.index("if (ParseLiteServerHello(root)) {")
+        lite = hello.index("ParseLiteServerHello(root)")
+        self.assertIn("!Application::GetInstance().IsOrbitService() && ParseLiteServerHello(root)", hello)
         self.assertLess(lite, hello.index('"authenticated"'))
         self.assertLess(lite, hello.index("timers_v1"))
         self.assertLess(lite, hello.index("IsCanonicalUuid"))

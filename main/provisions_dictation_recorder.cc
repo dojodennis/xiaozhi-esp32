@@ -2,6 +2,68 @@
 #include <algorithm>
 #include "provisions_voice_recorder.h"
 namespace provisions {
+void VoiceRecorder::SetContinuousDictation(bool enabled) {
+    dictation_continuous_.store(enabled);
+    Wake();
+}
+void VoiceRecorder::PrepareDictationContinuation() {
+    uint32_t press;
+    uint64_t captured_ms;
+    VoiceContext context;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        press = dictation_ready_press_;
+        captured_ms = dictation_captured_ms_;
+        context = context_;
+        if (!dictation_continuous_.load() || dictation_error_.load() ||
+            dictation_input_blocked_.load() || press <= dictation_closed_through_ ||
+            dictation_stop_requested_)
+            press = 0;
+    }
+    if (!press || !recording_->IsRecording(press)) {
+        VoiceCapture unused;
+        bool cancelled = false;
+        while (recording_->CancelContinuation(unused)) {
+            cancelled = true;
+            if (!dictation_journal_.AbandonEmpty(unused.request_id))
+                dictation_error_.store(true);
+            PublishDictation();
+        }
+        if (cancelled && recording_->IsIdle() && !dictation_retry_work_) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            dictation_ready_press_ = 0;
+            dictation_busy_.store(false);
+        }
+        return;
+    }
+    // Include both PCM leases in the four-slot budget. A full store stops at
+    // the next segment boundary, never erasing audio or silently skipping time.
+    if (!recording_->NeedsContinuation(press) || pending_count_.load() + 2 > VoiceOutbox::kSlots ||
+        !dictation_journal_.CanCapture(context.conversation_id, captured_ms))
+        return;
+    VoiceId request{};
+    if (!outbox_.NewRequestId(request) || !dictation_journal_.Reserve(request)) {
+        dictation_error_.store(true);
+        return;
+    }
+    const auto& record = dictation_journal_.Get();
+    VoiceCapture capture;
+    capture.purpose = VoicePurpose::Dictation;
+    capture.request_id = request;
+    capture.dictation_session_id = record.id;
+    capture.chunk_sequence = record.count - 1;
+    capture.conversation_id = context.conversation_id;
+    bool armed = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (dictation_continuous_.load() && !dictation_input_blocked_.load() &&
+            !dictation_stop_requested_ && press > dictation_closed_through_)
+            armed = recording_->ArmContinuation(press, capture);
+    }
+    if (!armed && !dictation_journal_.AbandonEmpty(request))
+        dictation_error_.store(true);
+    PublishDictation();
+}
 bool VoiceRecorder::CanDictate(uint32_t press, const VoiceId& conversation, int64_t now_ms) const {
     std::lock_guard<std::mutex> lock(mutex_);
     const auto& r = dictation_snapshot_;
@@ -237,8 +299,13 @@ void VoiceRecorder::ServiceDictation() {
         changed = dictation_journal_.Resume() || changed;
     else if (command == dictation::Action::Receipt)
         changed = dictation_journal_.RequestReceipt() || changed;
-    if (stop)
+    if (stop) {
+        // Release precedes publication of Stop. Recheck known-empty tails
+        // after observing that publication: a stop may arrive after Run's
+        // earlier cleanup, while a sampled buffer is still awaiting retry.
+        PrepareDictationContinuation();
         changed = dictation_journal_.Stop() || changed;
+    }
     if (reply && dictation_journal_.Apply(*reply)) {
         changed = true;
         authorized = (reply->action == dictation::Action::Start ||

@@ -9,6 +9,7 @@ namespace ProvisionsEndpointPolicy {
 
 const char* BootstrapUrl();
 const char* WebsocketUrl();
+std::string ServiceWebsocketUrl();
 const char* OtaManifestUrl();
 const char* HealthUrl();
 
