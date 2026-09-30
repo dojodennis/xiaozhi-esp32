@@ -58,6 +58,7 @@ public:
     bool NeedsContinuation(uint32_t press) const;
     bool ArmContinuation(uint32_t press, const VoiceCapture& capture);
     bool CancelContinuation(VoiceCapture& capture);
+    bool DiscardDictation(const VoiceId& id);
     bool HasReleased() const;
     bool Append(uint32_t press, const int16_t* pcm, size_t frames, size_t channels);
     void Fail(uint32_t press);

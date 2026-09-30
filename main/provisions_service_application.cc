@@ -3,6 +3,7 @@
 #include <sys/time.h>
 #include "board.h"
 #include "display.h"
+#include "provisions_voice_wire.h"
 #include "settings.h"
 #include "websocket_protocol.h"
 
@@ -54,6 +55,28 @@ void Application::SelectOrbitService() {
 }
 
 void Application::OrbitServiceFrame(const std::string& state, const std::string& detail) {
+    if (state == "discarded") {
+        provisions::VoiceId id;
+        auto recorder = std::atomic_load(&provisions_recorder_);
+        if (!IsOrbitService() || !recorder || !provisions::ParseVoiceId(detail.c_str(), id) ||
+            (recorder->DictationRecord().id != id && !recorder->DictationDiscardPending()))
+            return;
+        // Fence samples immediately on the authenticated callback. Heavy
+        // release/storage work stays on main and the recorder worker.
+        orbit_service_recording_.store(false);
+        recorder->SetContinuousDictation(false);
+        StopListening();
+        Schedule([this, recorder, id]() {
+            EndLocalRecordingOnMain();
+            if (recorder->RequestDiscardedDictation(id)) {
+                if (auto protocol = GetProtocol())
+                    static_cast<WebsocketProtocol*>(protocol.get())->InterruptStoredRecording();
+                orbit_service_status_ = "Discarding at desk";
+                PaintOrbitService();
+            }
+        });
+        return;
+    }
     Schedule([this, state, detail]() {
         if (!IsOrbitService())
             return;
@@ -199,6 +222,13 @@ void Application::TickOrbitService() {
     if (!recorder)
         return;
     const auto r = recorder->DictationRecord();
+    if (recorder->DictationDiscardPending()) {
+        orbit_service_status_ = recorder->DictationFaulted()
+                                    ? "Discard approved. Storage retry pending"
+                                    : "Discarding at desk";
+        PaintOrbitService();
+        return;
+    }
     const auto protocol = GetProtocol();
     const bool connected = protocol && protocol->IsAudioChannelOpened();
     if (!orbit_service_recording_.load() && r.state == provisions::dictation::State::Open &&

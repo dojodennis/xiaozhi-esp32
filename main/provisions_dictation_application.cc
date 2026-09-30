@@ -165,6 +165,8 @@ void Application::HandleDictationControlOnMain() {
 }
 void Application::ServiceDictation() {
     auto recorder = std::atomic_load(&provisions_recorder_);
+    if (recorder && recorder->DictationDiscardPending())
+        return;
     if (!recorder)
         return;
     auto protocol = GetProtocol();

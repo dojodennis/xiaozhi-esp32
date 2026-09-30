@@ -1087,7 +1087,12 @@ void Application::InitializeProtocol() {
             if (cJSON_IsString(state) && cJSON_IsString(session) &&
                 protocol->session_id() == session->valuestring) {
                 auto code = cJSON_GetObjectItemCaseSensitive(root, "code");
-                if (strcmp(state->valuestring, "pairing") != 0)
+                auto recording = cJSON_GetObjectItemCaseSensitive(root, "recording_id");
+                if (strcmp(state->valuestring, "discarded") == 0) {
+                    if (cJSON_IsString(recording) &&
+                        ProvisionsEndpointPolicy::IsCanonicalUuid(recording->valuestring))
+                        OrbitServiceFrame("discarded", recording->valuestring);
+                } else if (strcmp(state->valuestring, "pairing") != 0)
                     OrbitServiceFrame(state->valuestring);
                 else if (cJSON_IsString(code) && strlen(code->valuestring) == 43 &&
                          strspn(
@@ -2165,6 +2170,13 @@ void Application::HandleVoiceRecordingResult(provisions::VoiceRecorder::Result r
                                              uint32_t press) {
     using Result = provisions::VoiceRecorder::Result;
     auto recorder = std::atomic_load(&provisions_recorder_);
+    if (result == Result::DictationDiscarded) {
+        if (IsOrbitService()) {
+            orbit_service_status_ = "Discarded at desk";
+            PaintOrbitService();
+        }
+        return;
+    }
     if (result == Result::DictationReady) {
         if (dictation_screen_.load() && manual_listening_requested_.load() &&
             provisions_physical_press_.IsCurrent(press))

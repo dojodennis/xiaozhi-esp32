@@ -198,7 +198,7 @@ bool VoiceRecorder::Begin(uint32_t press, uint64_t captured_unix_ms) {
     if (!recording_ || !storage_ready_.load() || !HasContext())
         return false;
     std::lock_guard<std::mutex> lock(mutex_);
-    const bool began = !dictation_replacing_.load() &&
+    const bool began = !dictation_replacing_.load() && !dictation_discard_pending_.load() &&
                        recording_->Begin(press, ActiveContextLocked(), captured_unix_ms);
     if (began) {
         // Diagnostics only: prefer the physical edge when it is recent.
@@ -505,6 +505,96 @@ void VoiceRecorder::RefreshCount() {
     fault_.store(fault);
     can_retry_.store(can_retry);
     retry_pending_count_.store(retry_count);
+}
+bool VoiceRecorder::ServiceDictationDiscard() {
+    if (!dictation_discard_pending_.load())
+        return false;
+    VoiceId id;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        id = dictation_discard_id_;
+    }
+    auto failed = [this]() {
+        dictation_error_.store(true);
+        RefreshCount();
+        PublishDictation();
+        return true;
+    };
+    if (!HasId(id) || !outbox_.journal() || !storage_ready_.load())
+        return failed();
+    const auto& record = dictation_journal_.Get();
+    if (record.id != id && (record.id != VoiceId{} || dictation_journal_.Faulted()))
+        return failed();
+    // A network task may still own an immutable replay. Stop has fenced the
+    // microphone; keep new work blocked until that owner releases the bytes.
+    if (replay_ && replay_->capture.IsDictation() && replay_->capture.dictation_session_id == id &&
+        replay_.use_count() != 1)
+        return true;
+    VoiceId marked;
+    uint8_t slots = 0;
+    const auto intent = dictation_store_.LoadDiscard(marked, slots);
+    if (intent == dictation::Store::LoadResult::Fault ||
+        (intent == dictation::Store::LoadResult::Present && marked != id))
+        return failed();
+    if (intent == dictation::Store::LoadResult::Empty) {
+        if (record.id != id)
+            return failed();
+        for (size_t slot = 0; slot < VoiceOutbox::kSlots; ++slot) {
+            SavedVoiceCapture saved;
+            const auto result = outbox_.journal()->Read(slot, saved);
+            if (result == VoiceStoreResult::Empty)
+                continue;
+            if (result != VoiceStoreResult::Ok)
+                return failed();  // Unknown/corrupt audio is never guessed to belong here.
+            if (saved.capture.IsDictation() && saved.capture.dictation_session_id == id)
+                slots |= 1u << slot;
+        }
+        // Commit identity and slot ownership before any erase. A interrupted
+        // erase cannot lose the evidence needed to finish after a power cut.
+        if (!dictation_store_.SaveDiscard(id, slots))
+            return failed();
+    }
+    for (size_t slot = 0; slot < VoiceOutbox::kSlots; ++slot) {
+        if (!(slots & (1u << slot)))
+            continue;
+        if (outbox_.journal()->RemoveMarkedDiscard(slot, id) != VoiceStoreResult::Ok)
+            return failed();
+        attention_[slot] = offered_[slot] = retry_used_[slot] = retry_pending_[slot] = false;
+        retry_tokens_[slot] = {};
+        presses_[slot] = 0;
+    }
+    if (!recording_->DiscardDictation(id))
+        return true;  // Main-task Release must finish before RAM can be retired.
+    if (dictation_journal_.Get().id == id && !dictation_journal_.Discard(id))
+        return failed();
+    if (!dictation_store_.ClearDiscard())
+        return failed();
+    if (dictation_retry_work_ && dictation_retry_work_->capture.dictation_session_id == id)
+        dictation_retry_work_.reset();
+    if (replay_ && replay_->capture.IsDictation() && replay_->capture.dictation_session_id == id) {
+        mbedtls_platform_zeroize(replay_->frames, VoiceOutbox::kMaxFrameBytes);
+        replay_->capture = {};
+        replay_->bytes = 0;
+    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        dictation_command_ = dictation::Action::None;
+        dictation_reply_.reset();
+        dictation_stop_requested_ = false;
+        dictation_requested_press_ = dictation_ready_press_ = 0;
+        dictation_snapshot_ = dictation_journal_.Get();
+        dictation_discard_id_ = {};
+        dictation_discard_pending_.store(false);
+    }
+    dictation_busy_.store(false);
+    dictation_replacing_.store(false);
+    dictation_missing_parts_ = false;
+    dictation_error_.store(false);
+    dictation_input_blocked_.store(true);  // A new Start still needs a server ACK.
+    RefreshCount();
+    PublishDictation();
+    notify_(Result::DictationDiscarded, 0);
+    return true;
 }
 bool VoiceRecorder::PrepareRetry(const VoiceId& conversation_id) {
     if (!outbox_.journal() || !HasContext())
@@ -843,6 +933,16 @@ void VoiceRecorder::Run() {
     }
     storage_ready_.store(outbox_.Initialize(false));
     dictation_error_.store(!dictation_journal_.Initialize());
+    VoiceId discarded;
+    uint8_t discard_slots = 0;
+    const auto discard_intent = dictation_store_.LoadDiscard(discarded, discard_slots);
+    if (discard_intent != dictation::Store::LoadResult::Empty) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        dictation_discard_id_ = discarded;
+        dictation_discard_pending_.store(true);
+        if (discard_intent == dictation::Store::LoadResult::Fault)
+            dictation_error_.store(true);
+    }
     // A reserved ordinal without a committed raw part is an interrupted write,
     // never an empty or successfully synced segment after a restart.
     std::array<bool, dictation::kMaximumSegments> dictation_present{};
@@ -875,15 +975,19 @@ void VoiceRecorder::Run() {
             dictation_missing_parts_ = true;
             dictation_error_.store(true);
         }
-    dictation_input_blocked_.store(!dictation_journal_.Get().authorized);
+    dictation_input_blocked_.store(dictation_discard_pending_.load() ||
+                                   !dictation_journal_.Get().authorized);
     PublishDictation();
     RefreshCount();
     if (storage_ready_.load() && has_context_.load())
         notify_(Result::ContextReady, 0);
     unsigned storage_attempts = 0;
     int64_t storage_retry_after = 0;
+    ServiceDictationDiscard();
     while (!stopping_.load()) {
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000));
+        if (ServiceDictationDiscard())
+            continue;
         VoiceContext context;
         VoiceId repair_conversation;
         bool dirty = false, allow = false, replay = false, retry_storage = false,

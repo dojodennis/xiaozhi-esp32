@@ -56,6 +56,7 @@ public:
         DictationReady,
         DictationAuthorized,
         DictationRecorded,
+        DictationDiscarded,
         // Orbit Lite: the capture left the device on a transport that issues no
         // durable receipt. It stays in flash and is no longer re-offered.
         Uploaded,
@@ -94,6 +95,8 @@ public:
     bool Begin(uint32_t press, uint64_t captured_unix_ms);
     bool BeginDictation(uint32_t press, uint64_t captured_unix_ms);
     void SetContinuousDictation(bool enabled);
+    bool RequestDiscardedDictation(const VoiceId& id);
+    bool DictationDiscardPending() const { return dictation_discard_pending_.load(); }
     bool CanDictate(uint32_t press, const VoiceId& conversation, int64_t now_ms) const;
     bool DictationPreparing(uint32_t press) const;
     bool MatchesConversation(const VoiceId& conversation) const {
@@ -106,7 +109,10 @@ public:
     bool AcknowledgeDictation(const dictation::Reply& reply);
     dictation::Record DictationRecord() const;
     bool DictationFaulted() const { return dictation_error_.load(); }
-    bool DictationBusy() const { return dictation_busy_.load() || dictation_replacing_.load(); }
+    bool DictationBusy() const {
+        return dictation_busy_.load() || dictation_replacing_.load() ||
+               dictation_discard_pending_.load();
+    }
     bool DictationCapped(uint32_t press) const {
         return press != 0 && dictation_capped_press_.load() == press;
     }
@@ -223,6 +229,9 @@ private:
     VoiceId dictation_replace_previous_{};
     std::atomic<bool> dictation_replacing_{false};
     std::atomic<bool> dictation_continuous_{false};
+    std::atomic<bool> dictation_discard_pending_{false};
+    VoiceId dictation_discard_id_{};
+    bool ServiceDictationDiscard();
     bool CanReplaceEmptyDictationLocked(const VoiceId& conversation) const;
     bool ReplaceEmptyDictation(const VoiceId& previous, const VoiceId& conversation);
     bool dictation_stop_requested_ = false;

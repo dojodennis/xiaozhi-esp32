@@ -150,6 +150,21 @@ bool VoiceRecording::HasReleased() const {
     return std::any_of(buffers_.begin(), buffers_.end(),
                        [](const Buffer& buffer) { return buffer.state == State::Released; });
 }
+bool VoiceRecording::DiscardDictation(const VoiceId& id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& buffer : buffers_)
+        if (buffer.state == State::Recording && buffer.capture.IsDictation() &&
+            buffer.capture.dictation_session_id == id)
+            return false;
+    for (auto& buffer : buffers_) {
+        if (buffer.state == State::Empty || !buffer.capture.IsDictation() ||
+            buffer.capture.dictation_session_id != id)
+            continue;
+        std::fill_n(buffer.pcm, capacity_, 0);
+        buffer.state = State::Empty;
+    }
+    return true;
+}
 bool VoiceRecording::Append(uint32_t press, const int16_t* pcm, size_t frames, size_t channels) {
     std::lock_guard<std::mutex> lock(mutex_);
     const size_t input_frames = frames;

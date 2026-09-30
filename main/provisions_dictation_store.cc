@@ -120,4 +120,72 @@ bool NvsStore::Save(const Record& record) {
     return status == ESP_OK && Load(verified) == LoadResult::Present &&
            RecordJson(verified) == RecordJson(record);
 }
+namespace {
+bool EraseKey(const char* key) {
+    nvs_handle_t handle = 0;
+    if (nvs_open(kNamespace, NVS_READWRITE, &handle) != ESP_OK)
+        return false;
+    auto status = nvs_erase_key(handle, key);
+    if (status == ESP_OK || status == ESP_ERR_NVS_NOT_FOUND)
+        status = nvs_commit(handle);
+    nvs_close(handle);
+    return status == ESP_OK;
+}
+}  // namespace
+bool NvsStore::Clear() {
+    if (!EraseKey(kKey))
+        return false;
+    Record verified;
+    return Load(verified) == LoadResult::Empty;
+}
+Store::LoadResult NvsStore::LoadDiscard(VoiceId& id, uint8_t& slots) {
+    id = {};
+    slots = 0;
+    nvs_handle_t handle = 0;
+    auto status = nvs_open(kNamespace, NVS_READONLY, &handle);
+    if (status == ESP_ERR_NVS_NOT_FOUND)
+        return LoadResult::Empty;
+    if (status != ESP_OK)
+        return LoadResult::Fault;
+    // Versioned, bounded intent. Missing on older firmware means no approval.
+    std::array<uint8_t, 21> bytes{};
+    size_t size = bytes.size();
+    status = nvs_get_blob(handle, "discard_v1", bytes.data(), &size);
+    nvs_close(handle);
+    if (status == ESP_ERR_NVS_NOT_FOUND)
+        return LoadResult::Empty;
+    if (status != ESP_OK || size != bytes.size() || std::memcmp(bytes.data(), "ODI1", 4) != 0 ||
+        bytes[20] > 15 ||
+        std::all_of(bytes.begin() + 4, bytes.begin() + 20, [](uint8_t b) { return b == 0; }))
+        return LoadResult::Fault;
+    std::copy_n(bytes.begin() + 4, 16, id.begin());
+    slots = bytes[20];
+    return LoadResult::Present;
+}
+bool NvsStore::SaveDiscard(const VoiceId& id, uint8_t slots) {
+    if (slots > 15 || std::all_of(id.begin(), id.end(), [](uint8_t b) { return b == 0; }))
+        return false;
+    std::array<uint8_t, 21> bytes{};
+    std::memcpy(bytes.data(), "ODI1", 4);
+    std::copy(id.begin(), id.end(), bytes.begin() + 4);
+    bytes[20] = slots;
+    nvs_handle_t handle = 0;
+    if (nvs_open(kNamespace, NVS_READWRITE, &handle) != ESP_OK)
+        return false;
+    auto status = nvs_set_blob(handle, "discard_v1", bytes.data(), bytes.size());
+    if (status == ESP_OK)
+        status = nvs_commit(handle);
+    nvs_close(handle);
+    VoiceId verified;
+    uint8_t verified_slots = 0;
+    return status == ESP_OK && LoadDiscard(verified, verified_slots) == LoadResult::Present &&
+           verified == id && verified_slots == slots;
+}
+bool NvsStore::ClearDiscard() {
+    if (!EraseKey("discard_v1"))
+        return false;
+    VoiceId id;
+    uint8_t slots;
+    return LoadDiscard(id, slots) == LoadResult::Empty;
+}
 }  // namespace provisions::dictation

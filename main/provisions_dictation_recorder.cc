@@ -6,6 +6,22 @@ void VoiceRecorder::SetContinuousDictation(bool enabled) {
     dictation_continuous_.store(enabled);
     Wake();
 }
+bool VoiceRecorder::RequestDiscardedDictation(const VoiceId& id) {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!recording_ || id == VoiceId{} || dictation_replacing_.load() ||
+            (dictation_discard_pending_.load() ? dictation_discard_id_ != id
+                                               : dictation_snapshot_.id != id))
+            return false;
+        dictation_discard_id_ = id;
+        dictation_discard_pending_.store(true);
+        dictation_continuous_.store(false);
+        dictation_input_blocked_.store(true);
+        dictation_snapshot_.authorized = false;
+    }
+    Wake();
+    return true;
+}
 void VoiceRecorder::PrepareDictationContinuation() {
     uint32_t press;
     uint64_t captured_ms;
@@ -110,7 +126,8 @@ dictation::Record VoiceRecorder::DictationRecord() const {
 }
 bool VoiceRecorder::CanReplaceEmptyDictationLocked(const VoiceId& conversation) const {
     return recording_ && storage_ready_.load() && !dictation_error_.load() &&
-           !dictation_busy_.load() && !dictation_replacing_.load() && has_context_.load() &&
+           !dictation_busy_.load() && !dictation_replacing_.load() &&
+           !dictation_discard_pending_.load() && has_context_.load() &&
            context_.conversation_id == conversation &&
            dictation_snapshot_.conversation_id != conversation &&
            dictation::CanRetireEmpty(dictation_snapshot_) && pending_count_.load() == 0 &&
@@ -160,8 +177,8 @@ bool VoiceRecorder::ReplaceEmptyDictation(const VoiceId& previous, const VoiceId
     }
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (!dictation_replacing_.load() || !has_context_.load() ||
-            context_.conversation_id != conversation ||
+        if (!dictation_replacing_.load() || dictation_discard_pending_.load() ||
+            !has_context_.load() || context_.conversation_id != conversation ||
             requested_context_.conversation_id != conversation || !requested_commit_ ||
             !context_prepared_ || dictation_stop_requested_ || dictation_requested_press_ ||
             dictation_ready_press_ || !recording_->IsIdle())
@@ -174,7 +191,7 @@ bool VoiceRecorder::RequestDictationControl(dictation::Action action) {
         return false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (dictation_replacing_.load())
+        if (dictation_replacing_.load() || dictation_discard_pending_.load())
             return false;
         if (action == dictation::Action::Stop)
             dictation_stop_requested_ = true;
@@ -314,16 +331,18 @@ void VoiceRecorder::ServiceDictation() {
     }
     if (dictation_journal_.Faulted())
         dictation_error_.store(true);
+    if (changed || stop || command != dictation::Action::None || reply)
+        PublishDictation();
     if (replace_previous != VoiceId{}) {
         std::lock_guard<std::mutex> lock(mutex_);
+        // Keep discard admission closed until the snapshot names the committed
+        // journal. Otherwise a caller can accept the retired ID in this gap.
         // A rejected replacement preserves the old acknowledged authority for
         // its original assignment. Faults and scope/fresh-edge checks still
         // prevent input; a successful replacement remains pending Start ACK.
         dictation_input_blocked_.store(!dictation_journal_.Get().authorized);
         dictation_replacing_.store(false);
     }
-    if (changed || stop || command != dictation::Action::None || reply)
-        PublishDictation();
     if (authorized) {
         // Stop may arrive while the ACK commits or its UI notification runs.
         // Publish input authority under the same lock as new control requests.

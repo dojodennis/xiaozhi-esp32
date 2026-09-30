@@ -39,11 +39,16 @@ public:
     virtual ~Store() = default;
     virtual LoadResult Load(Record& record) = 0;
     virtual bool Save(const Record& record) = 0;
+    virtual bool Clear() { return false; }
 };
 class NvsStore final : public Store {
 public:
     LoadResult Load(Record& record) override;
     bool Save(const Record& record) override;
+    bool Clear() override;
+    LoadResult LoadDiscard(VoiceId& id, uint8_t& slots);
+    bool SaveDiscard(const VoiceId& id, uint8_t slots);
+    bool ClearDiscard();
 };
 // One worker owns this journal. Every mutation commits and reads back before
 // publishing new authority, a reserved ordinal, or a terminal segment receipt.
@@ -54,6 +59,7 @@ public:
     const Record& Get() const { return record_; }
     bool Faulted() const { return fault_; }
     bool Start(const VoiceId& id, const VoiceId& conversation);
+    bool Discard(const VoiceId& id);
     bool ReplaceEmpty(const VoiceId& previous, const VoiceId& id, const VoiceId& conversation);
     bool Stop();
     bool Resume();

@@ -62,6 +62,7 @@ void esp_opus_enc_close(void*);
 ''',
 }
 HEADERS["esp_heap_caps.h"] += "\nvoid* heap_caps_calloc(size_t,size_t,unsigned);\n"
+HEADERS["nvs.h"] += "\nesp_err_t nvs_erase_key(nvs_handle_t,const char*);\n"
 HEADERS["psa/crypto.h"] += """
 constexpr unsigned PSA_ALG_SHA_256=30;
 int psa_hash_compute(unsigned,const uint8_t*,size_t,uint8_t*,size_t,size_t*);
@@ -75,6 +76,7 @@ PRELUDE = r'''
 #include <condition_variable>
 #include <thread>
 std::function<void()> read_hook;
+bool partial_discard_erase=false;
 '''
 SUPPORT = fixture.PROGRAM.split("int main() {")[0].replace(
     "bytes==VoiceOutbox::kMaxFrameBytes && caps==",
@@ -92,6 +94,17 @@ SUPPORT = SUPPORT.replace('if(state.bad("set_blob"))return ESP_FAIL;', 'std::str
 SUPPORT = SUPPORT.replace('aad==108 || aad==16', 'aad==108 || aad==136 || aad==16')
 SUPPORT = SUPPORT.replace('if(state.bad("read")) return ESP_FAIL;', 'if(read_hook){auto hook=std::move(read_hook);hook();}if(state.bad("read")) return ESP_FAIL;')
 SUPPORT = SUPPORT.replace('struct State {', 'struct AdapterState {').replace('State state;', 'AdapterState state;').replace('state=State{};', 'state=AdapterState{};')
+SUPPORT = SUPPORT.replace('for(auto& item:state.pending)state.nvs[item.first]=item.second;',
+    'for(auto& item:state.pending){if(item.second.empty())state.nvs.erase(item.first);else state.nvs[item.first]=item.second;}')
+SUPPORT = SUPPORT.replace('if(state.bad("erase"))return ESP_FAIL;',
+    'if(state.bad("erase")){if(partial_discard_erase)memset(state.flash.data()+offset,255,8192);return ESP_FAIL;}')
+SUPPORT += r'''
+esp_err_t nvs_erase_key(nvs_handle_t handle,const char* key) {
+ if(state.bad("erase_key"))return ESP_FAIL;
+ std::string scoped=(handle&0x80000000u)?std::string("dictation/")+key:key;
+ state.pending[scoped]={};return ESP_OK;
+}
+'''
 
 WORKER = r'''
 struct TestTask {
@@ -184,7 +197,7 @@ void record(VoiceRecorder& recorder,uint32_t press,uint64_t captured=17887123456
 }
 void replay(VoiceRecorder& recorder){recorder.RequestReplay();drain();}
 void fresh() {
-    assert(!held&&!task);assert(!read_hook);reset();clock_us=0;notices.clear();offered.clear();hold_replay=false;fail_encoder=false;
+    assert(!held&&!task);assert(!read_hook);reset();clock_us=0;notices.clear();offered.clear();hold_replay=false;fail_encoder=false;partial_discard_erase=false;
 }
 void acknowledge(VoiceRecorder& recorder,const VoiceCaptureReceipt& receipt) {
     assert(recorder.Acknowledge(receipt));drain();
@@ -692,7 +705,108 @@ void continuous_stop_publication_race() {
   }
   std::cout<<"Stop publication after rollover cleanup preserves exact sampled manifest\n";
 }
-int main(){continuous_stop_publication_race();continuous_dictation_cases();normal_cases();lite_consumed_cases();context_cases();explicit_retry_cases();bounded_offer_cases();queued_retry_scope_case();dictation_ack_stop_race();dictation_cases();}
+void discarded_recording_cases() {
+ for(const std::string phase:{"success","intent_write","partial_erase","journal_clear","intent_clear","journal_commit"}) {
+  fresh();VoiceId discarded;std::vector<uint8_t> unrelated;
+  {
+   VoiceRecorder recorder;initialize(recorder);authorize(recorder,context(77));record(recorder,1);
+   unrelated.assign(state.flash.begin()+tail,state.flash.begin()+tail+VoiceOutbox::kSlotBytes);
+   authorize(recorder);
+   assert(recorder.RequestDictationControl(dictation::Action::Start));drain();
+   dictation_ack(recorder,dictation::State::Open);recorder.SetContinuousDictation(true);
+   begin_dictation(recorder,2);drain();int16_t pcm[160]{};
+   for(unsigned i=0;i<1001;++i)assert(recorder.Append(2,pcm,160,1));drain();
+   discarded=recorder.DictationRecord().id;assert(recorder.PendingCount()==2);
+   // Power loss: volatile active/armed parts disappear, durable audio stays.
+  }
+  join();
+  {
+   VoiceRecorder recorder;initialize(recorder);assert(recorder.DictationFaulted());
+   const auto before=state.flash;auto wrong=discarded;wrong[0]^=1;
+   assert(!recorder.RequestDiscardedDictation(wrong));drain();assert(state.flash==before);
+   assert(recorder.DictationRecord().id==discarded&&recorder.PendingCount()==2);
+   if(phase=="intent_write"){state.fail="set_blob";state.fail_n=0;}
+   if(phase=="partial_erase"){state.fail="erase";state.fail_n=0;partial_discard_erase=true;}
+   if(phase=="journal_clear"){state.fail="erase_key";state.fail_n=0;}
+   if(phase=="intent_clear"){state.fail="erase_key";state.fail_n=state.calls["erase_key"]+2;}
+   if(phase=="journal_commit"){state.fail="commit";state.fail_n=state.calls["commit"]+2;}
+   assert(recorder.RequestDiscardedDictation(discarded));drain();
+   assert(std::equal(unrelated.begin(),unrelated.end(),state.flash.begin()+tail));
+   if(phase!="success") {
+    assert(recorder.DictationDiscardPending()&&recorder.DictationFaulted());
+    assert(!recorder.RequestDictationControl(dictation::Action::Start));
+    if(phase=="intent_write")assert(state.flash==before);
+   } else {
+    assert(!recorder.DictationDiscardPending()&&!recorder.DictationFaulted());
+    assert(recorder.DictationRecord().id==VoiceId{}&&recorder.PendingCount()==1);
+    assert(notice_count(VoiceRecorder::Result::DictationDiscarded)==1);
+   }
+  }
+  join();state.fail.clear();partial_discard_erase=false;
+  {
+   VoiceRecorder recorder;initialize(recorder);
+   if(phase=="intent_write") {
+    // An approval that never reached durable intent must be replayed by the
+    // authenticated backend; reboot cannot invent it.
+    assert(recorder.DictationFaulted()&&recorder.PendingCount()==2);
+    assert(recorder.RequestDiscardedDictation(discarded));drain();
+   }
+   assert(!recorder.DictationDiscardPending()&&!recorder.DictationFaulted());
+   assert(recorder.DictationRecord().id==VoiceId{}&&recorder.PendingCount()==1);
+   assert(!state.nvs.count("dictation/discard_v1")&&!state.nvs.count("dictation/journal"));
+   assert(std::equal(unrelated.begin(),unrelated.end(),state.flash.begin()+tail));
+   assert(!recorder.RequestDiscardedDictation(discarded));
+   authorize(recorder,context(99));assert(recorder.RequestDictationControl(dictation::Action::Start));drain();
+   assert(recorder.DictationRecord().id!=discarded&&recorder.DictationRecord().conversation_id==context(99).conversation_id);
+  }
+  join();
+ }
+ std::cout<<"Staff-approved exact discard, torn erase/reboot, journal clear failures and unrelated audio preservation passed\n";
+}
+void discarded_reassignment_races() {
+ // Replacement owns the journal identity until its committed snapshot is
+ // published. Authenticated discard of the retired ID must be rejected.
+ fresh();{
+  VoiceRecorder recorder;initialize(recorder);authorize(recorder);
+  assert(recorder.RequestDictationControl(dictation::Action::Start));drain();
+  dictation_ack(recorder,dictation::State::Open);const auto old=recorder.DictationRecord().id;
+  authorize(recorder,context(100));bool inspected=false,published=false;
+  read_hook=[&](){inspected=true;assert(!recorder.RequestDiscardedDictation(old));};
+  notify_hook=[&](auto result){
+   if(result==VoiceRecorder::Result::DictationChanged){
+    published=true;assert(recorder.DictationBusy());
+    assert(recorder.DictationRecord().id!=old&&!recorder.RequestDiscardedDictation(old));
+   }
+  };
+  assert(recorder.RequestEmptyDictationReplacement(context(100).conversation_id));drain();notify_hook={};
+  assert(inspected&&published&&!recorder.DictationDiscardPending()&&!recorder.DictationFaulted());
+  assert(recorder.DictationRecord().id!=old&&!recorder.RequestDiscardedDictation(old));
+  dictation_ack(recorder,dictation::State::Open);
+  assert(recorder.CanDictate(1,context(100).conversation_id,1788712345678LL));
+ }join();
+ // If approval wins admission, replacement and Start remain closed through
+ // durable cleanup, including an intent-write failure and retry.
+ fresh();{
+  VoiceRecorder recorder;initialize(recorder);authorize(recorder);
+  assert(recorder.RequestDictationControl(dictation::Action::Start));drain();
+  dictation_ack(recorder,dictation::State::Open);const auto old=recorder.DictationRecord().id;
+  authorize(recorder,context(100));assert(recorder.CanReplaceEmptyDictation(context(100).conversation_id));
+  {std::lock_guard<std::mutex> lock(task->mutex);pause_worker=true;}
+  assert(recorder.RequestDiscardedDictation(old));
+  assert(!recorder.CanReplaceEmptyDictation(context(100).conversation_id));
+  assert(!recorder.RequestEmptyDictationReplacement(context(100).conversation_id));
+  assert(!recorder.RequestDictationControl(dictation::Action::Start));
+  state.fail="set_blob";state.fail_n=0;
+  {std::lock_guard<std::mutex> lock(task->mutex);pause_worker=false;task->changed.notify_all();}
+  drain();assert(recorder.DictationDiscardPending()&&recorder.DictationRecord().id==old);
+  state.fail.clear();recorder.RequestReplay();drain();
+  assert(!recorder.DictationDiscardPending()&&!recorder.DictationFaulted()&&recorder.DictationRecord().id==VoiceId{});
+  assert(recorder.RequestDictationControl(dictation::Action::Start));drain();
+  assert(recorder.DictationRecord().id!=old&&recorder.DictationRecord().conversation_id==context(100).conversation_id);
+ }join();
+ std::cout<<"Discard and empty reassignment admission serialize both orders through snapshot publication\n";
+}
+int main(){discarded_recording_cases();discarded_reassignment_races();continuous_stop_publication_race();continuous_dictation_cases();normal_cases();lite_consumed_cases();context_cases();explicit_retry_cases();bounded_offer_cases();queued_retry_scope_case();dictation_ack_stop_race();dictation_cases();}
 
 '''
 

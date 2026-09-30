@@ -222,4 +222,24 @@ VoiceStoreResult VoiceOutbox::RemoveAfterReceipt(size_t slot, const VoiceId& req
     return flash_.Erase(slot * kSlotBytes, kSlotBytes) ? VoiceStoreResult::Ok
                                                        : VoiceStoreResult::IoError;
 }
+VoiceStoreResult VoiceOutbox::RemoveMarkedDiscard(size_t slot, const VoiceId& recording_id) {
+    if (slot >= kSlots || !Nonzero(recording_id.data(), recording_id.size()))
+        return VoiceStoreResult::Invalid;
+    SavedVoiceCapture saved;
+    const auto result = Read(slot, saved);
+    if (result == VoiceStoreResult::Ok &&
+        (!saved.capture.IsDictation() || saved.capture.dictation_session_id != recording_id))
+        return VoiceStoreResult::Conflict;
+    if (result != VoiceStoreResult::Ok && result != VoiceStoreResult::Empty &&
+        result != VoiceStoreResult::Corrupt)
+        return result;
+    if (!flash_.Erase(slot * kSlotBytes, kSlotBytes))
+        return VoiceStoreResult::IoError;
+    std::array<uint8_t, 4096> block;
+    for (size_t offset = 0; offset < kSlotBytes; offset += block.size())
+        if (!flash_.Read(slot * kSlotBytes + offset, block.data(), block.size()) ||
+            !std::all_of(block.begin(), block.end(), [](uint8_t b) { return b == 255; }))
+            return VoiceStoreResult::IoError;
+    return VoiceStoreResult::Ok;
+}
 }  // namespace provisions

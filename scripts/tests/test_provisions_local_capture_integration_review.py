@@ -64,7 +64,7 @@ struct VoiceRecorder {
     bool BeginDictation(uint32_t,uint64_t){return false;}
     bool DictationPreparing(uint32_t)const{return false;}
 
-    enum class Result {Saved,Failed,NeedsAttention,Synced,Consumed,ContextReady,RetryQueued,RetryUnavailable,DictationReady,DictationChanged,DictationAuthorized,DictationRecorded,Uploaded,Evicted,LiveOnly};
+    enum class Result {Saved,Failed,NeedsAttention,Synced,Consumed,ContextReady,RetryQueued,RetryUnavailable,DictationReady,DictationChanged,DictationAuthorized,DictationRecorded,DictationDiscarded,Uploaded,Evicted,LiveOnly};
     bool allow_begin=true;unsigned begun=0,released=0,replays=0;
     bool CanRetry() const {return false;}
     std::function<void()> before_begin;
@@ -111,6 +111,7 @@ struct AudioService {
 };
 struct Application {
     bool service=false;std::string service_state,service_detail;
+    std::string orbit_service_status_;void PaintOrbitService(){}
     bool IsOrbitService()const{return service;}
     static Application& GetInstance(){static Application value;return value;}
     void OrbitServiceFrame(const std::string& state,const std::string& detail=""){service_state=state;service_detail=detail;}

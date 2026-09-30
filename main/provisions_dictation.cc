@@ -337,6 +337,17 @@ bool Journal::Start(const VoiceId& id, const VoiceId& conversation) {
     next.pending = Action::Start;
     return Commit(next);
 }
+bool Journal::Discard(const VoiceId& id) {
+    if (!HasId(id) || record_.id != id)
+        return false;
+    if (!store_.Clear()) {
+        fault_ = true;
+        return false;
+    }
+    record_ = {};
+    fault_ = false;
+    return true;
+}
 bool CanRetireEmpty(const Record& record) {
     if (!Valid(record) || record.state == State::Empty || record.pending != Action::None ||
         record.stop_requested)

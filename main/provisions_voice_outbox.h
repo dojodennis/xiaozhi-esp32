@@ -74,6 +74,9 @@ public:
     // exact IDs. A queued receipt can never erase a reused slot or another scope.
     VoiceStoreResult RemoveAfterReceipt(size_t slot, const VoiceId& request_id,
                                         const VoiceId& conversation_id);
+    // Caller must have a durable staff-approved intent naming this exact slot
+    // and recording. That intent permits recovery of an interrupted erase.
+    VoiceStoreResult RemoveMarkedDiscard(size_t slot, const VoiceId& recording_id);
     static bool ValidFrames(VoiceBytes frames, uint32_t packet_count);
 
 private:
