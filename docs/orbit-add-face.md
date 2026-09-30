@@ -1,26 +1,29 @@
 # ORBIT-ADD-01 — Keep List/Notes capture on the face
 
-Current: implemented, rendered and built; awaiting review/visual acceptance. Codex owner. Dennis requested this on
+Current: implemented, rendered and built; visual preview accepted; installed and full-device verified on Ring 2; reset pending. Codex owner. Dennis requested this on
 30 September 2026 as part of the existing Orbit menu workstream. Related:
 MENU-KV-01/02 and WIFI-05. Based on menu candidate 4f96977 (including Wi-Fi
-3519f4b); installed Ring 2 remains corrected 96888cc. This is not installed.
+3519f4b); Ring 2 was updated from corrected 96888cc to 235d9c4 after fresh recovery verification.
 
 Outcome: empty List and Notes retain the exact Home crest and quiet destination
 label. Press yellow and speak, release to send, using the existing recording path.
 The short pocket-lock chord window remains; no long-press gate is introduced.
 Menu yellow five-second Wi-Fi entry, filled lists, timers and lock stay unchanged.
-Tap-to-toggle recording is an optional question pending Dennis's answer; default
-is the existing press/hold/release interaction. No audio-pipeline changes planned.
+Dennis approved the rendered preview and its existing press/hold/release interaction.
+No audio-pipeline change is included.
 
 Acceptance: render actual production assets/fonts and compare Home geometry;
 verify empty/list/empty and capture transitions; run button/chord/Wi-Fi checks;
 build the StopWatch firmware with verified QR configuration and dependency lock;
 inspect flash headroom. Independent review and hardware acceptance remain separate.
-No merge or installation in this task. Keep existing physical tests pending.
+Dennis authorized installation on 30 September. No merge or Ring 1 rollout; keep
+existing physical tests pending.
 
-For Dennis: no device action yet. Inspect the rendered preview when ready;
-after installation, verify empty List and Notes retain the crest and yellow starts
-recording without another confirmation. Hardware acceptance is pending.
+For Dennis: after verified installation, briefly reset Ring 2 once if DOWNLOAD
+mode remains, then confirm the face returns. On an empty List/Notes screen, check
+the same crest remains and holding yellow begins recording, with release to send.
+Return visual/capture pass or the failing step. No phone app is needed for this
+check. Hardware acceptance is pending; preview approval is recorded separately.
 
 Change log — 30 September 2026 — Codex — ORBIT-ADD-01: began replacement of the
 blank hold-to-add screen with the existing face crest and a small capture cue.
@@ -50,3 +53,20 @@ Removed the separate animated arrow on this empty screen; filled lists restore
 normal text layout. Existing press-to-record/release-to-send behavior remains.
 Rendered actual pixels, passed 17 focused checks and built the QR-enabled target.
 Source branch: codex/orbit-add-face, based on 4f96977. Not installed or merged.
+
+Change log — 30 September 2026 — ORBIT-ADD-01 — Codex: Dennis approved the preview
+and explicitly requested installation. Rebuilt clean 235d9c4, signed and verified
+the 4,001,792-byte image. Ring 2 identity/security passed; fresh full-device recovery
+and guarded app-only installation are in progress. No success or physical acceptance
+is claimed by this entry.
+
+Change log — 30 September 2026 — ORBIT-ADD-01 — Codex: installed approved firmware
+235d9c4 on Ring 2. Exact identity/security, partition, active app slot, prior app,
+fresh 16 MB backup and persisted preferred-profile checks passed before writing.
+App-only write at 0x20000; app and full-device verification passed afterward,
+confirming every other flash byte unchanged. Signed image 4,001,792 bytes.
+The candidate also includes the existing 4f96977 empty-timer pulse fix. Ring 1
+unchanged; no branch merged. Protected installation/recovery records are saved.
+Ring 2 remains in DOWNLOAD mode pending one brief physical reset. Normal boot,
+preferred-network connection and physical add-screen/capture checks remain open
+for this revision. Independent review remains separate from preview approval.
