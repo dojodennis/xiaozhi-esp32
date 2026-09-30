@@ -100,6 +100,13 @@ bool SsidManager::AddSsid(const std::string& ssid, const std::string& password) 
             ESP_LOGW(TAG, "SSID %s already exists, overwrite it", ssid.c_str());
 #endif
             item.password = password;
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+            // A successful setup selection is the preferred profile, including
+            // reselecting an existing network. Persist order and password together.
+            const auto index = &item - ssid_list_.data();
+            std::rotate(ssid_list_.begin(), ssid_list_.begin() + index,
+                        ssid_list_.begin() + index + 1);
+#endif
             if (SaveToNvs())
                 return true;
             ssid_list_ = std::move(previous);

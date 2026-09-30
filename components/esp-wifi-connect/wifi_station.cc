@@ -11,6 +11,7 @@
 #include <esp_netif.h>
 #include <esp_system.h>
 #include "ssid_manager.h"
+#include "sdkconfig.h"
 
 #define TAG "WifiStation"
 #define WIFI_EVENT_CONNECTED BIT0
@@ -208,6 +209,16 @@ void WifiStation::HandleScanResult() {
         }
     }
     free(ap_records);
+
+#if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+    // The first persisted profile is the user's most recent setup selection.
+    // Keep signal order within that network and among fallback networks.
+    if (!ssid_list.empty()) {
+        std::stable_partition(
+            connect_queue_.begin(), connect_queue_.end(),
+            [&](const WifiApRecord& record) { return record.ssid == ssid_list.front().ssid; });
+    }
+#endif
 
     if (connect_queue_.empty()) {
         ESP_LOGI(TAG, "No AP found, next scan in %d seconds", scan_current_interval_microseconds_ / 1000 / 1000);

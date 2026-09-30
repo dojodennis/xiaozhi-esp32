@@ -165,7 +165,12 @@ void WifiBoard::OnNetworkEvent(NetworkEvent event, const std::string& data) {
 #endif
             in_config_mode_ = false;
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-            ESP_LOGI(TAG, "Connected to the configured WiFi profile");
+            {
+                const auto& profiles = SsidManager::GetInstance().GetSsidList();
+                const bool preferred = !profiles.empty() && data == profiles.front().ssid;
+                ESP_LOGI(TAG, "Connected to %s saved WiFi profile",
+                         preferred ? "preferred" : "fallback");
+            }
 #else
             ESP_LOGI(TAG, "Connected to WiFi: %s", data.c_str());
 #endif
