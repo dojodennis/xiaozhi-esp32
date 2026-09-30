@@ -378,6 +378,8 @@ bool Application::IsOrbitNotesFace() const {
     return orbit_view_.load() == OrbitView::Notes;
 }
 
+bool Application::IsOrbitStockFace() const { return orbit_view_.load() == OrbitView::Stock; }
+
 bool ProvisionsListenNotes() {
     return Application::GetInstance().IsOrbitNotesFace();
 }
@@ -488,7 +490,7 @@ void Application::HandleOrbitMenuBlueOnMain() {
         return;
     }
     if (orbit_view_.load() == OrbitView::Menu) {
-        orbit_menu_index_ = static_cast<uint8_t>((orbit_menu_index_ + 1) % 3);
+        orbit_menu_index_ = static_cast<uint8_t>((orbit_menu_index_ + 1) % 4);
         PaintOrbitView();
         return;
     }
@@ -506,7 +508,7 @@ void Application::LeaveDictationScreenOnMain() {
         audio_service_.ReleaseLocalRecordingFence(provisions_physical_press_.id());
 }
 
-// The menu's two destinations, also reached by a sideways swipe.
+// The menu destinations, also reached by a sideways swipe.
 void Application::OpenOrbitShoppingOnMain() {
     LeaveDictationScreenOnMain();
     g_shopping_scroll = 0;  // Arrive on the newest items, not a stale page.
@@ -527,6 +529,12 @@ void Application::OpenOrbitNotesOnMain() {
     PaintOrbitView();
 }
 
+void Application::OpenOrbitStockOnMain() {
+    LeaveDictationScreenOnMain();
+    orbit_view_.store(OrbitView::Stock);
+    PaintOrbitView();
+}
+
 void Application::ConfirmOrbitMenuOnMain() {
     if (orbit_view_.load() != OrbitView::Menu)
         return;
@@ -534,6 +542,8 @@ void Application::ConfirmOrbitMenuOnMain() {
         OpenOrbitShoppingOnMain();
     else if (orbit_menu_index_ == 2)
         OpenOrbitNotesOnMain();
+    else if (orbit_menu_index_ == 3)
+        OpenOrbitStockOnMain();
     else
         OpenOrbitTimersOnMain();
 }
@@ -543,10 +553,9 @@ void Application::HandleOrbitFaceSwipe(bool right) {
         if (IsOrbitWifiSetup())
             return;
         // The menu is its own pager: a sideways swipe flips the logo
-        // (list <-> timer) and stays there until yellow confirms.
+        // and stays there until yellow confirms.
         if (orbit_view_.load() == OrbitView::Menu) {
-            orbit_menu_index_ = static_cast<uint8_t>(
-                (orbit_menu_index_ + (right ? 1 : 2)) % 3);
+            orbit_menu_index_ = static_cast<uint8_t>((orbit_menu_index_ + (right ? 1 : 3)) % 4);
             PaintOrbitView();
             return;
         }
@@ -555,11 +564,15 @@ void Application::HandleOrbitFaceSwipe(bool right) {
             page = 0;
         else if (orbit_view_.load() == OrbitView::Notes)
             page = 2;
-        orbit_menu_index_ = static_cast<uint8_t>((page + (right ? 1 : 2)) % 3);
+        else if (orbit_view_.load() == OrbitView::Stock)
+            page = 3;
+        orbit_menu_index_ = static_cast<uint8_t>((page + (right ? 1 : 3)) % 4);
         if (orbit_menu_index_ == 0)
             OpenOrbitShoppingOnMain();
         else if (orbit_menu_index_ == 2)
             OpenOrbitNotesOnMain();
+        else if (orbit_menu_index_ == 3)
+            OpenOrbitStockOnMain();
         else
             OpenOrbitTimersOnMain();
     });
@@ -854,6 +867,13 @@ void Application::PaintOrbitView() {
     }
     if (view == OrbitView::Menu) {
         ProvisionsShowOrbitMenu(orbit_menu_index_);
+        return;
+    }
+    if (view == OrbitView::Stock) {
+        // Stock uses the existing general question route, never List/Notes capture.
+        display->SetDictationScreen(false, "", "");
+        if (GetDeviceState() == kDeviceStateIdle)
+            display->SetStatus(GetProvisionsIdleStatus());
         return;
     }
     if (view == OrbitView::Notes) {

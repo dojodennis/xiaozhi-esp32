@@ -27,7 +27,7 @@ public:
     static constexpr int kNotesBandTenths = 150;
 
     void Create(lv_obj_t* parent);
-    // page: 0 List, 1 Timers, 2 Notes. sweep_permille: elapsed share of the
+    // page: 0 List, 1 Timers, 2 Notes, 3 Stock. sweep_permille: elapsed share of the
     // focus timer (0 when there is none). readout: the remaining time or "--:--".
     void Show(int page, int sweep_permille, const char* readout);
     // Live timer update while the Timers page is on show; no arrival animation.
@@ -55,7 +55,7 @@ private:
     lv_obj_t* bars_[3]{};
     lv_obj_t* readout_ = nullptr;
     lv_obj_t* caption_ = nullptr;
-    lv_obj_t* dots_[3]{};
+    lv_obj_t* dots_[4]{};
     lv_timer_t* breath_timer_ = nullptr;
     uint16_t* timer_pixels_ = nullptr;   // PSRAM, kBandSize² RGB565
     uint16_t* angle_tenths_ = nullptr;   // PSRAM, kBandSize² angle from twelve, 0..3599

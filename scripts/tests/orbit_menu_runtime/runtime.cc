@@ -102,6 +102,25 @@ int main(int argc, char** argv) {
         lv_obj_set_style_image_opa(band, 20, 0);
         lv_obj_set_style_image_opa(star, 20, 0);
     }
+    lv_obj_add_flag(title, LV_OBJ_FLAG_HIDDEN);
+    ProvisionsStopWatch::StyleVoiceCaption(hint, true);
+    lv_label_set_text(hint, ProvisionsStopWatch::kStockReadyCaption);
+    lv_obj_set_style_text_opa(hint, LV_OPA_COVER, 0);
+    for (auto* mark : {band, star})
+        lv_obj_set_style_image_opa(mark, LV_OPA_COVER, 0);
+    Advance(10);
+    Save(output / "stock-ready.ppm");
+    auto stock_ready = Frame();
+    for (int y = 0; y < kSize; ++y)
+        for (int x = 0; x < kSize; ++x)
+            if (y < 287 || y > 336)
+                assert(stock_ready[y * kSize + x] == home[y * kSize + x]);
+    ProvisionsStopWatch::StyleVoiceCaption(hint, false);
+    Advance(10);
+    assert(lv_obj_get_height(hint) == 74);  // Voice/error state restores full caption space.
+    ProvisionsStopWatch::StyleVoiceCaption(hint, true);
+    Advance(10);
+    assert(Frame() == stock_ready);  // Returning from a reply restores Stock.
     for (auto* obj : {band, star, title, hint}) lv_obj_delete(obj);
     ProvisionsStopWatch::OrbitMenuCrest crest;
     crest.Create(screen);
@@ -114,6 +133,11 @@ int main(int argc, char** argv) {
     auto notes = Frame();
     Save(output / "k-notes.ppm");
     assert(list != notes);
+    crest.Show(3, 0, "--:--");
+    Advance(900);
+    auto stock = Frame();
+    assert(stock != list && stock != notes);
+    Save(output / "k-stock.ppm");
     crest.Show(1, 0, "--:--");
     Advance(900);
     auto empty = Frame();

@@ -136,6 +136,7 @@ public:
     bool ConfirmOrbitMenu();
     bool IsOrbitShoppingFace() const;
     bool IsOrbitNotesFace() const;
+    bool IsOrbitStockFace() const;
     bool IsOrbitMenuFace() const;
     bool IsOrbitWifiSetup() const { return orbit_wifi_setup_.load(); }
     void StartOrbitWifiSetup(std::function<bool()> still_allowed);
@@ -143,8 +144,8 @@ public:
     // Finger swipe on the shopping face: down pages toward older items, up
     // toward newer. Snaps back to live on the newest page, a new add, or idle.
     void HandleShoppingSwipe(bool down);
-    // Sideways thumb swipe on any face: swaps the shopping list and the timer
-    // dial, either direction. The same destinations as the menu's two items.
+    // Sideways thumb swipe cycles List, Timers, Notes and Stock in either
+    // direction, using the same destinations as the menu.
     void HandleOrbitFaceSwipe(bool right);
 #endif
 
@@ -324,7 +325,7 @@ private:
     void CloseDictationInputOnMain();
     void HandleDictationControlOnMain();
     void ServiceDictation();
-    enum class OrbitView : uint8_t { Home, Menu, Shopping, Notes };
+    enum class OrbitView : uint8_t { Home, Menu, Shopping, Notes, Stock };
     std::atomic<OrbitView> orbit_view_{OrbitView::Home};
     uint8_t orbit_menu_index_ = 0;
     std::atomic<bool> orbit_wifi_setup_{false};
@@ -337,6 +338,7 @@ private:
     void OpenOrbitShoppingOnMain();
     void OpenOrbitTimersOnMain();
     void OpenOrbitNotesOnMain();
+    void OpenOrbitStockOnMain();
     void RememberShoppingListFace(const std::string& text);
     void RememberShoppingListSpeech(const std::string& spoken);
     void RememberNotesFace(const std::string& text);

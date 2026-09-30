@@ -5,8 +5,21 @@
 #include "lvgl.h"
 
 LV_FONT_DECLARE(font_noto_sans_basic_16_4);
+LV_FONT_DECLARE(font_noto_sans_basic_30_4);
 
 namespace ProvisionsStopWatch {
+
+inline constexpr const char* kStockReadyCaption = "Stock\nHold yellow to speak";
+
+// Stock uses the ordinary voice face so progress and replies remain visible.
+// Restore the standard caption style whenever a voice state takes over.
+inline void StyleVoiceCaption(lv_obj_t* caption, bool stock_ready) {
+    lv_obj_set_style_text_font(
+        caption, stock_ready ? &font_noto_sans_basic_16_4 : &font_noto_sans_basic_30_4, 0);
+    lv_obj_set_size(caption, stock_ready ? 210 : 280, stock_ready ? 48 : 74);
+    lv_obj_align(caption, LV_ALIGN_CENTER, 0, stock_ready ? 78 : 97);
+    lv_obj_set_style_text_line_space(caption, stock_ready ? 8 : 3, 0);
+}
 
 // Empty List/Notes is the resting face with a small action cue. Reuse the
 // existing crest objects so pressing Talk can morph them into listening.

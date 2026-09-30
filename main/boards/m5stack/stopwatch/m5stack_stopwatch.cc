@@ -506,7 +506,11 @@ private:
             }
             crest_error_ring_geometry_ = error_geometry;
         }
-        const char* text = crest_state_ == OrbitCrest::State::Result
+        const bool stock_ready = Application::GetInstance().IsOrbitStockFace() &&
+                                 crest_state_ == OrbitCrest::State::Idle;
+        ProvisionsStopWatch::StyleVoiceCaption(crest_caption_, stock_ready);
+        const char* text = stock_ready ? ProvisionsStopWatch::kStockReadyCaption
+                           : crest_state_ == OrbitCrest::State::Result
                                ? crest_result_caption_
                                : OrbitCrest::Caption(crest_state_);
         if (crest_displayed_caption_ != text) {
@@ -1043,7 +1047,8 @@ private:
         // Once a timer exists its circular countdown is the stable foreground.
         // Confirmation/result state changes must not alternate it with the crest.
         const bool show_compact_timer = display_awake && !show_alarm && !dictation_visible_ &&
-                                        crest_timer_active_ && !TimerFaceForced();
+                                        crest_timer_active_ && !TimerFaceForced() &&
+                                        !Application::GetInstance().IsOrbitStockFace();
         RefreshCompactTimerLocked();
 
         // Keep the legacy objects alive for shared status/timer ownership, but
@@ -2763,6 +2768,9 @@ public:
         if (dictation_panel_ == nullptr)
             return;
         (void)action;
+        // Entering Stock leaves timer details; ringing alarms still own the glass.
+        if (!visible && Application::GetInstance().IsOrbitStockFace())
+            timer_face_until_us_.store(0);
         shopping_focus_layout_ = false;
         HideOrbitMenuLocked();
         lv_obj_set_style_bg_opa(dictation_panel_, LV_OPA_COVER, 0);
@@ -3034,6 +3042,9 @@ public:
     // menu image shows. The buffer is taken from PSRAM on first use and kept:
     // the menu opens often, and one 434 KB block does not fragment.
     bool PaintMenuPageLocked(int page) {
+        // Stock has a native crest page, not a fourth packed bitmap.
+        if (page < 0 || page >= 3)
+            return false;
         constexpr int kSize = OrbitMenu::kPageSize;
         constexpr size_t kBytes = size_t(kSize) * kSize * sizeof(uint16_t);
         if (menu_pixels_ == nullptr) {
@@ -3106,8 +3117,8 @@ public:
         SetHoldHintLocked(false);
         const bool shopping = page == 0;
         const bool notes = page == 2;
-        menu_page_ = notes ? 2 : shopping ? 0 : 1;
-        if (menu_theme_ == ProvisionsStopWatch::MenuTheme::Crest) {
+        menu_page_ = page < 4 ? page : 0;
+        if (menu_theme_ == ProvisionsStopWatch::MenuTheme::Crest || menu_page_ == 3) {
             // Drawing K: LVGL objects over the crest, nothing from menu_asset.
             SetVisible(menu_mark_, false);
             SetVisible(dictation_item_, false);
