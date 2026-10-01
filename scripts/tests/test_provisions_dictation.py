@@ -216,7 +216,7 @@ class DictationTests(unittest.TestCase):
         )
         self.assertIn("void Application::HandleOrbitMenuBlueOnMain()", source)
         self.assertIn("void Application::ConfirmOrbitMenuOnMain()", source)
-        self.assertIn("return timers", source)
+        self.assertIn("return consumes_press", source)
         self.assertIn("IsOrbitNotesFace()", app)
         self.assertIn("manual_listening_requested_.load()", app)
         self.assertIn("ProvisionsShowOrbitMenu(orbit_menu_index_)", source)

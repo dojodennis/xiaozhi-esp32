@@ -856,7 +856,7 @@ struct AudioService {
 };
 struct Application {
     bool wifi_setup=false;bool IsOrbitWifiSetup()const{return wifi_setup;}
-    bool IsOrbitService()const{return false;}void PaintOrbitService(){}
+    bool service=false;bool IsOrbitService()const{return service;}void PaintOrbitService(){}
  std::mutex provisions_recording_control_mutex_;ProvisionsReplyTurn provisions_physical_press_;
  std::shared_ptr<VoiceRecorder> provisions_recorder_=std::make_shared<VoiceRecorder>();AudioService audio_service_;
  std::shared_ptr<WebsocketProtocol> protocol=std::make_shared<WebsocketProtocol>();int event_group_=0,state=kDeviceStateIdle;
@@ -891,7 +891,35 @@ struct Application {
  void Samples(uint32_t press,const int16_t* pcm,size_t frames,size_t channels) __SAMPLES__
 };
 __AUDIO_METHODS__
+// Use the fixture's capture time at the OS boundary; receipt expiry tests must
+// not change behavior when the calendar advances past the sample receipt.
+int FixtureGetTimeOfDay(timeval* now, void*) {
+ now->tv_sec=1788712345;now->tv_usec=678000;return 0;
+}
+#define gettimeofday FixtureGetTimeOfDay
 __APP_METHODS__
+#undef gettimeofday
+void service_capture_mode_cases(){
+ // Service capture is bound dictation even if a presentation transition cleared
+ // the screen flag. Missing assignment authority must never fall back to audio.
+ for(bool assignment:{false,true}){
+  fresh();{
+   Application app;auto& recorder=*app.provisions_recorder_;initialize(recorder);authorize(recorder);
+   if(assignment){assert(recorder.RequestDictationControl(dictation::Action::Start));drain();dictation_ack(recorder,dictation::State::Open);}
+   app.service=true;app.dictation_screen_=false;app.dictation_has_assignment_proof_=assignment;
+   app.StartListening();bool began=app.BeginLocalRecordingOnMain();
+   if(assignment&&!began){drain();began=app.BeginLocalRecordingOnMain();}
+   assert(began==assignment);
+   if(assignment){
+    assert(app.provisions_recording_was_dictation_);int16_t samples[160]{};
+    assert(recorder.Append(app.provisions_physical_press_.id(),samples,160,1));
+    app.StopListening();app.EndLocalRecordingOnMain();drain();replay(recorder);
+    assert(!offered.empty()&&offered.back().receipt.capture.IsDictation());
+   }else{assert(!recorder.CaptureOpen()&&recorder.PendingCount()==0);}
+  }join();
+ }
+ std::cout<<"Service capture remains bound dictation independently of screen state\n";
+}
 void dictation_main_consumer_cases(){
  fresh();
  {
@@ -1120,7 +1148,7 @@ PHYSICAL = PHYSICAL.replace('__AUDIO_METHODS__', '\n'.join(method('main/audio/au
 PHYSICAL = PHYSICAL.replace('__APP_METHODS__', '\n'.join([
     *[method('main/application.cc', signature) for signature in ('void Application::StartListening()', 'void Application::StopListening()', 'bool Application::BeginLocalRecordingOnMain()', 'void Application::EndLocalRecordingOnMain()')],
     *[method('main/provisions_dictation_application.cc', signature) for signature in ('void Application::ToggleDictationScreen()', 'void Application::DictationButton()', 'void Application::CloseDictationInputOnMain()', 'void Application::HandleDictationControlOnMain()', 'void Application::ServiceDictation()')]]))
-WORKER = WORKER.replace('int main(){', PHYSICAL + '\nint main(){').replace('dictation_cases();}', 'dictation_cases();dictation_physical_cases();dictation_main_consumer_cases();dictation_reassignment_cases();dictation_reviewed_unfinished_refuses_start();}')
+WORKER = WORKER.replace('int main(){', PHYSICAL + '\nint main(){').replace('dictation_cases();}', 'dictation_cases();service_capture_mode_cases();dictation_physical_cases();dictation_main_consumer_cases();dictation_reassignment_cases();dictation_reviewed_unfinished_refuses_start();}')
 
 
 class VoiceRecorderReviewTests(unittest.TestCase):

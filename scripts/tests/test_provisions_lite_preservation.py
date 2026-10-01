@@ -346,7 +346,8 @@ class LitePreservationTests(unittest.TestCase):
         self.assertIn("replay->slot == provisions::VoiceOutbox::kSlots", mark)
         press = APPLICATION[APPLICATION.index("bool Application::BeginLocalRecordingOnMain()"):]
         press = press[:press.index("provisions_recording_started_press_ = press;")]
-        lite = press[press.index("if (dictation_screen_.load()) {"):press.index("DictationAuthorization() != dictation_authorization_seen_")]
+        self.assertIn("const bool dictation = IsOrbitService() || dictation_screen_.load();", press)
+        lite = press[press.index("if (dictation) {"):press.index("DictationAuthorization() != dictation_authorization_seen_")]
         self.assertIn("if (IsLiteMode()) {", lite)
         self.assertIn("return false;", lite)
         self.assertNotIn("BeginDictation(press", lite)

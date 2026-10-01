@@ -125,12 +125,13 @@ struct Board{
 struct Application{
  std::atomic<bool> orbit_wifi_setup_{false},manual_listening_requested_{false},provisions_network_busy_{false},provisions_response_pending_{false},provisions_recording_saving_{false};
  std::atomic<OrbitView> orbit_view_{OrbitView::Menu};bool provisions_timer_ringing_=false;int state=kDeviceStateIdle,painted=0;
+ std::atomic<bool> dictation_screen_{false};bool service=false;bool IsOrbitService(){return service;}
  struct Audio{bool idle=true;bool IsPlaybackIdle(){return idle;}} audio_service_;
  struct Timer{bool fenced=false;bool Fenced(){return fenced;}} timer_player_;
  std::vector<std::function<void()>> work;
  bool IsOrbitWifiSetup(){return orbit_wifi_setup_;}bool IsOrbitMenuFace(){return orbit_view_==OrbitView::Menu;}
  int GetDeviceState(){return state;}void SetDeviceState(int s){state=s;}
- void LeaveDictationScreenOnMain(){}void PaintOrbitView(){++painted;}
+ void LeaveDictationScreenOnMain(){dictation_screen_=false;}void PaintOrbitView(){++painted;}
  void Schedule(std::function<void()> f){work.push_back(f);}void Drain(){while(!work.empty()){auto batch=std::move(work);work.clear();for(auto& f:batch)f();}}
  void StartOrbitWifiSetup(std::function<bool()>);
 };
@@ -143,9 +144,11 @@ int main(){auto& b=Board::GetInstance();
  case 6:a.provisions_response_pending_=true;break;case 7:a.provisions_recording_saving_=true;break;case 8:a.audio_service_.idle=false;break;case 9:a.timer_player_.fenced=true;break;}
  a.Drain();assert(b.starts==0&&!a.IsOrbitWifiSetup());}
  for(int state:{kDeviceStateIdle,kDeviceStateStarting})
- for(bool accepts:{true,false}){Application a;a.state=state;b.starts=0;b.accepts=accepts;a.StartOrbitWifiSetup([](){return true;});a.Drain();assert(b.starts==1);
- if(accepts){assert(a.IsOrbitWifiSetup()&&a.state==kDeviceStateWifiConfiguring);b.ready("WIFI:example");a.Drain();b.finished(true);a.Drain();}
+ for(bool service:{true,false})for(bool saved:{true,false})
+ for(bool accepts:{true,false}){Application a;a.state=state;a.service=service;a.dictation_screen_=true;b.starts=0;b.accepts=accepts;a.StartOrbitWifiSetup([](){return true;});a.Drain();assert(b.starts==1);
+ if(accepts){assert(a.IsOrbitWifiSetup()&&a.state==kDeviceStateWifiConfiguring);b.ready("WIFI:example");a.Drain();b.finished(saved);a.Drain();}
  assert(!a.IsOrbitWifiSetup()&&a.state==kDeviceStateIdle&&a.painted==1);
+ assert(a.dictation_screen_==service);
  int before=shown;b.ready("late");a.Drain();assert(shown==before);
  }
 }

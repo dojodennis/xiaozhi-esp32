@@ -443,9 +443,9 @@ bool Application::ConfirmOrbitMenu() {
         return true;
     if (orbit_view_.load() != OrbitView::Menu)
         return false;
-    const bool timers = orbit_menu_index_ == 1 || orbit_menu_index_ == 3;
+    const bool consumes_press = orbit_menu_index_ == 1 || orbit_menu_index_ == 4;
     Schedule([this]() { ConfirmOrbitMenuOnMain(); });
-    return timers;
+    return consumes_press;
 }
 
 // Recheck the physical hold on the application task; a release/lock invalidates queued entry.
@@ -471,6 +471,8 @@ void Application::StartOrbitWifiSetup(std::function<bool()> still_allowed) {
                 ProvisionsHideOrbitWifiSetup();
                 SetDeviceState(kDeviceStateIdle);
                 orbit_view_.store(OrbitView::Menu);
+                if (IsOrbitService())
+                    dictation_screen_.store(true);
                 PaintOrbitView();
                 Board::GetInstance().GetDisplay()->ShowNotification(
                     saved ? "wi-fi saved — reconnecting" : "setup closed — retrying saved wi-fi",
@@ -505,14 +507,14 @@ void Application::HandleOrbitMenuBlueOnMain() {
         }
         if (orbit_service_recording_.load())
             StopOrbitServiceCapture();
-        orbit_menu_index_ = 3;
+        orbit_menu_index_ = 4;
         orbit_view_.store(orbit_view_.load() == OrbitView::Menu ? OrbitView::Service
                                                                 : OrbitView::Menu);
         PaintOrbitView();
         return;
     }
     if (orbit_view_.load() == OrbitView::Menu) {
-        orbit_menu_index_ = static_cast<uint8_t>((orbit_menu_index_ + 1) % 4);
+        orbit_menu_index_ = static_cast<uint8_t>((orbit_menu_index_ + 1) % 5);
         PaintOrbitView();
         return;
     }
@@ -560,7 +562,7 @@ void Application::OpenOrbitStockOnMain() {
 void Application::ConfirmOrbitMenuOnMain() {
     if (orbit_view_.load() != OrbitView::Menu)
         return;
-    if (orbit_menu_index_ == 3) {
+    if (orbit_menu_index_ == 4) {
         SelectOrbitService();
         return;
     }
@@ -585,7 +587,7 @@ void Application::HandleOrbitFaceSwipe(bool right) {
         // The menu is its own pager: a sideways swipe flips the logo
         // and stays there until yellow confirms.
         if (orbit_view_.load() == OrbitView::Menu) {
-            orbit_menu_index_ = static_cast<uint8_t>((orbit_menu_index_ + (right ? 1 : 3)) % 4);
+            orbit_menu_index_ = static_cast<uint8_t>((orbit_menu_index_ + (right ? 1 : 4)) % 5);
             PaintOrbitView();
             return;
         }
@@ -900,7 +902,7 @@ void Application::PaintOrbitView() {
         return;
     }
     if (view == OrbitView::Menu) {
-        if (orbit_menu_index_ == 3) {
+        if (orbit_menu_index_ == 4) {
             ProvisionsShowShoppingFocus("", IsOrbitService() ? "Chef" : "Service",
                                         "press yellow to select",
                                         IsOrbitService() ? "Provisions" : "Dojo");

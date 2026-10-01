@@ -2638,7 +2638,8 @@ bool Application::BeginLocalRecordingOnMain() {
             captured_ms = static_cast<uint64_t>(now.tv_sec) * 1000 + now.tv_usec / 1000;
     }
     bool began = false;
-    if (dictation_screen_.load()) {
+    const bool dictation = IsOrbitService() || dictation_screen_.load();
+    if (dictation) {
         if (IsLiteMode()) {
             // Dictation needs the negotiated full-gateway route; lite never
             // negotiates it. The screen already reads "Dictation needs the
@@ -2677,7 +2678,7 @@ bool Application::BeginLocalRecordingOnMain() {
         return false;
     }
     provisions_recording_started_press_ = press;
-    provisions_recording_was_dictation_ = dictation_screen_.load();
+    provisions_recording_was_dictation_ = dictation;
     provisions_recording_failed_.store(false);
     provisions_recording_saving_.store(false);
     provisions_recording_local_.store(false);

@@ -35,11 +35,13 @@ struct RoundLcdDisplay {
     __TOGGLE__
 };
 struct Application {
-    bool menu=true, wifi=false, dictation=false;
-    int retries=0, aborts=0;
+    bool menu=true, wifi=false, dictation=false, service=false;
+    int retries=0, aborts=0, pairs=0;
     std::deque<std::function<void()>> queue;
     static Application& GetInstance(){static Application app; return app;}
     bool IsOrbitMenuFace(){return menu;}
+    bool IsOrbitService(){return service;}
+    void OrbitServicePairing(){++pairs;}
     bool IsOrbitWifiSetup(){return wifi;}
     bool IsDictationScreen(){return dictation;}
     void RetrySavedVoiceRecording(){++retries;}
@@ -84,6 +86,14 @@ int main(){
     app.wifi=false;app.menu=false;app.dictation=true;
     int retries=app.retries;board.button2_.hold();app.Drain();assert(app.retries==retries);
     app.dictation=false;board.button2_.hold();app.Drain();assert(app.retries==retries+1);
+    // Service keeps the menu's existing theme hold; pairing belongs to its face.
+    app.service=true;app.menu=true;app.dictation=true;
+    const int writes=Settings::writes;board.button2_.hold();app.Drain();
+    assert(Settings::writes==writes+1&&app.pairs==0);
+    app.menu=false;board.button2_.hold();app.Drain();assert(app.pairs==1);
+    board.display.alarm=true;board.button2_.hold();app.Drain();
+    assert(app.pairs==1&&board.display.silenced==2);
+    board.orbit_locked_=true;board.button2_.hold();app.Drain();assert(app.pairs==1);
 }
 '''.replace("__TOGGLE__", toggle).replace("__GESTURE__", gesture)
         with tempfile.TemporaryDirectory(prefix="orbit-menu-theme-") as directory:

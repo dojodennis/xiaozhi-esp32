@@ -38,7 +38,7 @@ void Application::SelectOrbitService() {
         // Keep Service selected until the bound gateway confirms the change.
         if (!static_cast<WebsocketProtocol*>(protocol.get())->RequestChefMode())
             orbit_service_status_ = "Connect to switch to Chef";
-        PaintOrbitService();
+        Board::GetInstance().GetDisplay()->ShowNotification(orbit_service_status_.c_str());
         return;
     }
     LeaveDictationScreenOnMain();
@@ -264,7 +264,8 @@ void Application::TickOrbitService() {
 }
 
 void Application::PaintOrbitService() {
-    if (!IsOrbitService() || !orbit_service_code_.empty())
+    if (!IsOrbitService() || orbit_view_.load() != OrbitView::Service || IsOrbitWifiSetup() ||
+        !orbit_service_code_.empty())
         return;
     std::string status = orbit_service_status_;
     if (orbit_service_recording_.load()) {

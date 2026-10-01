@@ -3958,7 +3958,7 @@ private:
                 if (orbit_locked_.load())
                     return;
                 auto& app = Application::GetInstance();
-                if (app.IsOrbitService()) {
+                if (app.IsOrbitService() && !app.IsOrbitMenuFace()) {
                     app.OrbitServicePairing();
                     return;
                 }
