@@ -243,3 +243,23 @@ pass and the complete post-read all match the signed artifact. Before/after
 comparisons prove the partition table, NVS, OTA/PHY state, NVS keys and all 32
 chunks of the 2 MiB recording journal byte-identical. Orbit remains in download
 mode pending normal boot and a physical ringing-timer tap test.
+
+
+## MENU-KV-02-F2/F3 — 1 October 2026 correction
+
+Codex removed the unbounded needs-attention eviction introduced outside the
+accepted 30-minute uploaded-capture rule. Four unacknowledged recordings now
+remain byte-for-byte intact when a fifth ordinary recording cannot be saved.
+The full gateway reports failure; authenticated Lite keeps its existing honest
+RAM-only fallback. Explicit retries and dictation remain protected. No stored
+recording was accessed or erased during this correction.
+
+The actual recorder worker tests now cover full needs-attention journals,
+byte-for-byte retention, explicit retry and Lite fallback. The old button test
+models current menu, lock, Wi-Fi hold and Service interfaces, checks current
+click/double-click navigation and retains queued retry/capture/alarm guards.
+All 356 host tests pass on Stock-compatible Service `c8a957c` plus this patch;
+final test-only cleanup also passes its targeted module. Independent security,
+simplicity, project-idiom and retry/provider review found no remaining issue.
+Physical capture, full-store feedback and interruption acceptance stay open in
+the existing MENU-KV-02 / OS-06 checklist; no installation is claimed.

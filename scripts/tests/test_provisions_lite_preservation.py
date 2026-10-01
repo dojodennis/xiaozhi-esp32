@@ -203,7 +203,12 @@ void lite_full_live_only_cases(){
     fresh();
     {
         VoiceRecorder recorder;initialize(recorder);authorize(recorder);use_lite(recorder);
-        for(uint32_t press=1;press<=4;++press)record(recorder,press,0);
+        for(uint32_t press=1;press<=4;++press){
+            record(recorder,press,0);replay(recorder);
+            auto receipt=offered.back().receipt;receipt.needs_attention=true;
+            acknowledge(recorder,receipt);
+        }
+        assert(recorder.NeedsAttention());offered.clear();
         const auto retained=state.flash;const auto erases=state.erases;
         hold_replay=true;record(recorder,5,0);
         assert(notices.back()==std::make_pair(VoiceRecorder::Result::LiveOnly,uint32_t(5)));

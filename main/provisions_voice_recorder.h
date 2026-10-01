@@ -211,7 +211,6 @@ private:
     void ForgetAwaitingReceipt(size_t slot);
     void ApplyUploadMark(const UploadMark& mark);
     bool EvictForNewCapture(uint64_t now_unix_ms);
-    bool EvictNeedsAttentionForNewCapture();
     VoiceStoreResult Store(const VoiceCapture& capture, VoiceBytes frames,
                            SavedVoiceCapture& saved);
     dictation::NvsStore dictation_store_;

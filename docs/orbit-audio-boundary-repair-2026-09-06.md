@@ -1,5 +1,28 @@
 # Orbit firmware audio boundary repair
 
+## Current correction — MENU-KV-02-F1, 1 October 2026
+
+Codex restored the documented final ownership check after codec output enable.
+A delayed power-up can overlap a new Talk press or a complete press/release;
+the old playback frame is now dropped after that boundary without reporting a
+codec failure. Both checks share the same predicate under the queue mutex;
+codec I/O remains outside it. This does not enable the separate opt-in output
+fence implementation or claim physical acoustic acceptance.
+
+Isolated candidate is based on reviewed Stock-compatible Service `c8a957c`.
+All 356 host tests pass, including actual output/input methods, DMA drain and
+failed-output ordering. Independent reviewers `fix_security_review` and
+`fix_simplicity_review` found no blocking issue. The canonical ESP-IDF 6.0.2
+ESP32-S3 StopWatch QR build passes: unsigned app 4,063,232 bytes, 65,536 bytes
+remaining in the existing app slot. Configuration/dependency/partition checks
+and exact committed build receipt accompany the handoff. No device was operated.
+
+Next owner: Codex release owner for integration into the existing controlled
+installation package, then Dennis for the existing interruption/capture check.
+Older results below are dated historical evidence, not this candidate's device
+acceptance.
+
+
 Source repair for audit A1–A3 and the firmware half of A5, based on installed
 `a4376a34cb3ed6b2eef3207c472c16df060819b0` / documentation `b352f76`.
 This candidate has not been installed or acoustically accepted.

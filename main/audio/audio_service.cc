@@ -554,9 +554,10 @@ void AudioService::AudioOutputTask() {
         audio_queue_cv_.notify_all();
         lock.unlock();
 
-        lock.lock();
-        const bool current =
-            task->playback_generation == playback_generation_ && !service_stopped_.load()
+        // Ownership may change while the codec powers up. Recheck after that
+        // blocking call; keep the queue mutex out of codec I/O.
+        const auto is_current = [&]() {
+            return task->playback_generation == playback_generation_ && !service_stopped_.load()
 #if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
             && output_work.Allowed() && task->ordinary_owner == ordinary_owner_
 #endif
@@ -570,6 +571,9 @@ void AudioService::AudioOutputTask() {
                 (task->playback_id == 0 && local_feedback_active_))
 #endif
             ;
+        };
+        lock.lock();
+        bool current = is_current();
         lock.unlock();
         bool played = false;
         if (current) {
@@ -582,11 +586,16 @@ void AudioService::AudioOutputTask() {
                 codec_->EnableOutput(true);
 #endif
             }
+            lock.lock();
+            current = is_current();
+            lock.unlock();
+            if (current) {
 #if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
-            played = codec_->OutputDataAdmitted(task->pcm, output_work.Token());
+                played = codec_->OutputDataAdmitted(task->pcm, output_work.Token());
 #else
-            played = codec_->OutputData(task->pcm);
+                played = codec_->OutputData(task->pcm);
 #endif
+            }
         }
         if (played && task->playback_id != 0 && callbacks_.on_playback_progress) {
             callbacks_.on_playback_progress(task->playback_id, task->media_position_ms);

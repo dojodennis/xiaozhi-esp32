@@ -34,16 +34,24 @@ class VoiceRetryUiReview(unittest.TestCase):
 #include <deque>
 #include <functional>
 #include <memory>
+#include <mutex>
+#include "menu_wifi_hold.h"
 #include <string>
 #include "orbit_dial.h"
 #define CONFIG_PROVISIONS_LOCAL_CAPTURE 1
 #define CONFIG_PROVISIONS_GATEWAY_REQUIRED 1
 using ProvisionsStopwatchOrbit::AlarmOutputChange;
+int64_t clock_us=1;
+int64_t esp_timer_get_time(){return clock_us;}
+void esp_timer_stop(int){}
+void esp_timer_start_once(int,int64_t){}
 constexpr int kDeviceStateIdle=0,kDeviceStateListening=1,kDeviceStateSpeaking=2;
 struct DisplayLockGuard {template<typename T>explicit DisplayLockGuard(T*){}};
 void lv_label_set_text(void*,const char*){}
 struct Display {
-    std::string text;int silences=0,alarm_id=0;void* alarm_hint_label_=nullptr;
+    std::string text;int silences=0,alarm_id=0,themes=0;
+    bool HasTimerAlarm(){return timer_alarm_active_;}
+    void ToggleMenuTheme(){++themes;}void* alarm_hint_label_=nullptr;
     std::atomic<bool> timer_alarm_active_{false};
     ProvisionsStopwatchOrbit::AlarmState timer_alarm_state_;
     void SetChatMessage(const char*,const char* value){text=value;}
@@ -60,6 +68,7 @@ struct Display {
     }
 ''' + silence + r'''
 };
+using RoundLcdDisplay=Display;
 struct Board {Display display;static Board& GetInstance(){static Board value;return value;}Display* GetDisplay(){return &display;}};
 struct Protocol {bool open=true;bool IsAudioChannelOpened(){return open;}};
 struct Recorder {
@@ -70,8 +79,12 @@ struct Recorder {
     bool IsReady(){return ready;}bool HasContext(){return context;}unsigned PendingCount(){return 1;}
 };
 struct Application {
-    bool dictation=false;int controls=0;
-    bool IsDictationScreen()const{return dictation;}void ToggleDictationScreen(){dictation=!dictation;}void DictationButton(){++controls;}
+    bool dictation=false,menu=false,wifi=false,service=false;int navigations=0,confirmations=0,service_taps=0,pairings=0;
+    bool IsOrbitMenuFace(){return menu;}bool IsOrbitWifiSetup(){return wifi;}bool IsOrbitService(){return service;}
+    bool ConfirmOrbitMenu(){if(!menu)return false;++confirmations;menu=false;return true;}
+    void HandleOrbitMenuBlue(){++navigations;}
+    void OrbitServiceTap(){++service_taps;}void OrbitServicePairing(){++pairings;}
+    bool IsDictationScreen()const{return dictation;}
 
     std::atomic<bool> manual_listening_requested_{false},provisions_network_busy_{false},provisions_response_pending_{false};
     std::atomic<bool> provisions_recording_failed_{false},provisions_recording_saving_{false};
@@ -97,11 +110,15 @@ struct Button {
 struct Volume {int value=50;int output_volume(){return value;}void SetOutputVolume(int next){value=next;}};
 struct StopWatchBoard {
     Button button1_,button2_;Volume volume;int wakes=0;
+    std::atomic<bool> orbit_locked_{false};std::mutex chord_mutex_;
+    ProvisionsStopWatch::MenuWifiHold wifi_hold_;int wifi_hold_timer_=1;
+    struct {bool held=false;bool BlueHeld(){return held;}}chord_;
+    bool gesture_chord=false;bool TalkClicked(){return false;}
     Display* display_=&Board::GetInstance().display;
     static constexpr int kDefaultOutputVolume=50,kMaximumOutputVolume=100;
     void ResetDisplayIdleTimer(){++wakes;}Volume* GetAudioCodec(){return &volume;}
     void ArmTalkStart(std::function<void()> start){start();}bool TalkReleased(){return true;}
-    void BluePressed(){}void BlueReleased(){}bool BlueGestureInChord(){return false;}
+    void BluePressed(){}void BlueReleased(){}bool BlueGestureInChord(){return gesture_chord;}
 ''' + buttons + r'''
 };
 ''' + handlers + r'''
@@ -122,7 +139,7 @@ int main(){
         assert(!board.display_->timer_alarm_state_.active());
         assert(app.provisions_recorder_->retries==0&&!app.manual_listening_requested_);
     }
-    board.button2_.click();assert(app.provisions_recorder_->retries==0);app.Drain();assert(board.volume.value==100&&app.provisions_recorder_->retries==0);
+    board.button2_.click();assert(app.provisions_recorder_->retries==0);app.Drain();assert(board.volume.value==50&&app.navigations==1&&app.provisions_recorder_->retries==0);
     // A new Talk press before the scheduled blue action runs must win.
     board.button2_.long_press();assert(app.provisions_recorder_->retries==0);
     board.button1_.press();app.Drain();assert(app.provisions_recorder_->retries==0&&app.manual_listening_requested_);board.button1_.release();
@@ -144,9 +161,31 @@ int main(){
     app.provisions_recorder_->fault=true;assert(std::string(app.GetProvisionsIdleStatus())=="Recording kept");
     board.button2_.long_press();app.Drain();assert(Board::GetInstance().display.text=="No saved recording is ready to retry.");
     const auto volume_before=board.volume.value;const auto retries_before=app.provisions_recorder_->retries;
-    board.button2_.double_click();app.Drain();assert(app.dictation&&app.controls==0&&board.volume.value==volume_before);
-    board.button2_.click();board.button2_.long_press();app.Drain();assert(app.controls==1&&app.provisions_recorder_->retries==retries_before&&board.volume.value==volume_before);
-    board.button2_.double_click();assert(app.dictation);app.Drain();assert(!app.dictation&&app.controls==1);
+    const auto nav_before=app.navigations;
+    board.button2_.double_click();app.Drain();assert(app.navigations==nav_before+1&&board.volume.value==volume_before);
+    app.dictation=true;board.button2_.long_press();app.Drain();
+    assert(app.provisions_recorder_->retries==retries_before);app.dictation=false;
+    // Menu holds change theme, short yellow confirms only on release, and a
+    // consumed Wi-Fi hold never falls through into Talk or menu confirmation.
+    app.menu=true;board.button2_.long_press();app.Drain();
+    assert(board.display_->themes==1&&app.provisions_recorder_->retries==retries_before);
+    board.button1_.press();assert(!app.manual_listening_requested_&&app.confirmations==0);
+    board.button1_.release();assert(app.confirmations==0);app.Drain();assert(app.confirmations==1);
+    app.menu=true;board.button1_.press();clock_us+=ProvisionsStopWatch::MenuWifiHold::kHoldUs;
+    assert(board.wifi_hold_.Fire(clock_us));board.button1_.release();app.Drain();
+    assert(app.confirmations==1&&!app.manual_listening_requested_);
+    app.wifi=true;board.button2_.long_press();app.Drain();assert(board.display_->themes==1);
+    app.menu=false;app.wifi=false;app.service=true;
+    board.button1_.press();assert(!app.manual_listening_requested_);
+    board.button1_.release();assert(app.service_taps==1);
+    board.button2_.long_press();assert(app.pairings==0);app.Drain();assert(app.pairings==1);
+    app.service=false;
+    const auto nav_locked=app.navigations;const auto retries_locked=app.provisions_recorder_->retries;board.orbit_locked_=true;
+    board.button2_.click();board.button2_.long_press();board.button2_.double_click();app.Drain();
+    assert(app.navigations==nav_locked&&app.pairings==1&&app.provisions_recorder_->retries==retries_locked);
+    board.orbit_locked_=false;board.gesture_chord=true;
+    board.button2_.click();board.button2_.long_press();board.button2_.double_click();app.Drain();
+    assert(app.navigations==nav_locked&&app.provisions_recorder_->retries==retries_locked);board.gesture_chord=false;
     app.provisions_recorder_.reset();board.button2_.long_press();app.Drain();assert(Board::GetInstance().display.text=="No saved recording is ready to retry.");
 }
 '''

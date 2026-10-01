@@ -450,7 +450,7 @@ void bounded_offer_cases() {
     join();
     fresh();
     {
-        // Four retired recordings must not block the next note or shopping item.
+        // Full ordinary journals preserve every unacknowledged recording.
         VoiceRecorder recorder;initialize(recorder);authorize(recorder);
         for(uint32_t press=1;press<=4;++press) {
             record(recorder,press);replay(recorder);
@@ -458,9 +458,16 @@ void bounded_offer_cases() {
             acknowledge(recorder,retired);
         }
         assert(recorder.PendingCount()==4&&recorder.NeedsAttention());
+        const auto retained=state.flash;const auto erases=state.erases;
         record(recorder,5);
-        assert(recorder.PendingCount()==4);
-        assert(notices.back()==std::make_pair(VoiceRecorder::Result::Saved,uint32_t(5)));
+        assert(recorder.PendingCount()==4&&state.flash==retained&&state.erases==erases);
+        assert(notices.back()==std::make_pair(VoiceRecorder::Result::Failed,uint32_t(5)));
+        // An explicit retry remains available without freeing or changing a slot.
+        auto receipt=offered.front().receipt;acknowledge(recorder,challenge(receipt));
+        assert(recorder.RequestRetry());drain();
+        record(recorder,6);
+        assert(recorder.PendingCount()==4&&state.flash==retained&&state.erases==erases);
+        assert(notices.back()==std::make_pair(VoiceRecorder::Result::Failed,uint32_t(6)));
     }
     join();
     std::cout<<"Bounded automatic offers and needs_attention retirement cases passed\n";
