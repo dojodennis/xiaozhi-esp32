@@ -1,5 +1,17 @@
 # ORBIT-STOCK-01 — Dedicated onboard stock entry
 
+## OS-06 — normal boot confirmed, 2 October 2026
+
+Dennis confirmed physical reset and the normal face. Codex then observed40seconds
+of normal flash boot, preferred saved Wi-Fi connection, activation and idle,
+with no panic, assertion, watchdog or stack-overflow event. Current mode is
+APPLICATION; earlier reset-pending entries are superseded. No raw logs retained,
+additional flash or server setting change. Thinking/microphone/speaker acceptance
+remains open; next owner Dojo uses a harmless Chef question, observes Thinking
+after release and reports the spoken reply. Live Service pairing remains disabled.
+Boot receipt is in the existing dated device-setup handoff. Change log: Codex,
+OS-06, metadata-only startup observation plus Dennis's screen confirmation.
+
 ## OS-06 / ORBIT-THINK-01 — Ring 2 installed, 2 October 2026
 
 Dennis resumed the connected setup. Codex installed reviewed firmware
