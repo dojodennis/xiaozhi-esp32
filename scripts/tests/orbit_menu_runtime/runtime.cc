@@ -118,6 +118,20 @@ int main(int argc, char** argv) {
     ProvisionsStopWatch::StyleVoiceCaption(hint, false);
     Advance(10);
     assert(lv_obj_get_height(hint) == 74);  // Voice/error state restores full caption space.
+    // Real production font/style must fit every allowlisted progress caption.
+    for (const char* status : {"Working", "Saving", "Retry queued", "Preparing microphone"}) {
+        const auto* caption =
+            OrbitCrest::Caption(OrbitCrest::State::Thinking, OrbitCrest::ProgressForStatus(status));
+        lv_label_set_text(hint, caption);
+        lv_point_t text_size{};
+        lv_text_get_size(&text_size, caption, &font_noto_sans_basic_30_4, 0, 3, 280,
+                         LV_TEXT_FLAG_NONE);
+        assert(text_size.x <= 280 && text_size.y <= 74);
+        Advance(10);
+        assert(!std::strcmp(lv_label_get_text(hint), caption));
+        Save(output / (std::string("progress-") + status + ".ppm"));
+    }
+    lv_label_set_text(hint, ProvisionsStopWatch::kStockReadyCaption);
     ProvisionsStopWatch::StyleVoiceCaption(hint, true);
     Advance(10);
     assert(Frame() == stock_ready);  // Returning from a reply restores Stock.

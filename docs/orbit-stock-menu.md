@@ -1,5 +1,40 @@
 # ORBIT-STOCK-01 — Dedicated onboard stock entry
 
+## ORBIT-THINK-01 — Command progress, 2 October 2026
+
+Owner: Codex. Dennis authorized implementation and offline release preparation.
+Outcome: the existing processing animation also says “Thinking” while a command
+is pending. Saving, queued retry and microphone preparation retain accurate
+labels. Related: ORBIT-STOCK-01 and OS-06; based on the reviewed Stock/Service
+candidate plus host-failure repairs at `1a48c5e`, not a replacement firmware base.
+Exclusions: protocol, retries, provider calls, transcripts, device flashing and
+Claude's EN visual design. Main integration remains separate from this candidate.
+
+Acceptance: production status-method transitions, same-state caption refresh,
+cancel/error/reply exit, real LVGL/font rendering without clipping, full host
+suite, accepted QR-enabled target build, independent review, pushed source and
+verified offline package. Physical Ring 2 readability and microphone acceptance
+remain with Dennis when the existing connected-device handoff is available.
+
+Current: source reviewed GO; 357/357 host tests, production status-method
+ASan/UBSan checks, native LVGL caption/menu checks and the QR-enabled StopWatch
+build pass. Independent reviewers: `fix_security_review` (security/privacy and
+provider effects) and `fix_simplicity_review` (display idioms, complexity, cruft).
+The native caption sizing check caught a two-line microphone caption exceeding
+74 points; the reviewed single-line “Preparing mic” fits. Historical
+350/354 results below are superseded by the 1 October repair checkpoint's
+356/356 host pass; they are retained as the original Stock evidence.
+
+Change log — 2 October 2026 — ORBIT-THINK-01 — Codex: add allowlisted progress
+captions in the existing StopWatch/C152 display paths and refresh them when
+Saving changes to Working without an animation-state change. Final host run:
+357 passed in111.5s; native LVGL/fonts fit all four progress captions. Changed
+C++ lines formatted with repository clang-format settings. No provider call,
+protocol/retry change or device operation. Release package records the exact
+committed build and offline signature; installation remains deferred.
+
+## Historical Stock implementation checkpoint — 30 September 2026
+
 Current: implemented; navigation and native rendering pass; first target build passes. Owner: Codex. Related: ORBIT-ADD-01 and
 shared-line tool parity row 4. Dennis approved installation on 30 September 2026.
 The prior Home-only stock test instructions are superseded by this menu flow.
