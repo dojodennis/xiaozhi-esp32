@@ -98,7 +98,8 @@ int main() {
     for (const auto* status : {"Working", "Saving", "Retry queued", "Preparing microphone"}) {
         const auto progress = ProgressForStatus(status);
         const char* expected = std::strcmp(status, "Working") == 0 ? "Thinking" :
-            std::strcmp(status, "Preparing microphone") == 0 ? "Preparing mic" : status;
+            std::strcmp(status, "Preparing microphone") == 0 ? "Mic setup" :
+            std::strcmp(status, "Retry queued") == 0 ? "Queued" : status;
         assert(std::strcmp(Caption(State::Thinking, progress), expected) == 0);
         // A delayed response preserves the caption; terminal/cancel states
         // cannot inherit it, regardless of the preceding waiting operation.

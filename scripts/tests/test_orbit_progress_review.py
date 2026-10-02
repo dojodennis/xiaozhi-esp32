@@ -91,8 +91,8 @@ template<typename T> void progress_cases() {
     display.SetStatus("Working"); assert(display.caption=="Thinking");
     display.SetStatus("12:34"); assert(display.caption=="Thinking");
     display.SetStatus("Saving"); assert(display.caption=="Saving");
-    display.SetStatus("Retry queued"); assert(display.caption=="Retry queued");
-    display.SetStatus("Preparing microphone"); assert(display.caption=="Preparing mic");
+    display.SetStatus("Retry queued"); assert(display.caption=="Queued");
+    display.SetStatus("Preparing microphone"); assert(display.caption=="Mic setup");
     display.SetStatus("Working"); assert(display.caption=="Thinking");
     int renders=display.renders;
     display.SetStatus("Working"); assert(display.renders==renders+1);

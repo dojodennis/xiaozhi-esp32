@@ -83,9 +83,9 @@ inline const char* Caption(State state, Progress progress = Progress::Command) {
                 case Progress::Saving:
                     return "Saving";
                 case Progress::RetryQueued:
-                    return "Retry queued";
+                    return "Queued";
                 case Progress::PreparingMicrophone:
-                    return "Preparing mic";
+                    return "Mic setup";
             }
             return "";
         case State::Error:

@@ -21,7 +21,8 @@ ASan/UBSan checks, native LVGL caption/menu checks and the QR-enabled StopWatch
 build pass. Independent reviewers: `fix_security_review` (security/privacy and
 provider effects) and `fix_simplicity_review` (display idioms, complexity, cruft).
 The native caption sizing check caught a two-line microphone caption exceeding
-74 points; the reviewed single-line “Preparing mic” fits. Historical
+74 points. Actual ring captures then exposed interference with longer labels;
+“Mic setup” and “Queued” keep the text clear of the inner circle. Historical
 350/354 results below are superseded by the 1 October repair checkpoint's
 356/356 host pass; they are retained as the original Stock evidence.
 
