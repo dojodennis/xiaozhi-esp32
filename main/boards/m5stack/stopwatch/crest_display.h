@@ -23,6 +23,7 @@ class OrbitCrestDisplay final : public SpiLcdDisplay {
     std::array<lv_obj_t*, 3> rings_{};
     lv_timer_t* animation_timer_ = nullptr;
     State state_ = State::Boot;
+    OrbitCrest::Progress progress_ = OrbitCrest::Progress::Command;
     OrbitCrest::Frame frame_;
     OrbitCrest::Frame transition_from_;
     uint32_t transition_ms_ = 0;
@@ -156,7 +157,8 @@ class OrbitCrestDisplay final : public SpiLcdDisplay {
             lv_arc_set_bg_angles(ring, state_ == State::Error ? 12 : 0,
                                  state_ == State::Error ? 348 : 360);
         }
-        const char* text = state_ == State::Result ? result_caption_ : OrbitCrest::Caption(state_);
+        const char* text =
+            state_ == State::Result ? result_caption_ : OrbitCrest::Caption(state_, progress_);
         if (kReducedMotion && state_ == State::Listening)
             text = "Listening";
         if (kReducedMotion && state_ == State::Speaking)
@@ -295,6 +297,8 @@ public:
             return;
         DisplayLockGuard lock(this);
         State state = StateForStatus(status);
+        if (state == State::Thinking)
+            progress_ = OrbitCrest::ProgressForStatus(status);
         if (state == State::Idle && (reply_received_ || result_caption_[0])) {
             if (!result_caption_[0])
                 result_caption_ = speech_seen_ ? "Answered" : "Reply received";
@@ -304,8 +308,10 @@ public:
         } else if (state != State::Speaking && state != State::Thinking && state != State::Idle) {
             ClearResultLocked();
         }
-        if (state_ == state)
+        if (state_ == state) {
+            RenderLocked();
             return;
+        }
         ChangeStateLocked(state);
         last_status_update_time_ = std::chrono::system_clock::now();
     }

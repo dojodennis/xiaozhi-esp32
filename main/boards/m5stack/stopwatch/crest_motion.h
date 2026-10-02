@@ -22,6 +22,19 @@ constexpr uint8_t kActiveStarOpacity = 224;
 
 enum class State { Boot, Connecting, Idle, Listening, Thinking, Speaking, Error, Result };
 
+// These operations share the waiting animation, but must keep truthful captions.
+enum class Progress { Command, Saving, RetryQueued, PreparingMicrophone };
+
+inline Progress ProgressForStatus(const char* status) {
+    if (status && !std::strcmp(status, "Saving"))
+        return Progress::Saving;
+    if (status && !std::strcmp(status, "Retry queued"))
+        return Progress::RetryQueued;
+    if (status && !std::strcmp(status, "Preparing microphone"))
+        return Progress::PreparingMicrophone;
+    return Progress::Command;
+}
+
 struct Frame {
     std::array<int, 3> radii{120, 154, 184};
     std::array<uint8_t, 3> opacity{0, 0, 0};
@@ -57,13 +70,23 @@ inline bool UsesRings(State state) {
     return state == State::Listening || state == State::Thinking || state == State::Speaking;
 }
 
-inline const char* Caption(State state) {
+inline const char* Caption(State state, Progress progress = Progress::Command) {
     switch (state) {
         case State::Boot:
             return "Starting";
         case State::Connecting:
             return "Connecting";
         case State::Thinking:
+            switch (progress) {
+                case Progress::Command:
+                    return "Thinking";
+                case Progress::Saving:
+                    return "Saving";
+                case Progress::RetryQueued:
+                    return "Queued";
+                case Progress::PreparingMicrophone:
+                    return "Mic setup";
+            }
             return "";
         case State::Error:
             return "Please try again";

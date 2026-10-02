@@ -94,7 +94,25 @@ int main() {
     assert(meter.sampled_ms == 42);
     meter.Observe(nullptr, 0, 43);
     assert(meter.mean_absolute == 0);
-    assert(std::strcmp(Caption(State::Thinking), "") == 0);
+    assert(std::strcmp(Caption(State::Thinking), "Thinking") == 0);
+    for (const auto* status : {"Working", "Saving", "Retry queued", "Preparing microphone"}) {
+        const auto progress = ProgressForStatus(status);
+        const char* expected = std::strcmp(status, "Working") == 0 ? "Thinking" :
+            std::strcmp(status, "Preparing microphone") == 0 ? "Mic setup" :
+            std::strcmp(status, "Retry queued") == 0 ? "Queued" : status;
+        assert(std::strcmp(Caption(State::Thinking, progress), expected) == 0);
+        // A delayed response preserves the caption; terminal/cancel states
+        // cannot inherit it, regardless of the preceding waiting operation.
+        for (uint32_t t : {0U, 4000U, 30000U}) {
+            (void)Rings(State::Thinking, t, 0, false);
+            assert(std::strcmp(Caption(State::Thinking, progress), expected) == 0);
+        }
+        assert(Caption(State::Idle, progress)[0] == '\0');
+        assert(Caption(State::Speaking, progress)[0] == '\0');
+        assert(Caption(State::Result, progress)[0] == '\0');
+        assert(std::strcmp(Caption(State::Error, progress), "Please try again") == 0);
+        assert(std::strcmp(Caption(State::Connecting, progress), "Connecting") == 0);
+    }
     assert(std::strcmp(ResultCaption("No match"), "No match") == 0);
     assert(std::strcmp(ResultCaption("wi-fi saved — reconnecting"), "Wi-Fi saved\nReconnecting") == 0);
     assert(std::strcmp(ResultCaption("setup closed — retrying saved wi-fi"), "Setup closed\nRetrying saved Wi-Fi") == 0);

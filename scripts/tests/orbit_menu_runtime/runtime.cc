@@ -118,6 +118,44 @@ int main(int argc, char** argv) {
     ProvisionsStopWatch::StyleVoiceCaption(hint, false);
     Advance(10);
     assert(lv_obj_get_height(hint) == 74);  // Voice/error state restores full caption space.
+    // Real production font/style must fit every allowlisted progress caption.
+    // Paint the production waiting frame so captures include its actual rings.
+    const auto waiting = OrbitCrest::Rings(OrbitCrest::State::Thinking, 1400, 0, false);
+    lv_obj_set_style_image_opa(band, waiting.band_opacity, 0);
+    lv_obj_set_style_image_opa(star, waiting.star_opacity, 0);
+    std::vector<lv_obj_t*> progress_rings;
+    for (int i = 0; i < 3; ++i) {
+        auto* ring = lv_arc_create(screen);
+        lv_obj_remove_style_all(ring);
+        lv_obj_set_size(ring, waiting.radii[i] * 2, waiting.radii[i] * 2);
+        lv_obj_center(ring);
+        lv_obj_set_style_arc_width(ring, 3, LV_PART_MAIN);
+        lv_obj_set_style_arc_opa(ring, LV_OPA_TRANSP, LV_PART_INDICATOR);
+        lv_obj_set_style_arc_color(ring, lv_color_hex(waiting.color), LV_PART_MAIN);
+        lv_obj_set_style_arc_opa(ring, waiting.opacity[i], LV_PART_MAIN);
+        lv_arc_set_rotation(ring, 0);
+        lv_arc_set_bg_angles(ring, 0, 360);
+        progress_rings.push_back(ring);
+    }
+    lv_obj_move_foreground(star);
+    lv_obj_move_foreground(hint);
+    for (const char* status : {"Working", "Saving", "Retry queued", "Preparing microphone"}) {
+        const auto* caption =
+            OrbitCrest::Caption(OrbitCrest::State::Thinking, OrbitCrest::ProgressForStatus(status));
+        lv_label_set_text(hint, caption);
+        lv_point_t text_size{};
+        lv_text_get_size(&text_size, caption, &font_noto_sans_basic_30_4, 0, 3, 280,
+                         LV_TEXT_FLAG_NONE);
+        assert(text_size.x <= 160 && text_size.y <= 74);  // Inside the inner ring.
+        Advance(10);
+        assert(!std::strcmp(lv_label_get_text(hint), caption));
+        Save(output / (std::string("progress-") + status + ".ppm"));
+    }
+    for (auto* ring : progress_rings)
+        lv_obj_delete(ring);
+    for (auto* mark : {band, star})
+        lv_obj_set_style_image_opa(mark, LV_OPA_COVER, 0);
+    lv_label_set_text(hint, ProvisionsStopWatch::kStockReadyCaption);
     ProvisionsStopWatch::StyleVoiceCaption(hint, true);
     Advance(10);
     assert(Frame() == stock_ready);  // Returning from a reply restores Stock.

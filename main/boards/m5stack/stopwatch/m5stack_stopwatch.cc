@@ -292,6 +292,7 @@ private:
     uint32_t crest_result_started_ms_ = 0;
     uint32_t crest_result_hold_ms_ = 0;
     const char* crest_result_caption_ = "";
+    OrbitCrest::Progress crest_progress_ = OrbitCrest::Progress::Command;
     const char* crest_displayed_caption_ = nullptr;
     bool crest_reply_received_ = false;
     bool crest_speech_seen_ = false;
@@ -512,7 +513,7 @@ private:
         const char* text = stock_ready ? ProvisionsStopWatch::kStockReadyCaption
                            : crest_state_ == OrbitCrest::State::Result
                                ? crest_result_caption_
-                               : OrbitCrest::Caption(crest_state_);
+                               : OrbitCrest::Caption(crest_state_, crest_progress_);
         if (crest_displayed_caption_ != text) {
             lv_label_set_text_static(crest_caption_, text);
             crest_displayed_caption_ = text;
@@ -1859,6 +1860,8 @@ private:
         // STT still reports Listening during Saving. Hold yellow must not win.
         if (dictation_saving_ && state == VisualState::kListening)
             state = VisualState::kWorking;
+        if (dictation_saving_ && state == VisualState::kWorking)
+            crest_progress_ = OrbitCrest::Progress::Saving;
         ClearReplyLocked();
         const auto presentation = PresentationFor(state);
         const lv_color_t color = lv_color_hex(presentation.color);
@@ -1883,6 +1886,8 @@ private:
             }
             if (crest_state_ != crest_state)
                 ChangeCrestStateLocked(crest_state);
+            else
+                RenderCrestLocked();
         }
         SetReplyLayoutLocked(false);
         last_status_update_time_ = std::chrono::system_clock::now();
@@ -2662,7 +2667,10 @@ public:
             if (notification_timer_ != nullptr) {
                 esp_timer_stop(notification_timer_);
             }
-            ApplyVisualState(state);
+            DisplayLockGuard lock(this);
+            if (state == VisualState::kWorking)
+                crest_progress_ = OrbitCrest::ProgressForStatus(status);
+            ApplyVisualStateLocked(state);
             return;
         }
         if (receipt_visible_.load() &&
