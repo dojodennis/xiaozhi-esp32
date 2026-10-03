@@ -17,6 +17,7 @@ class ServiceNavigationTests(unittest.TestCase):
                 method(service, "void Application::StopOrbitServiceCapture()"),
                 method(service, "void Application::PaintOrbitService()"),
                 method(service, "void Application::SelectOrbitService()"),
+                method(service, "void Application::OrbitServiceFrame("),
             ]
         )
         # Compile the actual view-routing branches, excluding unrelated list data rendering.
@@ -33,10 +34,21 @@ class ServiceNavigationTests(unittest.TestCase):
 #include <vector>
 
 namespace provisions {
+struct VoiceId { unsigned value=0; };
+bool operator!=(const VoiceId& left, const VoiceId& right) {
+    return left.value!=right.value;
+}
+// Discard parsing/storage has its own production regression harness.
+bool ParseVoiceId(const char*, VoiceId&) { return false; }
 namespace dictation {
 enum class State { Open, Reviewed };
 enum class Action { None, Start, Stop };
-struct Record { State state=State::Open; Action pending=Action::None; unsigned count=0; };
+struct Record {
+    State state=State::Open;
+    Action pending=Action::None;
+    unsigned count=0;
+    VoiceId id;
+};
 }
 struct Recorder {
     dictation::Record record;
@@ -51,6 +63,8 @@ struct Recorder {
     unsigned PendingCount() { return 0; }
     bool DictationBusy() { return false; }
     bool DictationFaulted() { return false; }
+    bool DictationDiscardPending() { return false; }
+    bool RequestDiscardedDictation(const VoiceId&) { return false; }
 };
 }
 
@@ -58,6 +72,7 @@ struct Paint { std::string title, focus; int menu_page=-1; };
 Paint painted;
 unsigned paint_count=0;
 void ProvisionsHideOrbitWifiSetup() {}
+void ProvisionsShowOrbitServicePair(const std::string&) {}
 void ProvisionsShowOrbitMenu(uint8_t page) {
     painted={"Chef menu", "", page}; ++paint_count;
 }
@@ -76,8 +91,13 @@ struct Board {
 };
 struct Settings {
     static inline unsigned writes=0;
+    static inline std::string key;
+    static inline int value=-1;
     Settings(const char*, bool) {}
-    void SetInt(const char*, int value) { assert(value==1); ++writes; }
+    void SetInt(const char* next_key, int next_value) {
+        assert(next_value==0 || next_value==1);
+        key=next_key; value=next_value; ++writes;
+    }
 };
 struct WebsocketProtocol {
     bool opened=true;
@@ -85,6 +105,7 @@ struct WebsocketProtocol {
     bool IsAudioChannelOpened() { return opened; }
     bool RequestChefMode() { ++chef_requests; return opened; }
     void CloseAudioChannel() { opened=false; ++closed; }
+    void InterruptStoredRecording() {}
 };
 struct Audio { bool IsLocalRecordingReady(unsigned) { return true; } };
 struct Press { unsigned id() { return 1; } };
@@ -94,7 +115,7 @@ struct Application {
     std::atomic<bool> orbit_service_mode_{true}, orbit_service_recording_{true};
     std::atomic<bool> manual_listening_requested_{true}, provisions_network_busy_{false};
     std::atomic<bool> dictation_screen_{true};
-    bool wifi=false, orbit_service_ready_=true;
+    bool wifi=false, orbit_service_ready_=true, orbit_service_recovery_=false;
     std::string orbit_service_code_, orbit_service_status_, orbit_service_table_="3";
     uint8_t orbit_menu_index_=4;
     unsigned provisions_reconnect_wait_ticks_=3, fenced=0, ended=0;
@@ -131,6 +152,7 @@ struct Application {
     void StopOrbitServiceCapture();
     void PaintOrbitService();
     void SelectOrbitService();
+    void OrbitServiceFrame(const std::string&, const std::string& detail="");
 };
 
 __PRODUCTION__
@@ -195,6 +217,55 @@ int main() {
     assert(chef.dictation_screen_ && !chef.orbit_service_recording_);
     assert(Settings::writes==1 && chef.protocol->closed==1);
     assert(painted.title=="Service" && chef.provisions_recorder_->stops==0);
+
+    // Return from Service uses the authenticated queued ACK, not yellow alone.
+    chef.protocol->opened=true;
+    chef.HandleOrbitMenuBlueOnMain();
+    assert(chef.orbit_view_==View::Menu && chef.orbit_menu_index_==4);
+    assert(chef.ConfirmOrbitMenu()); chef.DrainBatch();
+    assert(chef.protocol->chef_requests==1 && chef.IsOrbitService());
+    assert(Settings::writes==1 && chef.protocol->closed==1);
+
+    // A Chef ACK cannot interrupt an active recording.
+    chef.orbit_service_recording_=true;
+    const auto capturing_paints=paint_count;
+    chef.OrbitServiceFrame("chef"); chef.DrainBatch();
+    assert(chef.IsOrbitService() && chef.orbit_service_recording_);
+    assert(chef.orbit_view_==View::Menu && chef.orbit_menu_index_==4);
+    assert(Settings::writes==1 && chef.protocol->closed==1);
+    assert(paint_count==capturing_paints);
+
+    chef.orbit_service_recording_=false;
+    chef.orbit_service_code_="old-pairing-code";
+    chef.OrbitServiceFrame("chef");
+    assert(chef.IsOrbitService() && chef.queue.size()==1);
+    assert(Settings::writes==1 && chef.orbit_menu_index_==4);
+    chef.DrainBatch();
+    assert(!chef.IsOrbitService() && !chef.orbit_service_ready_);
+    assert(chef.orbit_service_code_.empty() && !chef.dictation_screen_);
+    assert(Settings::writes==2 && Settings::key=="dojo_service" && Settings::value==0);
+    assert(chef.protocol->closed==2 && chef.provisions_reconnect_wait_ticks_==0);
+    assert(chef.orbit_view_==View::Menu && chef.orbit_menu_index_==0);
+    assert(painted.title=="Chef menu" && painted.menu_page==0);
+
+    // Every Chef destination remains reachable after the actual mode transition.
+    for(uint8_t page=0;page<4;++page) {
+        assert(chef.orbit_view_==View::Menu && chef.orbit_menu_index_==page);
+        assert(painted.title=="Chef menu" && painted.menu_page==page);
+        chef.ConfirmOrbitMenu(); chef.DrainBatch();
+        assert(chef.orbit_view_==targets[page] && !chef.IsOrbitService());
+        chef.HandleOrbitMenuBlueOnMain();
+        assert(chef.orbit_view_==View::Menu && chef.orbit_menu_index_==page);
+        if(page<3) chef.HandleOrbitMenuBlueOnMain();
+    }
+
+    // A late duplicate ACK must not reset navigation or change persisted state.
+    const auto stale_paints=paint_count;
+    chef.OrbitServiceFrame("chef");
+    assert(chef.queue.size()==1); chef.DrainBatch();
+    assert(chef.orbit_view_==View::Menu && chef.orbit_menu_index_==3);
+    assert(Settings::writes==2 && chef.protocol->closed==2);
+    assert(paint_count==stale_paints);
 }
 '''
         program = (

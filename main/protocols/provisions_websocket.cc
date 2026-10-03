@@ -302,7 +302,8 @@ void ProvisionsWebSocket::OnDisconnected(std::function<void()> callback) {
     state_->on_disconnected = std::move(callback);
 }
 bool ProvisionsWebSocket::Connect(const char* uri) {
-    if (!uri || std::string(uri) != ProvisionsEndpointPolicy::WebsocketUrl())
+    if (!uri || (std::string(uri) != ProvisionsEndpointPolicy::WebsocketUrl() &&
+                 std::string(uri) != ProvisionsEndpointPolicy::ServiceWebsocketUrl()))
         return false;
     std::unique_lock<std::mutex> lock(state_->mutex);
     if (state_->started || state_->cancelled.load())
