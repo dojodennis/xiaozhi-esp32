@@ -75,6 +75,17 @@ claimed. Current source correction is ready for the controlled Ring2 update;
 the prior reported chooser is the last observed application screen, while actual
 USB mode and current flash identity must be freshly verified before a write.
 
+Independent package/procedure checkpoint — 3 October — chef_return_review: GO,
+no findings. Both new and prior signatures verify with the accepted public key;
+all2432 configuration entries (1335 active plus1097 disabled), dependencies,
+partition and1931 source-archive files match their expected identities. Prepared
+app-only procedure SHAede9f54ea73e81441e7fa2ed58f86588ec32473829640935a6e38e2b43e023a5;
+fresh recovery/full-flash checks and one0x20000 app write remain unchanged from
+the reviewed prior procedure. Source review: draftPR18; package19-file checksum
+manifest and independent receipt saved beside HANDOFF.md. No USB operation or
+new backup exists yet. Next owner Dojo for the exact Ring2 update, then Codex
+for fresh preflight/installation and Dennis for physical acceptance.
+
 ## OS-06 — normal boot confirmed, 2 October 2026
 
 Dennis confirmed physical reset and the normal face. Codex then observed40seconds
