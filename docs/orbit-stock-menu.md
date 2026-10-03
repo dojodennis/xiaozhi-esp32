@@ -28,9 +28,9 @@ Acceptance:
   malformed addresses rejected before connecting.
 - [x] Actual queued Chef acknowledgement regression: no premature mode change,
   active capture protected, Chef menu and all four destinations reachable.
-- [ ] Independent review and affected QR-enabled firmware build; size/signature
+- [x] Independent review and affected QR-enabled firmware build; size/signature
   and configuration/dependency/partition preservation verified.
-- [ ] Push source and save the exact installation/rollback handoff.
+- [x] Push source and save the exact installation/rollback handoff.
 - [ ] Separately record installation, normal boot and Dennis's physical return.
 
 For Dennis: no DOWNLOAD/reset or app action during engineering. After the exact
@@ -60,6 +60,20 @@ failed/skipped cJSON fixtures; it is not a firmware regression. A fresh test
 starts after complete dependency preparation. The SDK's process enumeration was
 blocked by the sandbox before compilation; the ordinary build retry uses the
 required wider process permission, without a device or deployment operation.
+
+Engineering checkpoint — 3 October — compiled/pushed 9aa45edb81979fab0bef0896486edfc348270d65.
+The prepared full host suite passes359/359 with no skips. The permitted
+ESP-IDF6.0.2 QR-enabled StopWatch build passes; all1335 configuration values,
+dependency lock and partition binary match the installed27ae4a0 build. Signed
+app SHA142f82305a98eaf1aba6236ee1e6f8a2c048f82f88f2509d0de8dcc6faecac9f;
+4,067,328 bytes,61,440 bytes headroom. Accepted-key signature, unsigned-prefix
+and1931-file source archive checks pass. Existing key used in place only.
+Package and controlled preflight/rollback handoff:
+/Users/dojo/yacht-Provisions-ios/Provisions/tmp/orbit-chef-return-9aa45ed/HANDOFF.md.
+No firmware installation, boot, physical acceptance, server change or merge is
+claimed. Current source correction is ready for the controlled Ring2 update;
+the prior reported chooser is the last observed application screen, while actual
+USB mode and current flash identity must be freshly verified before a write.
 
 ## OS-06 — normal boot confirmed, 2 October 2026
 
