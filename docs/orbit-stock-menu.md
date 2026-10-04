@@ -39,13 +39,18 @@ Acceptance:
   exposed a missing Mode interface in the older voice-retry fixture. Repaired
   only that fixture; independent sanitizer addendum GO, original assertions
   retained and Mode gesture/release coverage added. Production hashes unchanged.
-- [ ] Save/push exact source, signed package and controlled installation handoff.
+- [x] Exact clean source005c549 is pushed; signed package and app-only procedure
+  independently verify GO. Existing draft source review and readiness evidence
+  record signatures, source archive, rollback baseline and separate approval.
 - [ ] Separately authorized installation, fresh boot and Dennis's physical role check.
 
-For Dennis: no action during implementation. Leave Ring2 in normal application
-mode; no app, DOWNLOAD or reset requested. Codex prepares one exact installation
-package and hands-on test. Next owner Codex. Dependencies: Dennis's product choice
-is resolved; existing installed source is the integration baseline.
+For Dennis: Dennis explicitly asks Codex to update Ring2; installation approval
+is resolved. The USB modem is absent from the Mac. Connect Ring2 by USB, leave
+it powered on in normal application mode and reply connected. No phone app or
+DOWNLOAD button press requested. Codex completes offline package review, then
+fresh exact-device/prior-app/security/validated-slot/full-backup checks before
+the approved app-only write. Next owner Dojo for connection; Codex owns all
+engineering and device checks. Physical role/theme/stock acceptance stays open.
 
 Change log — 4 October — OS-06-NAV-02 — Codex: recorded Dennis's explicit role/
 button-combination direction, separated it from the completed Chef-return write
@@ -66,6 +71,19 @@ partitions, bootloader and assets. Final full host suite 366/366 passes without 
 reviewed test-only fixture repair. Source checkpoint, signing/package review,
 separate installation and physical acceptance remain.
 No device, server, artwork or Ring1 change.
+
+Change log — 4 October — OS-06-NAV-02 — Codex: exact clean source
+005c5498251d786e37f1fe4c3ec9e813b124ff28 is committed and pushed; [draft source
+review](https://github.com/dojodennis/xiaozhi-esp32/pull/19). Clean rebuild and all
+366 host tests pass. Signed app74953a62 is4,067,328B with61,440B OTA0headroom;
+accepted-key signature, unchanged unsigned prefix and1,931-file source archive
+verify. Package prepared at Provisions/tmp/orbit-role-selector-005c549; private
+key used in place without copying. [Readiness evidence](evidence/orbit-role-selector-ready-20261004.json).
+Dennis subsequently requested the Ring2 update, superseding the no-installation-
+approval status. Fresh USB check finds no modem device, so no preflight, reset,
+backup or write has occurred. Independent offline package/procedure review GO; current checksum checkpoint
+and USB connection remain before preflight.
+The user connection request is saved; no repeated approval needed.
 
 ## Current snapshot — OS-06-NAV-01 installed, 4 October 2026
 
