@@ -335,7 +335,8 @@ void Application::ServiceDictation() {
     }
     if (IsOrbitWifiSetup())
         return;
-    if (orbit_view_.load() == OrbitView::Menu || orbit_view_.load() == OrbitView::Notes)
+    if (orbit_view_.load() == OrbitView::Menu || IsOrbitModeChoice() ||
+        orbit_view_.load() == OrbitView::Notes)
         return;
     if (orbit_view_.load() == OrbitView::Shopping) {
         if (g_shopping_scroll > 0 &&
@@ -395,6 +396,20 @@ bool Application::IsOrbitMenuFace() const {
     return orbit_view_.load() == OrbitView::Menu;
 }
 
+bool Application::IsOrbitModeChoice() const { return orbit_view_.load() == OrbitView::ModeChoice; }
+
+void Application::ShowOrbitModeChoice(std::function<bool()> still_allowed) {
+    Schedule([this, still_allowed = std::move(still_allowed)]() {
+        if ((still_allowed && !still_allowed()) || !CanSelectOrbitMode())
+            return;
+        orbit_mode_choice_service_ = IsOrbitService();
+        ProvisionsHideOrbitWifiSetup();
+        LeaveDictationScreenOnMain();
+        orbit_view_.store(OrbitView::ModeChoice);
+        PaintOrbitView();
+    });
+}
+
 bool ProvisionsListenShopping() {
     return Application::GetInstance().IsOrbitShoppingFace();
 }
@@ -439,11 +454,15 @@ void Application::HandleShoppingSwipe(bool down) {
 bool Application::ConfirmOrbitMenu() {
     if (IsOrbitWifiSetup())
         return true;
+    if (IsOrbitModeChoice()) {
+        Schedule([this]() { ConfirmOrbitMenuOnMain(); });
+        return true;
+    }
     if (IsOrbitService() && orbit_view_.load() != OrbitView::Menu)
         return true;
     if (orbit_view_.load() != OrbitView::Menu)
         return false;
-    const bool consumes_press = orbit_menu_index_ == 1 || orbit_menu_index_ == 4;
+    const bool consumes_press = orbit_menu_index_ == 1;
     Schedule([this]() { ConfirmOrbitMenuOnMain(); });
     return consumes_press;
 }
@@ -454,9 +473,9 @@ void Application::StartOrbitWifiSetup(std::function<bool()> still_allowed) {
         // A saved network may be unavailable at boot. The menu is usable while
         // starting, and QR setup must let the chef replace that network.
         const auto state = GetDeviceState();
-        if (!still_allowed() || !IsOrbitMenuFace() || provisions_timer_ringing_ ||
-            IsOrbitWifiSetup() ||
-            (state != kDeviceStateIdle && state != kDeviceStateStarting) ||
+        if (!still_allowed() || (!IsOrbitMenuFace() && !IsOrbitModeChoice()) ||
+            (IsOrbitModeChoice() && !CanSelectOrbitMode()) || provisions_timer_ringing_ ||
+            IsOrbitWifiSetup() || (state != kDeviceStateIdle && state != kDeviceStateStarting) ||
             manual_listening_requested_.load() || provisions_network_busy_.load() ||
             provisions_response_pending_.load() || provisions_recording_saving_.load() ||
             !audio_service_.IsPlaybackIdle() || timer_player_.Fenced())
@@ -470,7 +489,7 @@ void Application::StartOrbitWifiSetup(std::function<bool()> still_allowed) {
                 orbit_wifi_setup_.store(false);
                 ProvisionsHideOrbitWifiSetup();
                 SetDeviceState(kDeviceStateIdle);
-                orbit_view_.store(OrbitView::Menu);
+                orbit_view_.store(IsOrbitService() ? OrbitView::Service : OrbitView::Menu);
                 if (IsOrbitService())
                     dictation_screen_.store(true);
                 PaintOrbitView();
@@ -500,6 +519,11 @@ void Application::HandleOrbitMenuBlueOnMain() {
         CancelOrbitWifiSetup();
         return;
     }
+    if (IsOrbitModeChoice()) {
+        orbit_mode_choice_service_ = !orbit_mode_choice_service_;
+        PaintOrbitView();
+        return;
+    }
     if (IsOrbitService()) {
         if (!orbit_service_code_.empty()) {
             orbit_service_code_.clear();
@@ -507,14 +531,12 @@ void Application::HandleOrbitMenuBlueOnMain() {
         }
         if (orbit_service_recording_.load())
             StopOrbitServiceCapture();
-        orbit_menu_index_ = 4;
-        orbit_view_.store(orbit_view_.load() == OrbitView::Menu ? OrbitView::Service
-                                                                : OrbitView::Menu);
+        orbit_view_.store(OrbitView::Service);
         PaintOrbitView();
         return;
     }
     if (orbit_view_.load() == OrbitView::Menu) {
-        orbit_menu_index_ = static_cast<uint8_t>((orbit_menu_index_ + 1) % 5);
+        orbit_menu_index_ = static_cast<uint8_t>((orbit_menu_index_ + 1) % 4);
         PaintOrbitView();
         return;
     }
@@ -560,12 +582,25 @@ void Application::OpenOrbitStockOnMain() {
 }
 
 void Application::ConfirmOrbitMenuOnMain() {
-    if (orbit_view_.load() != OrbitView::Menu)
-        return;
-    if (orbit_menu_index_ == 4) {
-        SelectOrbitService();
+    if (IsOrbitModeChoice()) {
+        if (!CanSelectOrbitMode()) {
+            Board::GetInstance().GetDisplay()->ShowNotification("Finish syncing before switching");
+            return;
+        }
+        if (orbit_mode_choice_service_ != IsOrbitService()) {
+            SelectOrbitService();
+            return;
+        }
+        orbit_view_.store(IsOrbitService() ? OrbitView::Service : OrbitView::Menu);
+        if (IsOrbitService())
+            dictation_screen_.store(true);
+        PaintOrbitView();
         return;
     }
+    if (orbit_view_.load() != OrbitView::Menu)
+        return;
+    if (IsOrbitService())
+        return;
     if (orbit_menu_index_ == 0)
         OpenOrbitShoppingOnMain();
     else if (orbit_menu_index_ == 2)
@@ -580,6 +615,11 @@ void Application::HandleOrbitFaceSwipe(bool right) {
     Schedule([this, right]() {
         if (IsOrbitWifiSetup())
             return;
+        if (IsOrbitModeChoice()) {
+            orbit_mode_choice_service_ = !orbit_mode_choice_service_;
+            PaintOrbitView();
+            return;
+        }
         if (IsOrbitService()) {
             HandleOrbitMenuBlueOnMain();
             return;
@@ -587,7 +627,7 @@ void Application::HandleOrbitFaceSwipe(bool right) {
         // The menu is its own pager: a sideways swipe flips the logo
         // and stays there until yellow confirms.
         if (orbit_view_.load() == OrbitView::Menu) {
-            orbit_menu_index_ = static_cast<uint8_t>((orbit_menu_index_ + (right ? 1 : 4)) % 5);
+            orbit_menu_index_ = static_cast<uint8_t>((orbit_menu_index_ + (right ? 1 : 3)) % 4);
             PaintOrbitView();
             return;
         }
@@ -898,16 +938,20 @@ void Application::PaintOrbitView() {
         return;
     }
     if (view == OrbitView::Service) {
-        PaintOrbitService();
+        if (!IsOrbitWifiSetup() && !orbit_service_code_.empty())
+            ProvisionsShowOrbitServicePair("dojo-orbit://pair?code=" + orbit_service_code_);
+        else
+            PaintOrbitService();
+        return;
+    }
+    if (view == OrbitView::ModeChoice) {
+        ProvisionsShowShoppingFocus("Choose Orbit mode",
+                                    orbit_mode_choice_service_ ? "Service" : "Chef",
+                                    "blue / swipe selects · yellow confirms",
+                                    orbit_mode_choice_service_ ? "Dojo" : "Provisions");
         return;
     }
     if (view == OrbitView::Menu) {
-        if (orbit_menu_index_ == 4) {
-            ProvisionsShowShoppingFocus("", IsOrbitService() ? "Chef" : "Service",
-                                        "press yellow to select",
-                                        IsOrbitService() ? "Provisions" : "Dojo");
-            return;
-        }
         ProvisionsShowOrbitMenu(orbit_menu_index_);
         return;
     }

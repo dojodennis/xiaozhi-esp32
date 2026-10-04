@@ -35,11 +35,12 @@ struct RoundLcdDisplay {
     __TOGGLE__
 };
 struct Application {
-    bool menu=true, wifi=false, dictation=false, service=false;
+    bool menu=true, wifi=false, dictation=false, service=false, mode=false;
     int retries=0, aborts=0, pairs=0;
     std::deque<std::function<void()>> queue;
     static Application& GetInstance(){static Application app; return app;}
     bool IsOrbitMenuFace(){return menu;}
+    bool IsOrbitModeChoice(){return mode;}
     bool IsOrbitService(){return service;}
     void OrbitServicePairing(){++pairs;}
     bool IsOrbitWifiSetup(){return wifi;}
@@ -86,10 +87,13 @@ int main(){
     app.wifi=false;app.menu=false;app.dictation=true;
     int retries=app.retries;board.button2_.hold();app.Drain();assert(app.retries==retries);
     app.dictation=false;board.button2_.hold();app.Drain();assert(app.retries==retries+1);
-    // Service keeps the menu's existing theme hold; pairing belongs to its face.
-    app.service=true;app.menu=true;app.dictation=true;
+    // Theme stays on the Chef menu; the separate mode chooser cannot trigger pairing.
+    app.menu=true;app.dictation=true;
     const int writes=Settings::writes;board.button2_.hold();app.Drain();
     assert(Settings::writes==writes+1&&app.pairs==0);
+    app.service=true;app.menu=false;app.mode=true;
+    board.button2_.hold();app.Drain();assert(Settings::writes==writes+1&&app.pairs==0);
+    app.mode=false;
     app.menu=false;board.button2_.hold();app.Drain();assert(app.pairs==1);
     board.display.alarm=true;board.button2_.hold();app.Drain();
     assert(app.pairs==1&&board.display.silenced==2);

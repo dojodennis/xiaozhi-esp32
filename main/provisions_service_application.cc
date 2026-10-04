@@ -16,18 +16,36 @@ int64_t ServiceNow() {
 }
 }  // namespace
 
-void Application::SelectOrbitService() {
-    auto recorder = std::atomic_load(&provisions_recorder_);
-    if (!recorder || IsOrbitWifiSetup() || manual_listening_requested_.load() ||
-        provisions_network_busy_.load() || recorder->CaptureOpen() || recorder->PendingCount() ||
-        recorder->DictationBusy() || recorder->DictationFaulted()) {
-        Board::GetInstance().GetDisplay()->ShowNotification("Finish syncing before switching");
-        return;
+bool Application::CanSelectOrbitMode() {
+    if (orbit_mode_switch_pending_) {
+        auto protocol = GetProtocol();
+        if (protocol && protocol->IsAudioChannelOpened() &&
+            protocol->session_id() == orbit_mode_switch_session_)
+            return false;
+        // A failed/replaced connection releases the choice for an explicit retry.
+        orbit_mode_switch_pending_ = false;
+        orbit_mode_switch_session_.clear();
     }
+    auto recorder = std::atomic_load(&provisions_recorder_);
+    const auto state = GetDeviceState();
+    if (!recorder || IsOrbitWifiSetup() || manual_listening_requested_.load() ||
+        provisions_network_busy_.load() || provisions_response_pending_.load() ||
+        provisions_recording_saving_.load() || orbit_service_recording_.load() ||
+        provisions_timer_ringing_ || timer_player_.Fenced() ||
+        (state != kDeviceStateIdle && state != kDeviceStateStarting) ||
+        !audio_service_.IsPlaybackIdle() || !audio_service_.IsLocalInputIdle() ||
+        recorder->CaptureOpen() || recorder->PendingCount() || recorder->DictationBusy() ||
+        recorder->DictationFaulted() || recorder->DictationDiscardPending())
+        return false;
     const auto record = recorder->DictationRecord();
-    if (record.pending != provisions::dictation::Action::None ||
-        (record.count && record.state != provisions::dictation::State::Reviewed)) {
-        Board::GetInstance().GetDisplay()->ShowNotification("Finish the recording first");
+    return record.pending == provisions::dictation::Action::None &&
+           (record.state == provisions::dictation::State::Empty ||
+            record.state == provisions::dictation::State::Reviewed);
+}
+
+void Application::SelectOrbitService() {
+    if (!CanSelectOrbitMode()) {
+        Board::GetInstance().GetDisplay()->ShowNotification("Finish syncing before switching");
         return;
     }
     auto protocol = GetProtocol();
@@ -36,8 +54,12 @@ void Application::SelectOrbitService() {
     if (IsOrbitService()) {
         orbit_service_status_ = "Confirming Chef mode";
         // Keep Service selected until the bound gateway confirms the change.
-        if (!static_cast<WebsocketProtocol*>(protocol.get())->RequestChefMode())
+        if (static_cast<WebsocketProtocol*>(protocol.get())->RequestChefMode()) {
+            orbit_mode_switch_pending_ = true;
+            orbit_mode_switch_session_ = protocol->session_id();
+        } else {
             orbit_service_status_ = "Connect to switch to Chef";
+        }
         Board::GetInstance().GetDisplay()->ShowNotification(orbit_service_status_.c_str());
         return;
     }
@@ -83,45 +105,59 @@ void Application::OrbitServiceFrame(const std::string& state, const std::string&
         if (state == "chef") {
             if (orbit_service_recording_.load())
                 return;
+            orbit_mode_switch_pending_ = false;
+            orbit_mode_switch_session_.clear();
             orbit_service_mode_.store(false);
             Settings("provisions", true).SetInt("dojo_service", 0);
             orbit_service_ready_ = false;
             orbit_service_code_.clear();
-            ProvisionsHideOrbitWifiSetup();
-            LeaveDictationScreenOnMain();
+            const bool wifi_setup = IsOrbitWifiSetup();
+            if (!wifi_setup) {
+                ProvisionsHideOrbitWifiSetup();
+                LeaveDictationScreenOnMain();
+            }
             if (auto protocol = GetProtocol())
                 protocol->CloseAudioChannel();
             provisions_reconnect_wait_ticks_ = 0;
             orbit_menu_index_ = 0;
+            // A queued ACK remains authoritative after disconnect, but cannot
+            // replace an active Wi-Fi surface. Its finish callback uses this role.
+            if (wifi_setup)
+                return;
             orbit_view_.store(OrbitView::Menu);
             PaintOrbitView();
             return;
         }
         if (state == "pairing") {
-            StopOrbitServiceCapture();
+            if (orbit_service_recording_.load())
+                StopOrbitServiceCapture();
             orbit_service_ready_ = false;
             orbit_service_code_ = detail;
             orbit_service_status_ = "Approve on the Dojo desk";
-            ProvisionsShowOrbitServicePair("dojo-orbit://pair?code=" + detail);
+            if (orbit_view_.load() == OrbitView::Service && !IsOrbitWifiSetup())
+                ProvisionsShowOrbitServicePair("dojo-orbit://pair?code=" + detail);
         } else if (state == "ready" || state == "recovery") {
             orbit_service_recovery_ = state == "recovery";
             orbit_service_ready_ = true;
             orbit_service_code_.clear();
             orbit_service_table_ = detail;
             orbit_service_status_ = "Tap yellow to record";
-            ProvisionsHideOrbitWifiSetup();
-            orbit_view_.store(OrbitView::Service);
-            dictation_screen_.store(true);
+            if (orbit_view_.load() == OrbitView::Service && !IsOrbitWifiSetup()) {
+                ProvisionsHideOrbitWifiSetup();
+                dictation_screen_.store(true);
+            }
         } else if (state == "approved") {
             orbit_service_code_.clear();
-            ProvisionsHideOrbitWifiSetup();
+            if (orbit_view_.load() == OrbitView::Service && !IsOrbitWifiSetup())
+                ProvisionsHideOrbitWifiSetup();
             orbit_service_status_ = "Loading approved table";
             if (auto protocol = GetProtocol())
                 protocol->CloseAudioChannel();
             provisions_reconnect_wait_ticks_ = 0;
         } else if (state == "expired") {
             orbit_service_code_.clear();
-            ProvisionsHideOrbitWifiSetup();
+            if (orbit_view_.load() == OrbitView::Service && !IsOrbitWifiSetup())
+                ProvisionsHideOrbitWifiSetup();
             orbit_service_ready_ = false;
             orbit_service_status_ = "QR expired. Tap to reconnect";
         }
@@ -131,7 +167,8 @@ void Application::OrbitServiceFrame(const std::string& state, const std::string&
 
 void Application::OrbitServicePairing() {
     Schedule([this]() {
-        if (!IsOrbitService() || orbit_service_recording_.load())
+        if (!IsOrbitService() || orbit_view_.load() != OrbitView::Service || IsOrbitWifiSetup() ||
+            orbit_service_recording_.load())
             return;
         auto protocol = GetProtocol();
         if (protocol && protocol->IsAudioChannelOpened())
@@ -146,7 +183,7 @@ void Application::OrbitServicePairing() {
 
 void Application::OrbitServiceTap() {
     Schedule([this]() {
-        if (!IsOrbitService() || orbit_view_.load() == OrbitView::Menu)
+        if (!IsOrbitService() || orbit_view_.load() != OrbitView::Service || IsOrbitWifiSetup())
             return;
         if (orbit_service_recording_.load()) {
             StopOrbitServiceCapture();
