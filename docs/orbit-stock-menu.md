@@ -1,6 +1,64 @@
 # ORBIT-STOCK-01 — Dedicated onboard stock entry
 
-## Current correction — OS-06-NAV-01, 3 October 2026
+## Current snapshot — OS-06-NAV-01 installed, 4 October 2026
+
+Owner: Codex. Dennis explicitly approved the prepared Ring 2 update. Compiled
+source9aa45ed is installed: accepted-key signature, exact Ring2/prior27ae4a0
+identity/security/partition/validated OTA0 checks, fresh full16MiB backup and
+complete prior-slot rollback all pass. App-only write at0x20000 is4,067,328 B;
+signed-app and whole expected flash verification pass, with all outside-app
+bytes preserved. Independent chef_return_review GO for completed receipt and
+recovery; no findings. Immutable package preserved; no server change or merge.
+
+Evidence: [installation receipt](https://github.com/dojodennis/provisions-ios/blob/codex/orbit-menu-install-ledger/docs/evidence/orbit-chef-return-install-20261004.json).
+Recovery remains private in the4October Ring2 backup directory.
+
+- [x] Controlled installation, complete device verification and recovery review.
+- [x] User-observed application startup: Dennis reports “Dojo Service · scan in
+  desk” after the single reset request; DOWNLOAD is no longer current.
+- [ ] Physical navigation/design acceptance: Dennis says it works, then reports
+  a delay and old design. Exact screen/delay clarification and design-lineage
+  comparison remain open; do not infer a complete Chef-menu sign-off.
+
+For Dennis: no phone app, DOWNLOAD or further reset is requested. Answer the
+pending screen/delay clarification. Then blue → Provisions / Chef → quick
+yellow should open the Chef menu, with List, Timers, Notes and Stock reachable.
+Return the observed result. Next owner Dojo for clarification/physical check;
+Codex owns read-only source diagnosis. Stock quantity/age stays separate.
+
+Visual clarification — 4 October — Dennis requires Provisions crest on List,
+Notes and Timers and preservation of the nautical design for the other client.
+Those three nautical pages plus crest Stock match the saved Nausicaä theme:
+menu_theme.h loads orbit_ui/menu_theme, while ShowOrbitMenuLocked always uses
+Crest for Stock. All renderer/assets are unchanged27ae4a0→9aa45ed; no design
+rollback. Saved value is inferred from the reported visuals, not an NVS read.
+Independent chef_navigation_audit confirms source/gesture; existing theme
+persistence and queued-gesture regression passes under sanitizers.
+
+For Dennis — current action: on the Chef MENU with List/Notes/Timers highlighted
+(before opening a section), hold blue about2seconds then release. Swipe through
+all three and report whether each now shows the Provisions crest. Existing
+gesture saves only this ring's theme; nautical artwork remains available. No
+app, DOWNLOAD, reset or firmware change needed. This supersedes the prior
+screen clarification request; visual acceptance awaits the actual result.
+
+Change log — 4 October — OS-06-NAV-01 visual follow-up — Codex and independent
+chef_navigation_audit: traced the exact mixed visual report to per-ring theme
+selection, checked unchanged design ancestry/assets and existing1500ms gesture,
+then prepared the non-flash remedy. No source implementation or device theme
+write; unspecified delay is not a reproduced firmware defect.
+
+Change log — 4 October — OS-06-NAV-01 — Codex: resolved explicit installation
+approval, used the independently reviewed dated procedure, verified exact live
+device and a fresh protected full backup, then wrote only reviewed signed
+source9aa45ed and verified the entire expected device. Independent reviewer
+confirmed recovery and unchanged regions. Saved metadata-only shared evidence;
+no private flash data published. Recorded visible startup and the subsequent
+delay/old-design report; visual/navigation acceptance stays open. Earlier
+approval-pending, unknown-flash and current-DOWNLOAD instructions are superseded
+by this checkpoint, without deleting their history.
+
+## Historical preparation — OS-06-NAV-01, 3 October 2026
 
 Owner: Codex. Related: OS-06 return-to-Chef acceptance and ORBIT-STOCK-01-D.
 Dennis reports that quick yellow on the Provisions / Chef selection card leaves
@@ -31,7 +89,10 @@ Acceptance:
 - [x] Independent review and affected QR-enabled firmware build; size/signature
   and configuration/dependency/partition preservation verified.
 - [x] Push source and save the exact installation/rollback handoff.
-- [ ] Separately record installation, normal boot and Dennis's physical return.
+- [x] Separately record installation and user-observed normal startup: see4October
+  checkpoint and receipt.
+- [ ] Dennis's complete physical navigation/design acceptance: see4October
+  delay/old-design follow-up.
 
 For Dennis: no DOWNLOAD/reset or app action during engineering. After the exact
 reviewed update is installed, open Provisions / Chef on Ring 2 and tap yellow.
