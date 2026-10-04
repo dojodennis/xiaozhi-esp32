@@ -1,5 +1,152 @@
 # ORBIT-STOCK-01 — Dedicated onboard stock entry
 
+## Current snapshot — OS-06-NAV-01 installed, 4 October 2026
+
+Owner: Codex. Dennis explicitly approved the prepared Ring 2 update. Compiled
+source9aa45ed is installed: accepted-key signature, exact Ring2/prior27ae4a0
+identity/security/partition/validated OTA0 checks, fresh full16MiB backup and
+complete prior-slot rollback all pass. App-only write at0x20000 is4,067,328 B;
+signed-app and whole expected flash verification pass, with all outside-app
+bytes preserved. Independent chef_return_review GO for completed receipt and
+recovery; no findings. Immutable package preserved; no server change or merge.
+
+Evidence: [installation receipt](https://github.com/dojodennis/provisions-ios/blob/codex/orbit-menu-install-ledger/docs/evidence/orbit-chef-return-install-20261004.json).
+Recovery remains private in the4October Ring2 backup directory.
+
+- [x] Controlled installation, complete device verification and recovery review.
+- [x] User-observed application startup: Dennis reports “Dojo Service · scan in
+  desk” after the single reset request; DOWNLOAD is no longer current.
+- [ ] Physical navigation/design acceptance: Dennis says it works, then reports
+  a delay and old design. Exact screen/delay clarification and design-lineage
+  comparison remain open; do not infer a complete Chef-menu sign-off.
+
+For Dennis: no phone app, DOWNLOAD or further reset is requested. Answer the
+pending screen/delay clarification. Then blue → Provisions / Chef → quick
+yellow should open the Chef menu, with List, Timers, Notes and Stock reachable.
+Return the observed result. Next owner Dojo for clarification/physical check;
+Codex owns read-only source diagnosis. Stock quantity/age stays separate.
+
+Visual clarification — 4 October — Dennis requires Provisions crest on List,
+Notes and Timers and preservation of the nautical design for the other client.
+Those three nautical pages plus crest Stock match the saved Nausicaä theme:
+menu_theme.h loads orbit_ui/menu_theme, while ShowOrbitMenuLocked always uses
+Crest for Stock. All renderer/assets are unchanged27ae4a0→9aa45ed; no design
+rollback. Saved value is inferred from the reported visuals, not an NVS read.
+Independent chef_navigation_audit confirms source/gesture; existing theme
+persistence and queued-gesture regression passes under sanitizers.
+
+For Dennis — current action: on the Chef MENU with List/Notes/Timers highlighted
+(before opening a section), hold blue about2seconds then release. Swipe through
+all three and report whether each now shows the Provisions crest. Existing
+gesture saves only this ring's theme; nautical artwork remains available. No
+app, DOWNLOAD, reset or firmware change needed. This supersedes the prior
+screen clarification request; visual acceptance awaits the actual result.
+
+Change log — 4 October — OS-06-NAV-01 visual follow-up — Codex and independent
+chef_navigation_audit: traced the exact mixed visual report to per-ring theme
+selection, checked unchanged design ancestry/assets and existing1500ms gesture,
+then prepared the non-flash remedy. No source implementation or device theme
+write; unspecified delay is not a reproduced firmware defect.
+
+Change log — 4 October — OS-06-NAV-01 — Codex: resolved explicit installation
+approval, used the independently reviewed dated procedure, verified exact live
+device and a fresh protected full backup, then wrote only reviewed signed
+source9aa45ed and verified the entire expected device. Independent reviewer
+confirmed recovery and unchanged regions. Saved metadata-only shared evidence;
+no private flash data published. Recorded visible startup and the subsequent
+delay/old-design report; visual/navigation acceptance stays open. Earlier
+approval-pending, unknown-flash and current-DOWNLOAD instructions are superseded
+by this checkpoint, without deleting their history.
+
+## Historical preparation — OS-06-NAV-01, 3 October 2026
+
+Owner: Codex. Related: OS-06 return-to-Chef acceptance and ORBIT-STOCK-01-D.
+Dennis reports that quick yellow on the Provisions / Chef selection card leaves
+the screen unchanged. Ring 2's current installed source is 27ae4a0; the earlier
+Stock-only instructions are historical and do not describe this Service card.
+
+Outcome: the approved Service connection opens, yellow explicitly requests Chef,
+and its authenticated confirmation returns to the Chef menu with List, Timers,
+Notes and Stock reachable. Preserve recording recovery, server acknowledgement,
+current Wi-Fi, signing/partition settings and other agents' work. Exclusions:
+gateway/database deployment, Service pairing changes, stock writes, main merge
+and Ring 1. This continues the existing navigation acceptance, not a new feature.
+
+Concrete diagnosis: installed ProvisionsWebSocket::Connect permits only the
+canonical Chef URL, while WebsocketProtocol selects its canonical /service URL
+in Service mode. The transport rejects that URL before TLS starts. Independently
+reproduced by chef_switch_gateway_audit; existing gateway handling accepts Chef
+switches for unpaired, blocked and bound Service contexts. Also, the successful
+firmware Chef acknowledgement opens List rather than the requested Chef menu,
+independently reproduced by chef_navigation_audit.
+
+Acceptance:
+- [x] Reproduce both installed-source failures independently.
+- [x] Production transport regression: Chef and Service accepted; foreign and
+  malformed addresses rejected before connecting.
+- [x] Actual queued Chef acknowledgement regression: no premature mode change,
+  active capture protected, Chef menu and all four destinations reachable.
+- [x] Independent review and affected QR-enabled firmware build; size/signature
+  and configuration/dependency/partition preservation verified.
+- [x] Push source and save the exact installation/rollback handoff.
+- [x] Separately record installation and user-observed normal startup: see4October
+  checkpoint and receipt.
+- [ ] Dennis's complete physical navigation/design acceptance: see4October
+  delay/old-design follow-up.
+
+For Dennis: no DOWNLOAD/reset or app action during engineering. After the exact
+reviewed update is installed, open Provisions / Chef on Ring 2 and tap yellow.
+Expect the Chef menu; blue/swipe must reach List, Timers, Notes and Stock. Return
+the displayed result. This blocks navigation acceptance, not the already proven
+three-product stock read. Next owner Codex for engineering preparation.
+
+Change log — 3 October — OS-06-NAV-01 — Codex: reconciled current installed
+27ae4a0 and Dennis's chooser-screen report; independent agents reproduced the
+transport refusal and incorrect acknowledgement destination. Prepared isolated
+branch codex/orbit-chef-return from the current candidate's documentation head
+912a1b8. No device/server change. A metadata-only serial read was refused by the
+filesystem sandbox before opening the port; no reset or flash command ran.
+Source evidence is sufficient to proceed with the bounded correction.
+
+Change log — 3 October — OS-06-NAV-01 — Codex: permitted only the exact canonical
+Chef and Service URLs in the low-level transport. On the existing authenticated
+Chef acknowledgement, reset the menu index and show the Chef menu. Test owners
+chef_switch_gateway_audit and chef_navigation_audit reproduced red baselines
+then green actual-method ASan/UBSan regressions; independent chef_return_review
+reports GO with 15 focused tests. TLS, session validation, recording guards,
+persistence and other addresses remain unchanged. Repository formatter23.1.1
+accepts the touched C++ ranges. Full host validation and target build follow.
+An initial broad test started before dependency copying completed and therefore
+failed/skipped cJSON fixtures; it is not a firmware regression. A fresh test
+starts after complete dependency preparation. The SDK's process enumeration was
+blocked by the sandbox before compilation; the ordinary build retry uses the
+required wider process permission, without a device or deployment operation.
+
+Engineering checkpoint — 3 October — compiled/pushed 9aa45edb81979fab0bef0896486edfc348270d65.
+The prepared full host suite passes359/359 with no skips. The permitted
+ESP-IDF6.0.2 QR-enabled StopWatch build passes; all1335 configuration values,
+dependency lock and partition binary match the installed27ae4a0 build. Signed
+app SHA142f82305a98eaf1aba6236ee1e6f8a2c048f82f88f2509d0de8dcc6faecac9f;
+4,067,328 bytes,61,440 bytes headroom. Accepted-key signature, unsigned-prefix
+and1931-file source archive checks pass. Existing key used in place only.
+Package and controlled preflight/rollback handoff:
+/Users/dojo/yacht-Provisions-ios/Provisions/tmp/orbit-chef-return-9aa45ed/HANDOFF.md.
+No firmware installation, boot, physical acceptance, server change or merge is
+claimed. Current source correction is ready for the controlled Ring2 update;
+the prior reported chooser is the last observed application screen, while actual
+USB mode and current flash identity must be freshly verified before a write.
+
+Independent package/procedure checkpoint — 3 October — chef_return_review: GO,
+no findings. Both new and prior signatures verify with the accepted public key;
+all2432 configuration entries (1335 active plus1097 disabled), dependencies,
+partition and1931 source-archive files match their expected identities. Prepared
+app-only procedure SHAede9f54ea73e81441e7fa2ed58f86588ec32473829640935a6e38e2b43e023a5;
+fresh recovery/full-flash checks and one0x20000 app write remain unchanged from
+the reviewed prior procedure. Source review: draftPR18; package19-file checksum
+manifest and independent receipt saved beside HANDOFF.md. No USB operation or
+new backup exists yet. Next owner Dojo for the exact Ring2 update, then Codex
+for fresh preflight/installation and Dennis for physical acceptance.
+
 ## OS-06 — normal boot confirmed, 2 October 2026
 
 Dennis confirmed physical reset and the normal face. Codex then observed40seconds

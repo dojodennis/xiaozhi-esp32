@@ -92,7 +92,9 @@ void Application::OrbitServiceFrame(const std::string& state, const std::string&
             if (auto protocol = GetProtocol())
                 protocol->CloseAudioChannel();
             provisions_reconnect_wait_ticks_ = 0;
-            OpenOrbitShoppingOnMain();
+            orbit_menu_index_ = 0;
+            orbit_view_.store(OrbitView::Menu);
+            PaintOrbitView();
             return;
         }
         if (state == "pairing") {

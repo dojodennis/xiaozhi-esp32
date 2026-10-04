@@ -72,7 +72,10 @@ PROGRAM = r'''
 #include <thread>
 #include <vector>
 using namespace std::chrono_literals;
-namespace ProvisionsEndpointPolicy {const char* WebsocketUrl(){return "wss://app.provisions-app.com/approved";}}
+namespace ProvisionsEndpointPolicy {
+const char* WebsocketUrl(){return "wss://app.provisions-app.com/kitchen-helper/preview/v1/device";}
+std::string ServiceWebsocketUrl(){return std::string(WebsocketUrl())+"/service";}
+}
 const char* url=ProvisionsEndpointPolicy::WebsocketUrl();
 struct Incoming {std::string payload;int opcode=1;bool final=true;size_t step=2048;size_t offset=0;};
 struct FakeTransport {
@@ -81,7 +84,7 @@ struct FakeTransport {
     Incoming frame;bool active=false;
 };
 struct Fixture {
-    std::atomic<int64_t> time{0};std::atomic<int> allocations{0},disposals{0},write_calls{0},max_poll{0};
+    std::atomic<int64_t> time{0};std::atomic<int> allocations{0},disposals{0},write_calls{0},max_poll{0},tls_connects{0};
     std::atomic<bool> writing{false},hold_poll{false},poll_held{false},connect_pending{false},want_write{false},want_read{false},poll_write_timeout{false};
     std::atomic<bool> callback_entered{false},callback_release{false};
     int allocation_failure=0;bool task_failure=false;int write_error_after=0,short_write=0,upgrade_status=101;
@@ -89,7 +92,7 @@ struct Fixture {
     std::mutex mutex;std::condition_variable changed;std::deque<Incoming> frames;
     std::vector<std::thread> tasks;std::thread::id caller=std::this_thread::get_id(),worker;
     std::vector<std::pair<int,std::string>> sent;std::vector<std::pair<bool,std::string>> received;
-    std::string wire;std::atomic<int> disconnected{0};
+    std::string wire,tls_host,configured_path;std::atomic<int> disconnected{0};
     ~Fixture(){for(auto& t:tasks)if(t.joinable())t.join();}
     template<typename F> void wait(F condition){
         auto end=std::chrono::steady_clock::now()+2s;
@@ -122,8 +125,8 @@ void esp_transport_ssl_crt_bundle_attach(esp_transport_handle_t,int(*)(void*)){}
 void* esp_transport_get_context_data(esp_transport_handle_t t){return t->context;}
 void esp_transport_set_context_data(esp_transport_handle_t t,void* data){t->context=data;}
 void esp_transport_set_func(esp_transport_handle_t t,ConnectFn c,ReadFn r,WriteFn w,CloseFn,PollFn pr,PollFn pw,DestroyFn){t->connect=c;t->read=r;t->write=w;t->poll_read=pr;t->poll_write=pw;}
-int esp_transport_connect_async(esp_transport_handle_t,const char*,int,int){return f->connect_pending?0:1;}
-int esp_transport_ws_set_config(esp_transport_handle_t,const esp_transport_ws_config_t* config){assert(config->propagate_control_frames);return ESP_OK;}
+int esp_transport_connect_async(esp_transport_handle_t,const char* host,int port,int){assert(port==443);f->tls_host=host;++f->tls_connects;return f->connect_pending?0:1;}
+int esp_transport_ws_set_config(esp_transport_handle_t,const esp_transport_ws_config_t* config){assert(config->propagate_control_frames);f->configured_path=config->ws_path;return ESP_OK;}
 int esp_transport_ws_get_upgrade_request_status(esp_transport_handle_t){return f->upgrade_status;}
 int esp_transport_connect(esp_transport_handle_t t,const char* host,int port,int timeout){
     if(t->kind==2)return t->connect(t,host,port,timeout);
@@ -189,7 +192,30 @@ bool esp_transport_ws_get_fin_flag(esp_transport_handle_t t){return t->frame.fin
 int esp_transport_destroy(esp_transport_handle_t t){assert(std::this_thread::get_id()==f->worker);delete t;++f->disposals;return 0;}
 void require_fast(std::function<void()> action){auto start=std::chrono::steady_clock::now();action();assert(std::chrono::steady_clock::now()-start<100ms);}
 int main(int argc,char** argv){assert(argc==2);Fixture fixture;f=&fixture;const std::string test=argv[1];
-    if(test=="short_writes"){
+    if(test=="chef_endpoint" || test=="service_endpoint"){
+        // Exercise the real public Connect method through TLS and HTTP upgrade.
+        // A URL accepted by the higher-level policy alone cannot pass this check.
+        const auto selected=test=="service_endpoint"?ProvisionsEndpointPolicy::ServiceWebsocketUrl():std::string(url);
+        const std::string expected_path="/kitchen-helper/preview/v1/device"+std::string(test=="service_endpoint"?"/service":"");
+        ProvisionsWebSocket socket;assert(socket.Connect(selected.c_str()));
+        assert(f->tls_connects>0 && f->allocations==3);
+        assert(f->tls_host=="app.provisions-app.com" && f->configured_path==expected_path);
+        assert(socket.Send("mode probe"));socket.Close();f->closed();
+    }else if(test=="endpoint_rejections"){
+        const std::string invalid[]={
+            "wss://other.invalid/kitchen-helper/preview/v1/device/service",
+            "wss://app.provisions-app.com.evil.invalid/kitchen-helper/preview/v1/device/service",
+            "ws://app.provisions-app.com/kitchen-helper/preview/v1/device/service",
+            "wss://app.provisions-app.com:443/kitchen-helper/preview/v1/device/service",
+            "wss://APP.PROVISIONS-APP.COM/kitchen-helper/preview/v1/device/service",
+            std::string(url)+"/Service",std::string(url)+"/service/",
+            std::string(url)+"/service/service",std::string(url)+"/service?mode=chef",
+            std::string(url)+"/service#fragment",std::string(url)+"%2Fservice",
+        };
+        ProvisionsWebSocket socket;assert(!socket.Connect(nullptr));
+        for(const auto& rejected:invalid)assert(!socket.Connect(rejected.c_str()));
+        assert(f->tls_connects==0 && f->allocations==0 && f->tasks.empty());
+    }else if(test=="short_writes"){
         ProvisionsWebSocket socket;f->short_write=2;assert(socket.Connect(url));assert(socket.Send("abcdefg"));
         {std::lock_guard<std::mutex> lock(f->mutex);assert(f->wire=="Habcdefg");assert(f->sent.size()==1 && f->sent[0].second=="abcdefg");}
         assert(f->write_calls==5);socket.Close();f->closed();
@@ -288,6 +314,14 @@ class ProvisionsWebsocketReview(unittest.TestCase):
         result = subprocess.run([str(self.binary), case], capture_output=True, text=True, timeout=10,
                                 env={**os.environ, "ASAN_OPTIONS": "detect_leaks=0" if sys.platform == "darwin" else "detect_leaks=1"})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_canonical_chef_and_service_endpoints_reach_tls(self):
+        for case in ("chef_endpoint", "service_endpoint"):
+            with self.subTest(case=case):
+                self.run_case(case)
+
+    def test_noncanonical_endpoints_are_rejected_before_tls(self):
+        self.run_case("endpoint_rejections")
 
     def test_partial_writes_and_fatal_error(self):
         for case in ("short_writes", "partial_error"):
