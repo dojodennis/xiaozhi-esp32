@@ -79,9 +79,10 @@ struct Recorder {
     bool IsReady(){return ready;}bool HasContext(){return context;}unsigned PendingCount(){return 1;}
 };
 struct Application {
-    bool dictation=false,menu=false,wifi=false,service=false;int navigations=0,confirmations=0,service_taps=0,pairings=0;
+    bool dictation=false,menu=false,mode=false,wifi=false,service=false;int navigations=0,confirmations=0,service_taps=0,pairings=0;
     bool IsOrbitMenuFace(){return menu;}bool IsOrbitWifiSetup(){return wifi;}bool IsOrbitService(){return service;}
-    bool ConfirmOrbitMenu(){if(!menu)return false;++confirmations;menu=false;return true;}
+    bool IsOrbitModeChoice()const{return mode;}
+    bool ConfirmOrbitMenu(){if(!menu&&!mode)return false;++confirmations;menu=false;mode=false;return true;}
     void HandleOrbitMenuBlue(){++navigations;}
     void OrbitServiceTap(){++service_taps;}void OrbitServicePairing(){++pairings;}
     bool IsDictationScreen()const{return dictation;}
@@ -180,6 +181,25 @@ int main(){
     board.button1_.release();assert(app.service_taps==1);
     board.button2_.long_press();assert(app.pairings==0);app.Drain();assert(app.pairings==1);
     app.service=false;
+    // Mode owns the yellow gesture even while the saved role is Service. Its
+    // release confirms once, without capture, pairing, theme, or retry leakage.
+    const auto mode_confirmations=app.confirmations,mode_taps=app.service_taps;
+    const auto mode_pairings=app.pairings,mode_themes=board.display_->themes;
+    const auto mode_retries=app.provisions_recorder_->retries;
+    app.mode=true;app.service=true;
+    board.button2_.long_press();app.Drain();
+    assert(app.pairings==mode_pairings&&board.display_->themes==mode_themes&&app.provisions_recorder_->retries==mode_retries);
+    board.button1_.press();assert(!app.manual_listening_requested_&&app.confirmations==mode_confirmations);
+    board.button1_.release();assert(app.confirmations==mode_confirmations);app.Drain();
+    assert(app.confirmations==mode_confirmations+1&&!app.mode&&app.service_taps==mode_taps&&!app.manual_listening_requested_);
+    // Recheck Mode ownership when a blue hold queued on another face executes.
+    app.service=false;board.button2_.long_press();app.mode=true;app.Drain();
+    assert(app.provisions_recorder_->retries==mode_retries&&board.display_->themes==mode_themes&&app.pairings==mode_pairings);
+    // The shared five-second Wi-Fi hold consumes Mode release, too.
+    app.service=true;board.button1_.press();clock_us+=ProvisionsStopWatch::MenuWifiHold::kHoldUs;
+    assert(board.wifi_hold_.Fire(clock_us));board.button1_.release();app.Drain();
+    assert(app.mode&&app.confirmations==mode_confirmations+1&&app.service_taps==mode_taps&&!app.manual_listening_requested_);
+    app.mode=false;app.service=false;
     const auto nav_locked=app.navigations;const auto retries_locked=app.provisions_recorder_->retries;board.orbit_locked_=true;
     board.button2_.click();board.button2_.long_press();board.button2_.double_click();app.Drain();
     assert(app.navigations==nav_locked&&app.pairings==1&&app.provisions_recorder_->retries==retries_locked);

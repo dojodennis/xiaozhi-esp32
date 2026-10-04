@@ -3282,7 +3282,7 @@ private:
     // Pocket lock. Single presses and swipes do nothing until both buttons
     // are held together again. A ringing timer can still be dismissed.
     std::atomic<bool> orbit_locked_{false};
-    static constexpr int64_t kLockHoldUs = 600 * 1000;
+    static constexpr int64_t kLockHoldUs = ProvisionsStopWatch::ButtonChord::kLockHoldUs;
     RoundLcdDisplay* display_;
     StopwatchBacklight* backlight_;
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
@@ -3443,7 +3443,8 @@ private:
                             Application::GetInstance().IsOrbitShoppingFace() && !alarm;
                         const bool notes =
                             Application::GetInstance().IsOrbitNotesFace() && !alarm;
-                        const bool menu = Application::GetInstance().IsOrbitMenuFace();
+                        const bool menu = Application::GetInstance().IsOrbitMenuFace() ||
+                                          Application::GetInstance().IsOrbitModeChoice();
                         if (pressed && !self->touch_was_pressed_) {
                             self->touch_down_x_ = x;
                             self->touch_down_y_ = y;
@@ -3497,8 +3498,10 @@ private:
                             !self->touch_dismiss_queued_.exchange(true)) {
                             Application::GetInstance().Schedule([self]() {
                                 self->touch_dismiss_queued_.store(false);
+                                auto& app = Application::GetInstance();
                                 if (!self->display_->HasTimerAlarm() &&
-                                    self->display_->ToggleTimerFocus())
+                                    !self->orbit_locked_.load() && !app.IsOrbitMenuFace() &&
+                                    !app.IsOrbitModeChoice() && self->display_->ToggleTimerFocus())
                                     self->ResetDisplayIdleTimer();
                             });
                         }
@@ -3661,7 +3664,7 @@ private:
                 bool held = false;
                 {
                     std::lock_guard<std::mutex> lock(self->chord_mutex_);
-                    held = self->chord_.BothHeld();
+                    held = self->chord_.CommitLockHold(esp_timer_get_time());
                 }
                 if (held)
                     self->ToggleOrbitLock();
@@ -3687,7 +3690,9 @@ private:
                     }
                     Application::GetInstance().StartOrbitWifiSetup([self, generation]() {
                         std::lock_guard<std::mutex> lock(self->chord_mutex_);
-                        return !self->orbit_locked_.load() &&
+                        auto& app = Application::GetInstance();
+                        return !self->orbit_locked_.load() && !self->display_->HasTimerAlarm() &&
+                               (app.IsOrbitMenuFace() || app.IsOrbitModeChoice()) &&
                                self->wifi_hold_.StillHeld(generation);
                     });
                 },
@@ -3767,8 +3772,15 @@ private:
         if (chord_timer_ != nullptr)
             esp_timer_stop(chord_timer_);
         CancelLockHold();
-        std::lock_guard<std::mutex> lock(chord_mutex_);
-        return chord_.TalkUp();
+        bool started;
+        uint32_t mode_choice;
+        {
+            std::lock_guard<std::mutex> lock(chord_mutex_);
+            started = chord_.TalkUp(esp_timer_get_time());
+            mode_choice = chord_.TakeModeChoice();
+        }
+        QueueOrbitModeChoice(mode_choice);
+        return started;
     }
 
     // True when that release was a click inside the chord window: no capture
@@ -3801,8 +3813,25 @@ private:
 
     void BlueReleased() {
         CancelLockHold();
-        std::lock_guard<std::mutex> lock(chord_mutex_);
-        chord_.BlueUp();
+        uint32_t mode_choice;
+        {
+            std::lock_guard<std::mutex> lock(chord_mutex_);
+            chord_.BlueUp(esp_timer_get_time());
+            mode_choice = chord_.TakeModeChoice();
+        }
+        QueueOrbitModeChoice(mode_choice);
+    }
+
+    void QueueOrbitModeChoice(uint32_t generation) {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        if (generation == 0)
+            return;
+        Application::GetInstance().ShowOrbitModeChoice([this, generation]() {
+            std::lock_guard<std::mutex> lock(chord_mutex_);
+            return chord_.ModeChoiceValid(generation) && !orbit_locked_.load() &&
+                   !display_->HasTimerAlarm();
+        });
+#endif
     }
 
     bool BlueGestureInChord() {
@@ -3810,8 +3839,8 @@ private:
         return chord_.SwallowBlueGesture();
     }
 
-    // Both buttons are down. The lock commits only if they are still down
-    // kLockHoldUs later; a quick chord does not change the face.
+    // Both buttons are down. A held chord locks; a short chord opens the mode
+    // choice only after both releases. Timer failure leaves both actions closed.
     void OnButtonChord() {
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
         {
@@ -3822,12 +3851,17 @@ private:
             esp_timer_stop(wifi_hold_timer_);
 #endif
         if (lock_timer_ == nullptr) {
-            ToggleOrbitLock();
+            std::lock_guard<std::mutex> lock(chord_mutex_);
+            chord_.CancelModeChoice();
+            ESP_LOGW(TAG, "chord lock timer unavailable");
             return;
         }
         esp_timer_stop(lock_timer_);
-        if (esp_timer_start_once(lock_timer_, kLockHoldUs) != ESP_OK)
+        if (esp_timer_start_once(lock_timer_, kLockHoldUs) != ESP_OK) {
+            std::lock_guard<std::mutex> lock(chord_mutex_);
+            chord_.CancelModeChoice();
             ESP_LOGW(TAG, "lock hold timer did not start");
+        }
     }
 
     void InitializeButtons() {
@@ -3856,9 +3890,11 @@ private:
             }
             ResetDisplayIdleTimer();
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
-            const bool menu = Application::GetInstance().IsOrbitMenuFace() &&
+            const bool menu = (Application::GetInstance().IsOrbitMenuFace() ||
+                               Application::GetInstance().IsOrbitModeChoice()) &&
                               !Application::GetInstance().IsOrbitWifiSetup() &&
                               !display_->HasTimerAlarm();
+            const bool mode_choice = Application::GetInstance().IsOrbitModeChoice();
             {
                 std::lock_guard<std::mutex> lock(chord_mutex_);
                 wifi_hold_.Begin(esp_timer_get_time(), menu, orbit_locked_.load());
@@ -3871,10 +3907,11 @@ private:
             }
 #else
             const bool menu = false;
+            const bool mode_choice = false;
 #endif
-            ArmTalkStart([menu]() {
+            ArmTalkStart([menu, mode_choice]() {
                 // Menu selection moves to release, leaving the five-second hold available.
-                if (menu)
+                if (menu || mode_choice)
                     return;
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
                 if (Application::GetInstance().IsOrbitService())
@@ -3902,7 +3939,8 @@ private:
                 if (release == ProvisionsStopWatch::MenuWifiHold::Release::Confirm) {
                     Application::GetInstance().Schedule([this]() {
                         auto& app = Application::GetInstance();
-                        if (!orbit_locked_.load() && app.IsOrbitMenuFace())
+                        if (!orbit_locked_.load() && !display_->HasTimerAlarm() &&
+                            (app.IsOrbitMenuFace() || app.IsOrbitModeChoice()))
                             app.ConfirmOrbitMenu();
                     });
                 }
@@ -3911,6 +3949,10 @@ private:
 #endif
             if (TalkReleased()) {
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                if (!orbit_locked_.load() && Application::GetInstance().IsOrbitModeChoice()) {
+                    Application::GetInstance().ConfirmOrbitMenu();
+                    return;
+                }
                 if (!orbit_locked_.load() && Application::GetInstance().IsOrbitService()) {
                     Application::GetInstance().OrbitServiceTap();
                     return;
@@ -3925,7 +3967,9 @@ private:
             // menu only confirmed on a deliberate hold. Confirm on the click;
             // the microphone stays closed (the return value is not consulted).
             if (!orbit_locked_.load() && TalkClicked()) {
-                if (Application::GetInstance().IsOrbitService() && !Application::GetInstance().IsOrbitMenuFace())
+                if (Application::GetInstance().IsOrbitService() &&
+                    !Application::GetInstance().IsOrbitMenuFace() &&
+                    !Application::GetInstance().IsOrbitModeChoice())
                     Application::GetInstance().OrbitServiceTap();
                 else
                     Application::GetInstance().ConfirmOrbitMenu();
@@ -3966,6 +4010,8 @@ private:
                 if (orbit_locked_.load())
                     return;
                 auto& app = Application::GetInstance();
+                if (app.IsOrbitModeChoice())
+                    return;
                 if (app.IsOrbitService() && !app.IsOrbitMenuFace()) {
                     app.OrbitServicePairing();
                     return;

@@ -876,11 +876,12 @@ struct Application {
  std::atomic<bool> dictation_readback_{false};
  std::vector<std::string> sounds;
  struct TimerPlayer{bool fenced=false;bool Fenced(){return fenced;}}timer_player_;
- enum class OrbitView : uint8_t { Home, Menu, Shopping, Notes };
+ enum class OrbitView : uint8_t { Home, Menu, Shopping, Notes, ModeChoice };
  std::atomic<OrbitView> orbit_view_{OrbitView::Home};
  uint8_t orbit_menu_index_=0;std::string shopping_list_face_;
  std::vector<std::string> shopping_list_items_;uint8_t shopping_focus_=0;int64_t shopping_focus_since_us_=0;
  void PaintOrbitView(){}
+ bool IsOrbitModeChoice() const{return orbit_view_.load()==OrbitView::ModeChoice;}
  void HandleOrbitMenuBlue(){}
  bool ConfirmOrbitMenu(){return false;}
  bool IsOrbitShoppingFace()const{return orbit_view_.load()==OrbitView::Shopping;}

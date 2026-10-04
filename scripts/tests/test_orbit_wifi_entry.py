@@ -28,14 +28,15 @@ int64_t esp_timer_get_time(){return now_us;}
 int esp_timer_stop(void*){return 0;}
 int esp_timer_start_once(void*,int64_t){return 0;}
 struct Application {
- bool menu=true,setup=false,service=false;int starts=0,stops=0,confirms=0,entries=0,taps=0;
+ bool menu=true,setup=false,service=false,mode=false;int starts=0,stops=0,confirms=0,entries=0,taps=0;
  bool IsOrbitService(){return service;}void OrbitServiceTap(){++taps;}
  std::vector<std::function<void()>> work;
  static Application& GetInstance(){static Application a;return a;}
  bool IsOrbitMenuFace(){return menu;}bool IsOrbitWifiSetup(){return setup;}
+ bool IsOrbitModeChoice(){return mode;}
  void Schedule(std::function<void()> fn){work.push_back(fn);}
- void StartOrbitWifiSetup(std::function<bool()> allowed){Schedule([this,allowed](){if(allowed()&&menu){++entries;setup=true;}});}
- bool ConfirmOrbitMenu(){if(!menu)return false;++confirms;return false;}
+ void StartOrbitWifiSetup(std::function<bool()> allowed){Schedule([this,allowed](){if(allowed()&&(menu||mode)){++entries;setup=true;}});}
+ bool ConfirmOrbitMenu(){if(!menu&&!mode)return false;++confirms;return mode;}
  void StartListening(){++starts;}void StopListening(){++stops;}
  void Drain(){while(!work.empty()){auto batch=std::move(work);work.clear();for(auto& fn:batch)fn();}}
 };
@@ -62,7 +63,16 @@ int main(){
   a=Application{};M5StackStopwatchBoard b;b.Init();now_us=0;b.button1_.down();
   if(duration>150000){now_us=150000;b.Window();}
   assert(a.starts==0&&a.confirms==0);now_us=duration;b.button1_.up();a.Drain();
-  assert(a.confirms==1&&a.entries==0&&a.starts==0&&a.stops==0);
+ assert(a.confirms==1&&a.entries==0&&a.starts==0&&a.stops==0);
+ }
+ // Mode selection retains release confirmation and the guarded five-second Wi-Fi hold.
+ for(int64_t duration:{100000LL,300000LL,5000000LL}){
+  a=Application{};a.menu=false;a.mode=true;a.service=true;M5StackStopwatchBoard b;b.Init();now_us=0;
+  b.button1_.down();if(duration>150000){now_us=150000;b.Window();}
+  if(duration==5000000){now_us=duration;b.Fire();a.Drain();}
+  now_us=duration;b.button1_.up();a.Drain();
+  assert(a.confirms==(duration==5000000?0:1)&&a.entries==(duration==5000000?1:0));
+  assert(a.starts==0&&a.stops==0&&a.taps==0&&a.service);
  }
  // Service commits exactly one tap on release; holding it never opens Chef Talk.
  for(int64_t duration:{100000LL,300000LL}){
@@ -111,7 +121,7 @@ int main(){
 #include <string>
 #include <vector>
 constexpr int kDeviceStateIdle=1,kDeviceStateWifiConfiguring=2,kDeviceStateStarting=3;
-enum class OrbitView { Menu,Other };
+enum class OrbitView { Menu,Service,ModeChoice,Other };
 int shown=0,hidden=0;
 void ProvisionsShowOrbitWifiSetup(const std::string&){++shown;}
 void ProvisionsHideOrbitWifiSetup(){++hidden;}
@@ -130,6 +140,7 @@ struct Application{
  struct Timer{bool fenced=false;bool Fenced(){return fenced;}} timer_player_;
  std::vector<std::function<void()>> work;
  bool IsOrbitWifiSetup(){return orbit_wifi_setup_;}bool IsOrbitMenuFace(){return orbit_view_==OrbitView::Menu;}
+ bool IsOrbitModeChoice(){return orbit_view_==OrbitView::ModeChoice;}bool CanSelectOrbitMode(){return true;}
  int GetDeviceState(){return state;}void SetDeviceState(int s){state=s;}
  void LeaveDictationScreenOnMain(){dictation_screen_=false;}void PaintOrbitView(){++painted;}
  void Schedule(std::function<void()> f){work.push_back(f);}void Drain(){while(!work.empty()){auto batch=std::move(work);work.clear();for(auto& f:batch)f();}}
@@ -148,6 +159,7 @@ int main(){auto& b=Board::GetInstance();
  for(bool accepts:{true,false}){Application a;a.state=state;a.service=service;a.dictation_screen_=true;b.starts=0;b.accepts=accepts;a.StartOrbitWifiSetup([](){return true;});a.Drain();assert(b.starts==1);
  if(accepts){assert(a.IsOrbitWifiSetup()&&a.state==kDeviceStateWifiConfiguring);b.ready("WIFI:example");a.Drain();b.finished(saved);a.Drain();}
  assert(!a.IsOrbitWifiSetup()&&a.state==kDeviceStateIdle&&a.painted==1);
+ assert(a.orbit_view_==(service?OrbitView::Service:OrbitView::Menu));
  assert(a.dictation_screen_==service);
  int before=shown;b.ready("late");a.Drain();assert(shown==before);
  }

@@ -1,5 +1,90 @@
 # ORBIT-STOCK-01 — Dedicated onboard stock entry
 
+## Current implementation — OS-06-NAV-02, 4 October 2026
+
+Owner: Codex. Related: installed OS-06-NAV-01 and MENU-KV-02. Dennis approved
+a ring that acts as either Chef Orbit or Service Orbit, selected deliberately
+with a button combination at setup rather than a Service page in Chef browsing.
+Preserve the saved role at boot. The short simultaneous yellow+blue press opens
+a separate mode chooser after both buttons are released; the existing600ms hold
+still locks/unlocks. Blue/swipe chooses Chef or Service, yellow confirms on
+release. Chef menu cycles only List, Timers, Notes and Stock. Opening the chooser
+must not change role, start a microphone, discard work or bypass server authority.
+
+Exclusions: gateway/database changes, Ring1, artwork replacement, iOS gold-color
+follow-up, main merge and another firmware installation before the exact reviewed
+build is ready. Keep nautical artwork available per ring and the Provisions crest
+preference. Preserve Wi-Fi/theme holds, alarm precedence, lock and pending
+recording/recovery safeguards. Mode updates use the existing persisted key and
+authenticated Chef acknowledgement; late Service status/QR must respect chooser
+ownership. No new startup role reset or forced re-pairing.
+
+Acceptance:
+- [x] Dennis approves separate persistent role and deliberate button combination.
+- [x] Production gesture tests: four focused ASan/UBSan checks pass, independently
+  repeated after formatting. Both button/release orders, short/held thresholds,
+  exactly once, no microphone/single action, lock, Mode Wi-Fi and theme preserved.
+  Direct and queued timer taps cannot cover the selector.
+- [x] Production navigation tests: six actual-method ASan/UBSan checks pass,
+  independently repeated. Four Chef pages, same-role navigation without writes,
+  explicit role confirmation, authenticated Chef return and recording guards.
+- [x] Late Service ready/pairing/status cannot replace the chooser; covered by
+  actual-method tests. Pairing status is retained for returning to Service.
+- [x] Independent source review: chef_return_review GO on all 11 frozen paths;
+  six application and four board checks independently pass, no open findings.
+- [x] QR-enabled accepted capture-profile target build passes. Unsigned app is
+  4,063,232 B; all 2,432 configuration values, dependency lock, partitions,
+  bootloader and assets match the accepted baseline. Signing remains separate.
+- [x] Full host suite: final 366/366 passes, zero skips. Initial 365/366 run
+  exposed a missing Mode interface in the older voice-retry fixture. Repaired
+  only that fixture; independent sanitizer addendum GO, original assertions
+  retained and Mode gesture/release coverage added. Production hashes unchanged.
+- [x] Exact clean source005c549 is pushed; signed package and app-only procedure
+  independently verify GO. Existing draft source review and readiness evidence
+  record signatures, source archive, rollback baseline and separate approval.
+- [ ] Separately authorized installation, fresh boot and Dennis's physical role check.
+
+For Dennis: Dennis explicitly asks Codex to update Ring2; installation approval
+is resolved. The USB modem is absent from the Mac. Connect Ring2 by USB, leave
+it powered on in normal application mode and reply connected. No phone app or
+DOWNLOAD button press requested. Codex completes offline package review, then
+fresh exact-device/prior-app/security/validated-slot/full-backup checks before
+the approved app-only write. Next owner Dojo for connection; Codex owns all
+engineering and device checks. Physical role/theme/stock acceptance stays open.
+
+Change log — 4 October — OS-06-NAV-02 — Codex: recorded Dennis's explicit role/
+button-combination direction, separated it from the completed Chef-return write
+and saved-theme remedy, and bounded implementation on codex/orbit-role-selection
+from installed-source9aa45ed/docs8b64937. Independent navigation audit identified
+the fifth Service menu item and the unused short chord; implementation follows.
+No new firmware write, role reset, server change or physical acceptance.
+
+Change log — 4 October — OS-06-NAV-02 — Codex implementation; independent
+review by chef_return_review: implemented the persistent role chooser and four
+Chef pages using existing role storage/server acknowledgement. Preserved short/
+held chord boundaries, record/lock/alarm guards, Wi-Fi and theme gestures, and
+late-frame screen ownership. Review reproduced one P2: a delayed Chef ACK could
+cover Wi-Fi setup. Added live-session pending-request serialization and preserved
+an already active setup view until its finish callback; production regression
+passes independently. Target build passes with unchanged accepted configuration,
+partitions, bootloader and assets. Final full host suite 366/366 passes without skips after the independently
+reviewed test-only fixture repair. Source checkpoint, signing/package review,
+separate installation and physical acceptance remain.
+No device, server, artwork or Ring1 change.
+
+Change log — 4 October — OS-06-NAV-02 — Codex: exact clean source
+005c5498251d786e37f1fe4c3ec9e813b124ff28 is committed and pushed; [draft source
+review](https://github.com/dojodennis/xiaozhi-esp32/pull/19). Clean rebuild and all
+366 host tests pass. Signed app74953a62 is4,067,328B with61,440B OTA0headroom;
+accepted-key signature, unchanged unsigned prefix and1,931-file source archive
+verify. Package prepared at Provisions/tmp/orbit-role-selector-005c549; private
+key used in place without copying. [Readiness evidence](evidence/orbit-role-selector-ready-20261004.json).
+Dennis subsequently requested the Ring2 update, superseding the no-installation-
+approval status. Fresh USB check finds no modem device, so no preflight, reset,
+backup or write has occurred. Independent offline package/procedure review GO; current checksum checkpoint
+and USB connection remain before preflight.
+The user connection request is saved; no repeated approval needed.
+
 ## Current snapshot — OS-06-NAV-01 installed, 4 October 2026
 
 Owner: Codex. Dennis explicitly approved the prepared Ring 2 update. Compiled
@@ -16,15 +101,13 @@ Recovery remains private in the4October Ring2 backup directory.
 - [x] Controlled installation, complete device verification and recovery review.
 - [x] User-observed application startup: Dennis reports “Dojo Service · scan in
   desk” after the single reset request; DOWNLOAD is no longer current.
-- [ ] Physical navigation/design acceptance: Dennis says it works, then reports
-  a delay and old design. Exact screen/delay clarification and design-lineage
-  comparison remain open; do not infer a complete Chef-menu sign-off.
+- [x] Physical yellow return: Dennis confirms the return to Chef and swiping work.
+- [ ] Physical design/theme and unspecified delay acceptance remain open; the
+  saved-theme source explanation below is not a confirmed device theme write.
 
-For Dennis: no phone app, DOWNLOAD or further reset is requested. Answer the
-pending screen/delay clarification. Then blue → Provisions / Chef → quick
-yellow should open the Chef menu, with List, Timers, Notes and Stock reachable.
-Return the observed result. Next owner Dojo for clarification/physical check;
-Codex owns read-only source diagnosis. Stock quantity/age stays separate.
+For Dennis: the yellow return has passed; no repeat or reset requested. Remaining
+visual theme/unspecified delay checks stay separate from OS-06-NAV-02. Codex owns
+role-selector preparation. Stock quantity/age stays separate.
 
 Visual clarification — 4 October — Dennis requires Provisions crest on List,
 Notes and Timers and preservation of the nautical design for the other client.
