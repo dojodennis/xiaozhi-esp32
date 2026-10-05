@@ -684,6 +684,9 @@ std::string WebsocketProtocol::GetHelloMessage() {
     cJSON_AddBoolToObject(features, "timers_v1", true);
     cJSON_AddBoolToObject(features, "timer_claim_recovery_v1", true);
     cJSON_AddBoolToObject(features, "dictation_v1", true);
+    if (Application::GetInstance().IsOrbitService()) {
+        cJSON_AddBoolToObject(features, "dojo_general_v2", true);
+    }
 #if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
     const auto runtime = std::atomic_load(&output_fence_runtime_);
     if (runtime && std::atomic_load(&voice_closure_handler_)) {
@@ -826,9 +829,15 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
             return;
         }
         auto table = cJSON_GetObjectItemCaseSensitive(service, "table");
-        if ((strcmp(service_state->valuestring, "ready") != 0 && strcmp(service_state->valuestring, "recovery") != 0) || !cJSON_IsString(table) ||
-            strlen(table->valuestring) == 0 || strlen(table->valuestring) > 10) {
-            RejectServerHello("Invalid Dojo table");
+        const auto scope = cJSON_GetObjectItemCaseSensitive(service, "scope");
+        const auto version = cJSON_GetObjectItemCaseSensitive(service, "protocol_version");
+        const bool general = cJSON_IsString(scope) && strcmp(scope->valuestring, "shift") == 0 &&
+                             cJSON_IsNumber(version) && version->valuedouble == 2 && !table;
+        const bool legacy = !scope && cJSON_IsString(table) && strlen(table->valuestring) > 0 &&
+                            strlen(table->valuestring) <= 10;
+        if ((strcmp(service_state->valuestring, "ready") != 0 && strcmp(service_state->valuestring, "recovery") != 0) ||
+            (!general && !legacy)) {
+            RejectServerHello("Invalid Dojo recording context");
             return;
         }
     } else if (service) {
@@ -870,7 +879,7 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
             return;
         }
         auto table = cJSON_GetObjectItemCaseSensitive(service, "table");
-        Application::GetInstance().OrbitServiceFrame(service_state->valuestring, table->valuestring);
+        Application::GetInstance().OrbitServiceFrame(service_state->valuestring, cJSON_IsString(table) ? table->valuestring : "");
     }
 #endif
 #if CONFIG_PROVISIONS_OUTPUT_FENCE_V1

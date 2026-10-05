@@ -150,7 +150,7 @@ void Application::OrbitServiceFrame(const std::string& state, const std::string&
             orbit_service_code_.clear();
             if (orbit_view_.load() == OrbitView::Service && !IsOrbitWifiSetup())
                 ProvisionsHideOrbitWifiSetup();
-            orbit_service_status_ = "Loading approved table";
+            orbit_service_status_ = "Loading approved shift";
             if (auto protocol = GetProtocol())
                 protocol->CloseAudioChannel();
             provisions_reconnect_wait_ticks_ = 0;
@@ -192,7 +192,7 @@ void Application::OrbitServiceTap() {
         auto protocol = GetProtocol();
         auto recorder = std::atomic_load(&provisions_recorder_);
         if (!recorder || !orbit_service_ready_ || !protocol || !protocol->IsAudioChannelOpened()) {
-            orbit_service_status_ = "Connect and approve this table";
+            orbit_service_status_ = "Connect and approve your Orbit";
             provisions_reconnect_wait_ticks_ = 0;
             PaintOrbitService();
             return;
@@ -316,7 +316,7 @@ void Application::PaintOrbitService() {
         if (!protocol || !protocol->IsAudioChannelOpened())
             status += " · OFFLINE";
     }
-    ProvisionsShowShoppingFocus("Dojo · Table " + orbit_service_table_, status,
+    ProvisionsShowShoppingFocus(orbit_service_table_.empty() ? "Dojo · Service" : "Dojo · Table " + orbit_service_table_, status,
                                 orbit_service_recording_.load()
                                     ? "tap yellow to finish"
                                     : "yellow records · hold blue to pair",

@@ -924,6 +924,21 @@ int main(){
         if(variant==1)assert(!p.dictation_enabled_&&!p.capture_enabled_);
         cJSON_Delete(root);
     }
+    // General recording requires an explicit v2 shift scope and no table.
+    for(int variant=0;variant<6;++variant){
+        auto* root=cJSON_Parse(hello);auto* caps=cJSON_GetObjectItemCaseSensitive(root,"provisions");
+        auto* service=cJSON_CreateObject();cJSON_AddItemToObject(caps,"dojo_service",service);
+        cJSON_AddStringToObject(service,"state",variant==1?"recovery":"ready");
+        cJSON_AddStringToObject(service,"scope",variant==4?"unknown":"shift");
+        if(variant!=2)cJSON_AddNumberToObject(service,"protocol_version",variant==3?1:2);
+        if(variant==5)cJSON_AddStringToObject(service,"table","3");
+        cJSON_AddTrueToObject(caps,"audio_capture");cJSON_AddTrueToObject(caps,"dictation_v1");
+        cJSON_AddItemToObject(caps,"capture_context",cJSON_Parse(context));
+        WebsocketProtocol p;p.ParseServerHello(root);
+        assert(p.gateway_authenticated_.load()==(variant<2));
+        if(variant<2)assert(p.capture_enabled_ && Application::GetInstance().service_detail.empty());
+        cJSON_Delete(root);
+    }
     Application::GetInstance().service=false;
 #endif
     Application app;

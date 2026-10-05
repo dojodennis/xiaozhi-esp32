@@ -92,6 +92,7 @@ struct Recorder {
 };
 }
 struct Paint {std::string title,focus;int menu_page=-1;};
+std::string service_heading;
 Paint painted;unsigned paint_count=0,qr_shown=0,qr_hidden=0;
 std::string shown_qr;
 void ProvisionsHideOrbitWifiSetup(){++qr_hidden;}
@@ -99,9 +100,9 @@ void ProvisionsShowOrbitWifiSetup(const std::string&){++qr_shown;}
 void ProvisionsShowOrbitServicePair(const std::string& qr){shown_qr=qr;++qr_shown;}
 void ProvisionsShowOrbitMenu(uint8_t page){painted={"Chef menu","",page};++paint_count;}
 void ProvisionsShowTimerFace(){++timer_shown;}
-void ProvisionsShowShoppingFocus(const std::string&,const std::string& focus,
+void ProvisionsShowShoppingFocus(const std::string& heading,const std::string& focus,
                                 const std::string&,const std::string& title){
-    painted={title,focus,-1};++paint_count;
+    service_heading=heading;painted={title,focus,-1};++paint_count;
 }
 struct Display {
     std::string notification;
@@ -237,6 +238,21 @@ def run_navigation(scenario):
 
 
 class ServiceNavigationTests(unittest.TestCase):
+    def test_shift_capture_has_no_table_and_keeps_recovery_read_only(self):
+        run_navigation(r'''
+        Application app;app.orbit_service_mode_=true;app.orbit_view_=View::Service;
+        app.OrbitServiceFrame("ready", "");app.Drain();
+        assert(app.orbit_service_ready_ && app.orbit_service_table_.empty());
+        assert(service_heading=="Dojo · Service");
+        app.OrbitServiceTap();app.Drain();
+        assert(app.orbit_service_recording_ && app.provisions_recorder_->starts==1);
+        app.OrbitServiceTap();app.Drain();assert(!app.orbit_service_recording_);
+        app.OrbitServiceFrame("recovery", "");app.Drain();
+        const auto starts=app.provisions_recorder_->starts;
+        app.OrbitServiceTap();app.Drain();
+        assert(!app.orbit_service_recording_ && app.provisions_recorder_->starts==starts);
+        ''')
+
     def test_pending_chef_ack_serializes_setup_and_preserves_a_later_active_setup(self):
         run_navigation(r'''
         auto& board=Board::GetInstance();
