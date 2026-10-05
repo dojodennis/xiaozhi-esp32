@@ -88,6 +88,7 @@ struct Board {
     void PulseLocalCaptureHaptic(uint32_t duration_ms){++haptics;haptic_ms=duration_ms;}
 };
 struct WebsocketProtocol {
+    std::atomic<bool> service_review_enabled_{false};
     bool open=false;std::function<void()> before_open;
     bool IsAudioChannelOpened(){if(before_open){auto callback=std::move(before_open);callback();}return open;}
     void InterruptStoredRecording(){}
@@ -308,6 +309,7 @@ struct Connection {
     void OnDisconnected(std::function<void()> fn){disconnected=std::move(fn);}
 };
 struct WebsocketProtocol:std::enable_shared_from_this<WebsocketProtocol> {
+    std::atomic<bool> service_review_enabled_{false};
     bool& destroyed;
     explicit WebsocketProtocol(bool& value):destroyed(value){}
     ~WebsocketProtocol(){destroyed=true;}
@@ -373,6 +375,7 @@ struct Connection {
     bool SendAsync(const std::string&){++queued;return true;}
 };
 struct WebsocketProtocol {
+    std::atomic<bool> service_review_enabled_{false};
     std::atomic<TaskHandle_t> operation_owner_{nullptr};
     std::shared_ptr<Connection> websocket_=std::make_shared<Connection>();
     void SetError(const char*){}
@@ -485,6 +488,7 @@ struct AudioService {
     void CancelLocalFeedback(){}
 };
 struct WebsocketProtocol {
+    std::atomic<bool> service_review_enabled_{false};
     unsigned interruptions=0;
     void InterruptStoredRecording(){++interruptions;}
 };
@@ -625,6 +629,7 @@ struct WebSocket {
     bool Send(const void*,size_t,bool){return Send("binary");}
 };
 struct WebsocketProtocol {
+    std::atomic<bool> service_review_enabled_{false};
     using Connection=WebSocket;
     std::atomic<TaskHandle_t> operation_owner_{nullptr};
     std::atomic<bool> upload_active_{false};
@@ -810,9 +815,10 @@ bool IsCanonicalUuid(const std::string& text){return text=="11111111-2222-4333-8
 }
 namespace provisions {VoiceReplay::~VoiceReplay()=default;}
 struct WebsocketProtocol {
+    std::atomic<bool> service_review_enabled_{false};
     std::atomic<bool> gateway_authenticated_{false},gateway_hello_pending_{true},capture_enabled_{false},timers_enabled_{false},dictation_enabled_{false},last_open_rejected_{false};
     std::atomic<int64_t> last_gateway_activity_us_{0};
-    std::mutex capture_context_mutex_;provisions::VoiceContext capture_context_;
+    std::mutex capture_context_mutex_;provisions::VoiceContext capture_context_;provisions::VoiceId service_review_binding_{};
     int server_sample_rate_=0,server_frame_duration_=0,event_group_handle_=0,rejected=0;
     std::string session;
     void SetSessionId(std::string text){session=text;} std::string session_id(){return session;}
@@ -938,6 +944,22 @@ int main(){
         assert(p.gateway_authenticated_.load()==(variant<2));
         if(variant<2)assert(p.capture_enabled_ && Application::GetInstance().service_detail.empty());
         cJSON_Delete(root);
+    }
+    for(int variant=0;variant<6;++variant){
+        auto* root=cJSON_Parse(hello);auto* caps=cJSON_GetObjectItemCaseSensitive(root,"provisions");
+        auto* service=cJSON_CreateObject();cJSON_AddItemToObject(caps,"dojo_service",service);
+        cJSON_AddStringToObject(service,"state","ready");cJSON_AddStringToObject(service,"scope","shift");
+        cJSON_AddNumberToObject(service,"protocol_version",2);
+        cJSON_AddTrueToObject(caps,"audio_capture");cJSON_AddTrueToObject(caps,"dictation_v1");
+        cJSON_AddItemToObject(caps,"capture_context",cJSON_Parse(context));
+        if(variant)cJSON_AddNumberToObject(service,"transcript_protocol_version",variant==2?2:1);
+        if(variant!=3)cJSON_AddStringToObject(service,"binding_id",variant==4?"invalid":"22222222-3333-4444-8555-666666666666");
+        if(variant==5)cJSON_AddNumberToObject(service,"transcript_protocol_version",1);
+        WebsocketProtocol p;p.ParseServerHello(root);
+        assert(p.gateway_authenticated_.load()==(variant<2));
+        assert(p.service_review_enabled_.load()==(variant==1));
+        if(variant==1)assert(provisions::VoiceIdText(p.service_review_binding_)=="22222222-3333-4444-8555-666666666666");
+        p.RejectServerHello("disconnect");assert(!p.service_review_enabled_);cJSON_Delete(root);
     }
     Application::GetInstance().service=false;
 #endif

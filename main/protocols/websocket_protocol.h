@@ -47,6 +47,19 @@ public:
     bool TimersNegotiated() const { return timers_enabled_.load() && IsAudioChannelOpened(); }
     bool SendTimerReceipt(const std::string& text) { return TimersNegotiated() && SendText(text); }
     bool DictationNegotiated() const { return dictation_enabled_.load() && IsAudioChannelOpened(); }
+    bool ServiceReviewNegotiated() const {
+        return service_review_enabled_.load() && DictationNegotiated();
+    }
+    bool GetServiceReviewBinding(provisions::VoiceId& binding) const {
+        if (!ServiceReviewNegotiated())
+            return false;
+        std::lock_guard<std::mutex> lock(capture_context_mutex_);
+        binding = service_review_binding_;
+        return binding != provisions::VoiceId{};
+    }
+    bool SendServiceReview(const std::string& text) {
+        return ServiceReviewNegotiated() && text.size() < 8192 && SendText(text);
+    }
     bool SendDictationControl(const std::string& text) {
         return DictationNegotiated() && SendText(text);
     }
@@ -96,6 +109,8 @@ private:
     std::atomic<bool> capture_enabled_{false};
     std::atomic<bool> timers_enabled_{false};
     std::atomic<bool> dictation_enabled_{false};
+    std::atomic<bool> service_review_enabled_{false};
+    provisions::VoiceId service_review_binding_{};
     mutable std::mutex capture_context_mutex_;
     provisions::VoiceContext capture_context_{};
     bool BeginOperation();

@@ -49,6 +49,7 @@ def production_navigation():
 
 PROGRAM = r'''
 #include <atomic>
+#include <array>
 #include <cassert>
 #include <cstdint>
 #include <functional>
@@ -57,10 +58,14 @@ PROGRAM = r'''
 #include <utility>
 #include <vector>
 #define CONFIG_PROVISIONS_LOCAL_CAPTURE 1
+#define ESP_LOGI(...) ((void)0)
 constexpr int kDeviceStateIdle=1,kDeviceStateStarting=2,kDeviceStateWifiConfiguring=3;
 int g_shopping_scroll=0,timer_shown=0;
 namespace provisions {
-struct VoiceId { unsigned value=0; };
+struct VoiceId { unsigned value=0;std::array<uint8_t,16> bytes{};
+uint8_t* data(){return bytes.data();}size_t size()const{return bytes.size();}
+uint8_t& operator[](size_t i){return bytes[i];}};
+bool operator==(const VoiceId& a,const VoiceId& b){return a.value==b.value;}
 bool operator!=(const VoiceId& a,const VoiceId& b){return a.value!=b.value;}
 bool ParseVoiceId(const char*,VoiceId&){return false;}
 struct VoiceContext { unsigned conversation_id=1; };
@@ -91,9 +96,35 @@ struct Recorder {
     bool RequestDiscardedDictation(const VoiceId&){return false;}
 };
 }
+namespace provisions::service {
+enum class Stage {None,Preview,Target,Confirm,Saving,Saved};
+struct Cursor{unsigned sequence=0,text_offset=0,alias_offset=0;};
+struct Snapshot{Cursor cursor;int next_alias_offset=-1,next_sequence=-1,next_text_offset=-1;
+    bool complete=false;std::string text;};
+struct Review{
+    Snapshot value;
+    void Reset(){} Stage stage()const{return Stage::None;}
+    bool MoreAliasesSelected()const{return false;}
+    Cursor cursor()const{return {};}
+    const Snapshot& snapshot()const{return value;}
+    void Navigate(Cursor){}bool Choose(){return false;}
+    bool Confirm(const VoiceId&){return false;}
+    std::string TargetLabel()const{return "Unassigned";}
+    bool GuestAllowed()const{return false;}
+    bool text_reviewed()const{return false;}
+    void MarkTextPage(unsigned,unsigned){}void MarkTargetPage(unsigned,unsigned){}
+};
+std::string PreviewPage(const std::string& text,unsigned,unsigned& pages){pages=1;return text;}
+}
+void esp_fill_random(void*,size_t){}
+enum class ProvisionsServicePhase{Ready,Preparing,Recording,Processing,Received,Saving,Saved,Lost};
 struct Paint {std::string title,focus;int menu_page=-1;};
 std::string service_heading;
 Paint painted;unsigned paint_count=0,qr_shown=0,qr_hidden=0;
+bool ProvisionsShowOrbitService(ProvisionsServicePhase,const std::string& status,const std::string&,const std::string&){
+    service_heading="Dojo · Service";painted={"Service",status,-1};++paint_count;return true;
+}
+
 std::string shown_qr;
 void ProvisionsHideOrbitWifiSetup(){++qr_hidden;}
 void ProvisionsShowOrbitWifiSetup(const std::string&){++qr_shown;}
@@ -158,6 +189,10 @@ struct Application {
     bool wifi=false,orbit_service_ready_=true,orbit_service_recovery_=false;
     bool orbit_mode_choice_service_=false,provisions_timer_ringing_=false;
     std::string orbit_service_code_,orbit_service_status_,orbit_service_table_="3";
+    provisions::service::Review orbit_service_review_;
+    provisions::VoiceId orbit_service_review_dismissed_{};
+    unsigned orbit_service_text_page_=0,orbit_service_target_page_=0;int64_t orbit_service_review_send_us_=0,orbit_service_review_received_us_=0;
+    void OrbitServiceNavigate(bool,bool=false){}
     bool orbit_mode_switch_pending_=false;std::string orbit_mode_switch_session_;
     uint8_t orbit_menu_index_=0;int state=kDeviceStateIdle;
     unsigned provisions_reconnect_wait_ticks_=3,fenced=0,ended=0,left=0,cancelled=0;

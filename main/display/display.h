@@ -86,6 +86,18 @@ void ProvisionsShowShoppingFocus(const std::string& above, const std::string& fo
 // virtual — a new vtable slot panics on connect.
 void ProvisionsShowOrbitMenu(uint8_t page);
 void ProvisionsShowOrbitServicePair(const std::string& payload);
+enum class ProvisionsServicePhase {
+    Ready,
+    Preparing,
+    Recording,
+    Processing,
+    Received,
+    Saving,
+    Saved,
+    Lost
+};
+bool ProvisionsShowOrbitService(ProvisionsServicePhase phase, const std::string& status,
+                                const std::string& body, const std::string& help);
 void ProvisionsShowOrbitWifiSetup(const std::string& payload);
 void ProvisionsHideOrbitWifiSetup();
 // Drop the spoken confirmation ("timer set" / reply hold) so a swipe or a

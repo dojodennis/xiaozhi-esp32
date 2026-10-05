@@ -531,6 +531,8 @@ void Application::HandleOrbitMenuBlueOnMain() {
         }
         if (orbit_service_recording_.load())
             StopOrbitServiceCapture();
+        else if (orbit_view_.load() == OrbitView::Service)
+            OrbitServiceNavigate(true);
         orbit_view_.store(OrbitView::Service);
         PaintOrbitView();
         return;
@@ -621,7 +623,7 @@ void Application::HandleOrbitFaceSwipe(bool right) {
             return;
         }
         if (IsOrbitService()) {
-            HandleOrbitMenuBlueOnMain();
+            OrbitServiceNavigate(right);
             return;
         }
         // The menu is its own pager: a sideways swipe flips the logo

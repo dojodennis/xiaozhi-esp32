@@ -1082,6 +1082,9 @@ void Application::InitializeProtocol() {
         }
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
         if (IsOrbitService() && strcmp(type->valuestring, "dojo_service") == 0) {
+            auto* websocket = static_cast<WebsocketProtocol*>(protocol.get());
+            if (websocket->ServiceReviewNegotiated())
+                OrbitServiceReviewFrame(root, protocol->session_id());
             auto state = cJSON_GetObjectItemCaseSensitive(root, "state");
             auto session = cJSON_GetObjectItemCaseSensitive(root, "session_id");
             if (cJSON_IsString(state) && cJSON_IsString(session) &&

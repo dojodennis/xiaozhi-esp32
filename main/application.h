@@ -28,6 +28,7 @@
 #include "provisions_tts_turn.h"
 #endif
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
+#include "provisions_service_review.h"
 #include "provisions_timer_dial_link.h"
 #include "provisions_timer_dismissal.h"
 #include "provisions_timer_player.h"
@@ -145,6 +146,8 @@ public:
     void OrbitServicePairing();
     void StopOrbitServiceCapture();
     void OrbitServiceFrame(const std::string& state, const std::string& detail = "");
+    void OrbitServiceReviewFrame(const cJSON* root, const std::string& session);
+    void OrbitServiceNavigate(bool forward, bool text_page = false);
     bool IsOrbitWifiSetup() const { return orbit_wifi_setup_.load(); }
     void StartOrbitWifiSetup(std::function<bool()> still_allowed);
     void CancelOrbitWifiSetup();
@@ -343,6 +346,12 @@ private:
     std::string orbit_service_table_;
     std::string orbit_service_code_;
     std::string orbit_service_status_ = "Connect to approve Service";
+    provisions::service::Review orbit_service_review_;
+    provisions::VoiceId orbit_service_review_dismissed_{};
+    uint32_t orbit_service_text_page_ = 0;
+    uint32_t orbit_service_target_page_ = 0;
+    int64_t orbit_service_review_send_us_ = 0;
+    int64_t orbit_service_review_received_us_ = 0;
     bool orbit_mode_switch_pending_ = false;
     std::string orbit_mode_switch_session_;
     enum class OrbitView : uint8_t { Home, Menu, Shopping, Notes, Stock, Service, ModeChoice };

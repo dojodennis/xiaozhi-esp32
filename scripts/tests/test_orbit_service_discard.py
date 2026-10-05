@@ -40,6 +40,7 @@ struct FakeRecorder {
 };
 struct WebsocketProtocol {
  unsigned interrupts=0;std::string session_id(){return "current-session";}
+ bool ServiceReviewNegotiated(){return false;}
  void InterruptStoredRecording(){++interrupts;}
 };
 struct Application {
@@ -52,6 +53,7 @@ struct Application {
  void StopListening(){++stopped;}void EndLocalRecordingOnMain(){++released;}
  void PaintOrbitService(){}void Schedule(std::function<void()> fn){main.push_back(std::move(fn));}
  void Drain(){auto work=std::move(main);main.clear();for(auto& fn:work)fn();}
+ void OrbitServiceReviewFrame(const cJSON*,const std::string&){}
  void OrbitServiceFrame(const std::string& state,const std::string& detail=""){ __DISCARD__ }
  void Receive(const std::string& json) {
   std::unique_ptr<cJSON,decltype(&cJSON_Delete)> parsed(cJSON_Parse(json.c_str()),cJSON_Delete);

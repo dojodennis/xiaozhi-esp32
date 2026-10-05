@@ -22,6 +22,7 @@
 #include "orbit_dial.h"
 #include "provisions_hardware_facts.h"
 #include "provisions_local_capture_feedback.h"
+#include "provisions_service_review.h"
 #include "provisions_timer_snapshot.h"
 #include "provisions_voice_feedback.h"
 #include "utf8_ellipsis.h"
@@ -293,7 +294,7 @@ private:
     uint32_t crest_result_hold_ms_ = 0;
     const char* crest_result_caption_ = "";
     OrbitCrest::Progress crest_progress_ = OrbitCrest::Progress::Command;
-    const char* crest_displayed_caption_ = nullptr;
+    std::string crest_displayed_caption_;
     bool crest_reply_received_ = false;
     bool crest_speech_seen_ = false;
     bool crest_error_ring_geometry_ = false;
@@ -318,6 +319,12 @@ private:
     // Small grey word above the List / Notes face so a glance tells them apart.
     lv_obj_t* face_caption_ = nullptr;
     std::string face_caption_text_;
+    bool service_layout_ = false;
+    std::string service_caption_text_;
+    lv_obj_t* service_panel_ = nullptr;
+    lv_obj_t* service_body_ = nullptr;
+    lv_obj_t* service_help_ = nullptr;
+    std::string service_body_text_, service_help_text_;
     lv_obj_t* lock_layer_ = nullptr;
     // Yellow chevron nudging toward the Talk button (about 10:30 on the rim)
     // while a face says "Hold yellow". Bobs outward so the eye finds it.
@@ -426,6 +433,14 @@ private:
         SetVisible(face_caption_, false);
     }
 
+    void HideOrbitServiceLocked() {
+        service_layout_ = false;
+        SetVisible(service_panel_, false);
+        lv_obj_set_size(crest_caption_, 280, 74);
+        lv_obj_align(crest_caption_, LV_ALIGN_CENTER, 0, 97);
+        lv_obj_set_style_text_font(crest_caption_, &font_noto_sans_basic_30_4, 0);
+    }
+
     void ChangeCrestStateLocked(OrbitCrest::State state) {
         crest_transition_from_ = crest_frame_;
         crest_transition_ms_ = CrestNowMs();
@@ -509,13 +524,17 @@ private:
         }
         const bool stock_ready = Application::GetInstance().IsOrbitStockFace() &&
                                  crest_state_ == OrbitCrest::State::Idle;
-        ProvisionsStopWatch::StyleVoiceCaption(crest_caption_, stock_ready);
-        const char* text = stock_ready ? ProvisionsStopWatch::kStockReadyCaption
+        if (!service_layout_)
+            ProvisionsStopWatch::StyleVoiceCaption(crest_caption_, stock_ready);
+        const char* text = service_layout_ ? service_caption_text_.c_str()
+                           : stock_ready   ? ProvisionsStopWatch::kStockReadyCaption
                            : crest_state_ == OrbitCrest::State::Result
                                ? crest_result_caption_
                                : OrbitCrest::Caption(crest_state_, crest_progress_);
         if (crest_displayed_caption_ != text) {
-            lv_label_set_text_static(crest_caption_, text);
+            // Service captions are owned strings; LVGL copies before the next
+            // application paint can change their backing allocation.
+            lv_label_set_text(crest_caption_, text);
             crest_displayed_caption_ = text;
         }
         lv_obj_set_style_text_color(
@@ -577,6 +596,32 @@ private:
         lv_obj_set_style_text_align(crest_caption_, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_style_text_line_space(crest_caption_, 3, 0);
         lv_label_set_long_mode(crest_caption_, LV_LABEL_LONG_CLIP);
+
+        service_panel_ = lv_obj_create(crest_layer_);
+        lv_obj_remove_style_all(service_panel_);
+        lv_obj_set_size(service_panel_, 466, 466);
+        lv_obj_center(service_panel_);
+        lv_obj_remove_flag(service_panel_, LV_OBJ_FLAG_SCROLLABLE);
+        service_body_ = lv_label_create(service_panel_);
+        lv_obj_set_size(service_body_, provisions::service::kPreviewWidth,
+                        provisions::service::kPreviewHeight);
+        lv_obj_align(service_body_, LV_ALIGN_CENTER, 0, 5);
+        lv_obj_set_style_text_font(service_body_, &font_noto_sans_basic_30_4, 0);
+        lv_obj_set_style_text_color(service_body_, lv_color_hex(OrbitCrest::kIvory), 0);
+        lv_obj_set_style_text_align(service_body_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_line_space(service_body_, provisions::service::kPreviewLineSpace, 0);
+        lv_obj_set_style_bg_color(service_body_, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(service_body_, LV_OPA_COVER, 0);
+        lv_obj_set_style_pad_all(service_body_, provisions::service::kPreviewPadding, 0);
+        lv_label_set_long_mode(service_body_, LV_LABEL_LONG_WRAP);
+        service_help_ = lv_label_create(service_panel_);
+        lv_obj_set_size(service_help_, 318, 54);
+        lv_obj_align(service_help_, LV_ALIGN_CENTER, 0, 167);
+        lv_obj_set_style_text_font(service_help_, &font_noto_sans_basic_16_4, 0);
+        lv_obj_set_style_text_color(service_help_, lv_color_hex(OrbitCrest::kIvory), 0);
+        lv_obj_set_style_text_align(service_help_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_label_set_long_mode(service_help_, LV_LABEL_LONG_WRAP);
+        SetVisible(service_panel_, false);
 
         shopping_service_arc_ = lv_arc_create(crest_layer_);
         lv_obj_set_size(shopping_service_arc_, ProvisionsStopwatchOrbit::kDisplaySize - 10,
@@ -1068,6 +1113,8 @@ private:
         SetVisible(crest_layer_, (show_normal || show_reply) && !show_compact_timer);
         SetVisible(compact_timer_layer_, show_compact_timer);
         SetVisible(dictation_panel_, dictation_visible_ && dictation_review_);
+        SetVisible(service_panel_,
+                   service_layout_ && display_awake && !show_alarm && !orbit_locked_ui_);
         SetVisible(orbit_layer_, show_orbit);
         SetVisible(alarm_layer_, show_alarm);
         SetVisible(hold_hint_, hold_hint_wanted_ && display_awake && !show_alarm && !orbit_locked_ui_);
@@ -2775,6 +2822,7 @@ public:
         DisplayLockGuard lock(this);
         if (dictation_panel_ == nullptr)
             return;
+        HideOrbitServiceLocked();
         (void)action;
         // Entering Stock leaves timer details; ringing alarms still own the glass.
         if (!visible && Application::GetInstance().IsOrbitStockFace())
@@ -2853,6 +2901,74 @@ public:
         SetReplyLayoutLocked(false);
     }
 
+    bool ShowOrbitService(ProvisionsServicePhase phase, const std::string& status,
+                          const std::string& body, const std::string& help) {
+        // A skipped paint is retried on the next application tick; network/audio
+        // work never waits for a starved renderer.
+        if (!Lock(400))
+            return false;
+        struct Release {
+            RoundLcdDisplay* self;
+            ~Release() { self->Unlock(); }
+        } release{this};
+        if (!service_panel_)
+            return false;
+        DismissSpokenFaceLocked();
+        HideOrbitMenuLocked();
+        shopping_focus_layout_ = false;
+        service_layout_ = true;
+        dictation_visible_ = true;
+        dictation_review_ = false;
+        dictation_saving_ = false;
+        SetVisible(dictation_panel_, false);
+        SetVisible(shopping_service_arc_, false);
+        SetVisible(crest_band_, true);
+        SetVisible(crest_star_, true);
+        SetVisible(crest_caption_, true);
+        for (auto* ring : crest_rings_)
+            SetVisible(ring, true);
+        OrbitCrest::State state = OrbitCrest::State::Idle;
+        switch (phase) {
+            case ProvisionsServicePhase::Preparing:
+            case ProvisionsServicePhase::Processing:
+            case ProvisionsServicePhase::Saving:
+                state = OrbitCrest::State::Thinking;
+                break;
+            case ProvisionsServicePhase::Recording:
+                state = OrbitCrest::State::Listening;
+                break;
+            case ProvisionsServicePhase::Lost:
+                state = OrbitCrest::State::Error;
+                break;
+            case ProvisionsServicePhase::Received:
+            case ProvisionsServicePhase::Saved:
+                state = OrbitCrest::State::Result;
+                break;
+            default:
+                break;
+        }
+        service_caption_text_ = status;
+        lv_obj_set_size(crest_caption_, 316, body.empty() ? 86 : 48);
+        lv_obj_align(crest_caption_, LV_ALIGN_CENTER, 0, body.empty() ? 133 : -148);
+        lv_obj_set_style_text_font(crest_caption_,
+                                   body.empty() && status.size() <= 30 ? &font_noto_sans_basic_30_4
+                                                                       : &font_noto_sans_basic_16_4,
+                                   0);
+        SetLabelText(service_body_, &service_body_text_, body);
+        SetLabelText(service_help_, &service_help_text_, help);
+        SetVisible(service_body_, !body.empty());
+        lv_obj_align(service_help_, LV_ALIGN_CENTER, 0, body.empty() ? 192 : 166);
+        SetVisible(service_panel_, true);
+        lv_obj_move_foreground(service_panel_);
+        lv_obj_move_foreground(crest_caption_);
+        if (crest_state_ != state)
+            ChangeCrestStateLocked(state);
+        else
+            RenderCrestLocked();
+        SetReplyLayoutLocked(false);
+        return !power_save_active_.load() && !timer_alarm_active_.load() && !orbit_locked_ui_;
+    }
+
     void ShowShoppingFocus(const std::string& above, const std::string& focus,
                            const std::string& below, const char* caption) {
         if (dictation_panel_ == nullptr)
@@ -2872,6 +2988,7 @@ public:
             RoundLcdDisplay* self;
             ~Release() { self->Unlock(); }
         } release{this};
+        HideOrbitServiceLocked();
         DismissSpokenFaceLocked();
         HideOrbitMenuLocked();
         const bool already = shopping_focus_layout_;
@@ -3098,6 +3215,7 @@ public:
 
     void ShowOrbitMenuLocked(uint8_t page) {
         DismissSpokenFaceLocked();
+        HideOrbitServiceLocked();
         shopping_focus_layout_ = false;
         menu_layout_ = true;
         dictation_visible_ = true;
@@ -3158,6 +3276,7 @@ public:
     void ShowOrbitWifiSetup(const std::string& payload, bool service = false) {
 #if CONFIG_LV_USE_QRCODE
         DisplayLockGuard lock(this);
+        HideOrbitServiceLocked();
         if (wifi_setup_layer_)
             lv_obj_delete(wifi_setup_layer_);
         wifi_setup_layer_ = lv_obj_create(lv_screen_active());
@@ -3199,7 +3318,9 @@ public:
                 }
             }
         }
-        label(service ? "approve this shift and table\nblue opens mode menu" : "join warning? open 192.168.4.1\nblue cancels", 408);
+        label(service ? "approve your waiter shift\nblue opens mode menu"
+                      : "join warning? open 192.168.4.1\nblue cancels",
+              408);
         SetReplyLayoutLocked(false);
 #endif
     }
@@ -3482,6 +3603,10 @@ private:
                                         Application::GetInstance().HandleOrbitFaceSwipe(dx > 0);
                                         self->ResetDisplayIdleTimer();
                                     }
+                                } else if (Application::GetInstance().IsOrbitService() && !alarm &&
+                                           !menu) {
+                                    Application::GetInstance().OrbitServiceNavigate(dy < 0, true);
+                                    self->ResetDisplayIdleTimer();
                                 } else if (shopping || notes) {
                                     ESP_LOGI(TAG, "list swipe: y %u -> %u travel %d",
                                              self->touch_down_y_, y, dy);
@@ -3494,7 +3619,9 @@ private:
                         // six-timer overview. On release, so a swipe is never also a
                         // tap; a press that stopped a ring is spent.
                         if (!pressed && self->touch_was_pressed_ && !self->touch_swiped_ &&
-                            !shopping && !notes && !menu && !self->touch_alarm_press_ &&
+                            !shopping && !notes && !menu &&
+                            !Application::GetInstance().IsOrbitService() &&
+                            !self->touch_alarm_press_ &&
                             !self->touch_dismiss_queued_.exchange(true)) {
                             Application::GetInstance().Schedule([self]() {
                                 self->touch_dismiss_queued_.store(false);
@@ -4452,6 +4579,14 @@ void ProvisionsShowOrbitMenu(uint8_t page) {
         return;
     }
     static_cast<RoundLcdDisplay*>(display)->ShowOrbitMenu(page);
+}
+
+bool ProvisionsShowOrbitService(ProvisionsServicePhase phase, const std::string& status,
+                                const std::string& body, const std::string& help) {
+    auto* display = Board::GetInstance().GetDisplay();
+    if (display)
+        return static_cast<RoundLcdDisplay*>(display)->ShowOrbitService(phase, status, body, help);
+    return false;
 }
 
 void ProvisionsShowOrbitServicePair(const std::string& payload) {

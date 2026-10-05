@@ -403,7 +403,8 @@ struct Application {
     std::vector<std::function<void()>> queue;
     static Application& GetInstance() { static Application app; return app; }
     bool IsOrbitMenuFace() { return menu; }
-    bool IsOrbitModeChoice() { return mode; }
+    bool IsOrbitService(){return false;}
+ bool IsOrbitModeChoice() { return mode; }
     void Schedule(std::function<void()> fn) { queue.push_back(std::move(fn)); }
     void Drain() { auto batch=std::move(queue); queue.clear(); for(auto& fn:batch) fn(); }
 };

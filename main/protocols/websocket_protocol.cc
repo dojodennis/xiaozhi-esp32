@@ -218,6 +218,7 @@ void WebsocketProtocol::CloseAudioChannel(bool send_goodbye) {
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
     timers_enabled_.store(false);
     dictation_enabled_.store(false);
+    service_review_enabled_.store(false);
 #endif
     connection_generation_.fetch_add(1);
     if (gateway_hello_pending_.exchange(false)) {
@@ -273,6 +274,7 @@ bool WebsocketProtocol::OpenAudioChannel() {
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
         timers_enabled_.store(false);
         dictation_enabled_.store(false);
+        service_review_enabled_.store(false);
 #endif
         capture_enabled_.store(false);
     }
@@ -304,6 +306,7 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
     timers_enabled_.store(false);
     dictation_enabled_.store(false);
+    service_review_enabled_.store(false);
 #endif
     gateway_hello_pending_.store(false);
     last_gateway_activity_us_.store(0);
@@ -453,6 +456,7 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
                 timers_enabled_.store(false);
                 dictation_enabled_.store(false);
+                service_review_enabled_.store(false);
 #endif
                 ESP_LOGE(TAG, "Rejecting gateway JSON containing an embedded NUL");
                 SetError("Invalid gateway message");
@@ -481,6 +485,7 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
                 timers_enabled_.store(false);
                 dictation_enabled_.store(false);
+                service_review_enabled_.store(false);
 #endif
                 ESP_LOGE(TAG, "Rejecting malformed gateway JSON");
                 SetError("Invalid gateway message");
@@ -505,6 +510,7 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
                         timers_enabled_.store(false);
                         dictation_enabled_.store(false);
+                        service_review_enabled_.store(false);
 #endif
                         SetError("Unexpected gateway hello");
                         cJSON_Delete(root);
@@ -532,8 +538,14 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
                         timers_enabled_.store(false);
                         dictation_enabled_.store(false);
+                        service_review_enabled_.store(false);
 #endif
                         SetError("Invalid gateway message session");
+                        cJSON_Delete(root);
+                        return;
+                    }
+                    if (strcmp(type->valuestring, "dojo_service") == 0 && len >= 8192) {
+                        RejectServerHello("Oversized Dojo service response");
                         cJSON_Delete(root);
                         return;
                     }
@@ -543,6 +555,7 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
                             timers_enabled_.store(false);
                             dictation_enabled_.store(false);
+                            service_review_enabled_.store(false);
 #endif
                             SetError("Invalid gateway pong");
                             cJSON_Delete(root);
@@ -566,6 +579,7 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
                 timers_enabled_.store(false);
                 dictation_enabled_.store(false);
+                service_review_enabled_.store(false);
 #endif
                 ESP_LOGE(TAG, "Rejecting gateway message without a type");
                 SetError("Invalid gateway message");
@@ -598,6 +612,7 @@ bool WebsocketProtocol::OpenAudioChannelImpl() {
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
         timers_enabled_.store(false);
         dictation_enabled_.store(false);
+        service_review_enabled_.store(false);
 #endif
         if (gateway_hello_pending_.exchange(false)) {
             SetError(Lang::Strings::SERVER_NOT_CONNECTED);
@@ -686,6 +701,7 @@ std::string WebsocketProtocol::GetHelloMessage() {
     cJSON_AddBoolToObject(features, "dictation_v1", true);
     if (Application::GetInstance().IsOrbitService()) {
         cJSON_AddBoolToObject(features, "dojo_general_v2", true);
+        cJSON_AddBoolToObject(features, "dojo_transcript_v1", true);
     }
 #if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
     const auto runtime = std::atomic_load(&output_fence_runtime_);
@@ -820,6 +836,7 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
             }
             capture_enabled_.store(false);
             dictation_enabled_.store(false);
+            service_review_enabled_.store(false);
             timers_enabled_.store(false);
             gateway_authenticated_.store(true);
             gateway_hello_pending_.store(false);
@@ -839,6 +856,32 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
             (!general && !legacy)) {
             RejectServerHello("Invalid Dojo recording context");
             return;
+        }
+        for (const auto* key :
+             {"state", "scope", "protocol_version", "transcript_protocol_version", "binding_id"}) {
+            unsigned count = 0;
+            for (auto* item = service->child; item; item = item->next)
+                if (item->string && strcmp(item->string, key) == 0)
+                    ++count;
+            if (count > 1) {
+                RejectServerHello("Ambiguous Dojo transcript context");
+                return;
+            }
+        }
+        const auto transcript_version =
+            cJSON_GetObjectItemCaseSensitive(service, "transcript_protocol_version");
+        if (transcript_version) {
+            provisions::VoiceId binding;
+            const auto binding_value = cJSON_GetObjectItemCaseSensitive(service, "binding_id");
+            if (!general || !cJSON_IsNumber(transcript_version) ||
+                transcript_version->valuedouble != 1 || !cJSON_IsString(binding_value) ||
+                !provisions::ParseVoiceId(binding_value->valuestring, binding)) {
+                RejectServerHello("Invalid Dojo transcript context");
+                return;
+            }
+            std::lock_guard<std::mutex> lock(capture_context_mutex_);
+            service_review_binding_ = binding;
+            service_review_enabled_.store(true);
         }
     } else if (service) {
         RejectServerHello("Unexpected Dojo context");
@@ -866,6 +909,10 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
     if (!cJSON_IsTrue(capture_feature) ||
         !::provisions::ParseVoiceContext(capture_context, context)) {
         RejectServerHello("Local capture is unavailable at this gateway");
+        return;
+    }
+    if (service_review_enabled_.load() && context.conversation_id != service_review_binding_) {
+        RejectServerHello("Mismatched Dojo shift context");
         return;
     }
     {
@@ -959,6 +1006,7 @@ bool WebsocketProtocol::ParseLiteServerHello(const cJSON* root) {
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
     timers_enabled_.store(params.timers_v1);
     dictation_enabled_.store(false);
+    service_review_enabled_.store(false);
     {
         // The recorder journals every press under the live capture context and
         // the upload path requires one. Lite has no conversation model, so all
@@ -988,6 +1036,7 @@ void WebsocketProtocol::RejectServerHello(const char* message) {
     capture_enabled_.store(false);
     timers_enabled_.store(false);
     dictation_enabled_.store(false);
+    service_review_enabled_.store(false);
 #endif
     gateway_hello_pending_.store(false);
     SetError(message);
@@ -1012,6 +1061,7 @@ void WebsocketProtocol::EndOperation() {
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
         timers_enabled_.store(false);
         dictation_enabled_.store(false);
+        service_review_enabled_.store(false);
 #endif
         capture_enabled_.store(false);
         std::atomic_store(&websocket_, std::shared_ptr<Connection>{});
