@@ -98,12 +98,14 @@ struct Recorder {
 }
 namespace provisions::service {
 enum class Stage {None,Preview,Target,Confirm,Saving,Saved};
+enum class ReviewError {None,WrongRecording,Conflict,UpdateRequired};
 struct Cursor{unsigned sequence=0,text_offset=0,alias_offset=0;};
 struct Snapshot{Cursor cursor;int next_alias_offset=-1,next_sequence=-1,next_text_offset=-1;
     bool complete=false;std::string text;};
 struct Review{
     Snapshot value;
     void Reset(){} Stage stage()const{return Stage::None;}
+    ReviewError error()const{return ReviewError::None;}bool RetryRejected(){return false;}
     bool MoreAliasesSelected()const{return false;}
     Cursor cursor()const{return {};}
     const Snapshot& snapshot()const{return value;}

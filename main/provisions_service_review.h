@@ -46,8 +46,15 @@ struct Route {
     bool guest = false;
     Alias alias;
 };
+enum class ReviewError { None, WrongRecording, Conflict, UpdateRequired };
+struct Rejection {
+    VoiceId binding_id{}, recording_id{};
+    Cursor cursor;
+    ReviewError error = ReviewError::None;
+};
 bool ParseSnapshot(const cJSON* root, const std::string& session, Snapshot& out);
 bool ParseSaved(const cJSON* root, const std::string& session, Route& out);
+bool ParseRejection(const cJSON* root, const std::string& session, Rejection& out);
 std::string ReviewJson(const std::string& session, const VoiceId& recording, Cursor cursor);
 std::string RouteJson(const std::string& session, const Route& route);
 size_t CharacterCount(const std::string& text);
@@ -61,6 +68,8 @@ public:
                const std::string& session = "");
     bool Accept(const Snapshot& snapshot, const std::string& session);
     bool Saved(const Route& receipt, const std::string& session);
+    bool Reject(const Rejection& rejection, const std::string& session);
+    bool RetryRejected();
     void Navigate(Cursor cursor);
     bool Choose();
     void NextTarget();
@@ -78,6 +87,7 @@ public:
     Stage stage() const { return stage_; }
     Cursor cursor() const { return cursor_; }
     size_t target() const { return target_; }
+    ReviewError error() const { return error_; }
     std::string TargetLabel() const;
     bool matches(const VoiceId& recording, const VoiceId& binding,
                  const std::string& session) const;
@@ -89,6 +99,7 @@ private:
     std::string session_;
     Cursor cursor_;
     Stage stage_ = Stage::None;
+    ReviewError error_ = ReviewError::None;
     size_t target_ = 0;  // 0 unassigned; 1 General; subsequent entries exact aliases.
     uint32_t next_text_page_ = 0, next_target_page_ = 0;
     bool text_reviewed_ = false, target_reviewed_ = false;

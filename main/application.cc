@@ -42,6 +42,9 @@ constexpr int kProvisionsHeartbeatIntervalSeconds = 15;
 constexpr int kProvisionsResponseTimeoutSeconds = 30;
 constexpr int64_t kProvisionsTtsTimeoutUs = 35LL * 1000 * 1000;
 constexpr int kProvisionsMaximumReconnectAttempts = 5;
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+constexpr int kProvisionsServiceReconnectIntervalSeconds = 30;
+#endif
 // Orbit Lite reply watchdog: seconds from the upload's `listen stop` with no
 // tts/face frame before the turn is given up with the failed face. The lite
 // gateway keeps no receipts, so nothing is lost by giving up early.
@@ -2401,8 +2404,15 @@ void Application::ReconnectVoiceGateway() {
                                  }
                              } else {
                                  protocol->CloseAudioChannel();
-                                 const int attempt = app->provisions_reconnect_attempts_++;
-                                 app->provisions_reconnect_wait_ticks_ = 1 << std::min(attempt, 4);
+                                 const int attempt = app->provisions_reconnect_attempts_;
+                                 app->provisions_reconnect_attempts_ =
+                                     std::min(attempt + 1, kProvisionsMaximumReconnectAttempts);
+                                 app->provisions_reconnect_wait_ticks_ =
+                                     app->IsOrbitService() &&
+                                             app->provisions_reconnect_attempts_ >=
+                                                 kProvisionsMaximumReconnectAttempts
+                                         ? kProvisionsServiceReconnectIntervalSeconds
+                                         : 1 << std::min(attempt, 4);
                              }
                              if (app->GetDeviceState() == kDeviceStateIdle)
                                  Board::GetInstance().GetDisplay()->SetStatus(
@@ -2542,7 +2552,14 @@ void Application::HandleProvisionsGatewayMaintenance() {
             ESP_LOGE(TAG, "Pending firmware failed gateway health; rebooting for rollback");
             esp_restart();
         }
+        // Verified Service firmware keeps a slow recovery path; Chef/Lite and
+        // the pending-image rollback budget retain their existing behavior.
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        if (!IsOrbitService() || (ota_ && ota_->IsCurrentVersionPendingVerification()))
+            return;
+#else
         return;
+#endif
     }
     if (provisions_reconnect_wait_ticks_ > 0) {
         provisions_reconnect_wait_ticks_--;

@@ -199,6 +199,18 @@ void Application::OrbitServiceTap() {
             return;
         }
         using provisions::service::Stage;
+        using provisions::service::ReviewError;
+        if (orbit_service_review_.error() == ReviewError::Conflict) {
+            orbit_service_review_.RetryRejected();
+            orbit_service_review_send_us_ = 0;
+            orbit_service_status_ = "Retrying transcript review";
+            PaintOrbitService();
+            return;
+        }
+        if (orbit_service_review_.error() == ReviewError::UpdateRequired) {
+            PaintOrbitService();
+            return;
+        }
         const auto stage = orbit_service_review_.stage();
         if (stage == Stage::Preview || stage == Stage::Target) {
             if (orbit_service_review_.MoreAliasesSelected()) {
@@ -279,8 +291,11 @@ void Application::OrbitServiceReviewFrame(const cJSON* root, const std::string& 
     // Parse/copy once on the socket task; no cJSON tree survives the callback.
     provisions::service::Snapshot snapshot;
     provisions::service::Route saved;
+    provisions::service::Rejection rejection;
     const bool transcript = provisions::service::ParseSnapshot(root, session, snapshot);
     const bool receipt = !transcript && provisions::service::ParseSaved(root, session, saved);
+    const bool rejected =
+        !transcript && !receipt && provisions::service::ParseRejection(root, session, rejection);
     const auto state = cJSON_GetObjectItemCaseSensitive(root, "state");
     const auto frame_session = cJSON_GetObjectItemCaseSensitive(root, "session_id");
     const bool current_session =
@@ -298,10 +313,11 @@ void Application::OrbitServiceReviewFrame(const cJSON* root, const std::string& 
                                     read_id("segment_id", failed_segment) &&
                                     read_id("request_id", failed_request) &&
                                     read_id("binding_id", failed_binding);
-    if (!transcript && !receipt && !lost && !correlated_refresh)
+    if (!transcript && !receipt && !rejected && !lost && !correlated_refresh)
         return;
-    Schedule([this, session, snapshot, saved, transcript, receipt, lost, correlated_refresh,
-              received_us, failed_record, failed_segment, failed_request, failed_binding]() {
+    Schedule([this, session, snapshot, saved, rejection, transcript, receipt, rejected, lost,
+              correlated_refresh, received_us, failed_record, failed_segment, failed_request,
+              failed_binding]() {
         const auto protocol = GetProtocol();
         if (!IsOrbitService() || !protocol || protocol->session_id() != session ||
             !protocol->IsAudioChannelOpened())
@@ -321,7 +337,7 @@ void Application::OrbitServiceReviewFrame(const cJSON* root, const std::string& 
             if (!recorder)
                 return;
             const auto record = recorder->DictationRecord();
-            if (record.id == orbit_service_review_dismissed_ ||
+            if (record.conversation_id != binding || record.id == orbit_service_review_dismissed_ ||
                 (orbit_service_recording_.load() &&
                  record.state != provisions::dictation::State::Open))
                 return;
@@ -343,6 +359,9 @@ void Application::OrbitServiceReviewFrame(const cJSON* root, const std::string& 
                         : -1LL);
             } else if (receipt) {
                 if (!orbit_service_review_.Saved(saved, session))
+                    return;
+            } else if (rejected) {
+                if (!orbit_service_review_.Reject(rejection, session))
                     return;
             } else if (correlated_refresh) {
                 const auto& pending = orbit_service_review_.pending();
@@ -458,6 +477,7 @@ void Application::TickOrbitService() {
     }
     const auto protocol = GetProtocol();
     const bool connected = protocol && protocol->IsAudioChannelOpened();
+    bool previous_binding_record = false;
     if (!connected && orbit_service_review_.stage() != provisions::service::Stage::None) {
         orbit_service_review_.Reset();
         orbit_service_status_ = "Connection lost. Recording kept";
@@ -468,7 +488,12 @@ void Application::TickOrbitService() {
         if (r.id != provisions::VoiceId{} && r.id != orbit_service_review_dismissed_ &&
             websocket->GetServiceReviewBinding(binding) &&
             (!orbit_service_recording_.load() || r.state == provisions::dictation::State::Open)) {
-            if (!orbit_service_review_.matches(r.id, binding, protocol->session_id()))
+            // A fresh shift binding never transfers ownership of retained audio.
+            if (r.conversation_id != binding) {
+                previous_binding_record = true;
+                orbit_service_review_.Reset();
+                orbit_service_status_ = "Previous shift recording kept";
+            } else if (!orbit_service_review_.matches(r.id, binding, protocol->session_id()))
                 orbit_service_review_.Reset(r.id, binding, protocol->session_id());
             const int64_t now = esp_timer_get_time();
             using provisions::service::Stage;
@@ -476,7 +501,9 @@ void Application::TickOrbitService() {
             const bool waiting =
                 stage == Stage::None ||
                 (stage == Stage::Preview && !orbit_service_review_.snapshot().complete);
-            if (!provisions_network_busy_.load() &&
+            if (r.conversation_id == binding &&
+                orbit_service_review_.error() == provisions::service::ReviewError::None &&
+                !provisions_network_busy_.load() &&
                 (orbit_service_review_send_us_ == 0 ||
                  now - orbit_service_review_send_us_ >= 1000000)) {
                 std::string message;
@@ -517,7 +544,7 @@ void Application::TickOrbitService() {
         if (connected && !provisions_network_busy_.load())
             recorder->RequestReplay();
     } else if (orbit_service_ready_ && r.state == provisions::dictation::State::Reviewed &&
-               !recorder->PendingCount()) {
+               !recorder->PendingCount() && !previous_binding_record) {
         orbit_service_status_ = "Sent to Dojo. Review at the desk";
     }
     if (orbit_view_.load() == OrbitView::Service)
@@ -558,7 +585,16 @@ void Application::PaintOrbitService() {
         using provisions::service::Stage;
         const auto stage = orbit_service_review_.stage();
         const auto& snapshot = orbit_service_review_.snapshot();
-        if (stage == Stage::Target || stage == Stage::Confirm) {
+        const auto error = orbit_service_review_.error();
+        using provisions::service::ReviewError;
+        if (error != ReviewError::None) {
+            status = error == ReviewError::WrongRecording ? "Review unavailable. Recording kept"
+                     : error == ReviewError::Conflict     ? "Review delayed. Recording kept"
+                                                          : "Update required. Recording kept";
+            help = error == ReviewError::WrongRecording ? "yellow requests a new recording"
+                   : error == ReviewError::Conflict     ? "yellow retries review"
+                                                        : "Review at the Dojo desk";
+        } else if (stage == Stage::Target || stage == Stage::Confirm) {
             phase = ProvisionsServicePhase::Received;
             status = stage == Stage::Confirm ? "Confirm this note" : "Choose destination";
             body = provisions::service::PreviewPage(orbit_service_review_.TargetLabel(),
@@ -603,6 +639,8 @@ void Application::PaintOrbitService() {
                 status = "Processing transcript";
                 help = "Recording kept. Waiting for Dojo";
             } else {
+                if (status == "Connection lost. Recording kept")
+                    status = "Connected. Recording kept";
                 help = "yellow records · hold blue to pair";
             }
         }

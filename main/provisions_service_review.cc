@@ -244,6 +244,32 @@ bool ParseSaved(const cJSON* root, const std::string& session, Route& out) {
     return true;
 }
 
+bool ParseRejection(const cJSON* root, const std::string& session, Rejection& out) {
+    if (!Keys(root, {"type", "state", "session_id", "binding_id", "recording_id", "sequence",
+                     "text_offset", "alias_offset", "error"}) ||
+        !Text(Field(root, "type"), "dojo_service") ||
+        !Text(Field(root, "state"), "review_rejected") || session.empty() ||
+        !Text(Field(root, "session_id"), session))
+        return false;
+    Rejection rejection;
+    if (!Id(Field(root, "binding_id"), rejection.binding_id) ||
+        !Id(Field(root, "recording_id"), rejection.recording_id) ||
+        !Number(Field(root, "sequence"), 59, rejection.cursor.sequence) ||
+        !Number(Field(root, "text_offset"), 6000, rejection.cursor.text_offset) ||
+        !Number(Field(root, "alias_offset"), 10000, rejection.cursor.alias_offset))
+        return false;
+    if (Text(Field(root, "error"), "wrong_recording"))
+        rejection.error = ReviewError::WrongRecording;
+    else if (Text(Field(root, "error"), "conflict"))
+        rejection.error = ReviewError::Conflict;
+    else if (Text(Field(root, "error"), "update_required"))
+        rejection.error = ReviewError::UpdateRequired;
+    else
+        return false;
+    out = rejection;
+    return true;
+}
+
 std::string ReviewJson(const std::string& session, const VoiceId& recording, Cursor cursor) {
     if (session.empty() || recording == VoiceId{} || cursor.sequence > 59 ||
         cursor.text_offset > 100000 || cursor.alias_offset > 100000)
@@ -345,6 +371,7 @@ void Review::Reset(const VoiceId& recording, const VoiceId& binding, const std::
     pending_ = {};
     cursor_ = {};
     stage_ = Stage::None;
+    error_ = ReviewError::None;
     target_ = 0;
     next_text_page_ = next_target_page_ = 0;
     text_reviewed_ = target_reviewed_ = false;
@@ -356,7 +383,7 @@ bool Review::matches(const VoiceId& recording, const VoiceId& binding,
 bool Review::Accept(const Snapshot& snapshot, const std::string& session) {
     if (!matches(snapshot.recording_id, snapshot.binding_id, session) ||
         !(cursor_ == snapshot.cursor) || snapshot.revision < snapshot_.revision ||
-        stage_ == Stage::Saving || stage_ == Stage::Saved ||
+        error_ != ReviewError::None || stage_ == Stage::Saving || stage_ == Stage::Saved ||
         (snapshot.revision == snapshot_.revision &&
          ((snapshot_.complete && !snapshot.complete) ||
           snapshot.received_segments < snapshot_.received_segments)))
@@ -374,8 +401,25 @@ bool Review::Accept(const Snapshot& snapshot, const std::string& session) {
     }
     return true;
 }
+bool Review::Reject(const Rejection& rejection, const std::string& session) {
+    if (!matches(rejection.recording_id, rejection.binding_id, session) ||
+        !(cursor_ == rejection.cursor) || rejection.error == ReviewError::None ||
+        stage_ == Stage::Saving || stage_ == Stage::Saved || error_ != ReviewError::None)
+        return false;
+    const auto cursor = cursor_;
+    Reset(recording_, binding_, session_);
+    cursor_ = cursor;
+    error_ = rejection.error;
+    return true;
+}
+bool Review::RetryRejected() {
+    if (error_ != ReviewError::Conflict)
+        return false;
+    error_ = ReviewError::None;
+    return true;
+}
 void Review::Navigate(Cursor cursor) {
-    if (stage_ == Stage::Saving)
+    if (stage_ == Stage::Saving || error_ != ReviewError::None)
         return;
     cursor_ = cursor;
     stage_ = Stage::None;
