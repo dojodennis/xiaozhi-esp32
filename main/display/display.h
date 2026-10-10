@@ -94,7 +94,8 @@ enum class ProvisionsServicePhase {
     Received,
     Saving,
     Saved,
-    Lost
+    Lost,
+    Connecting
 };
 bool ProvisionsShowOrbitService(ProvisionsServicePhase phase, const std::string& status,
                                 const std::string& body, const std::string& help);
