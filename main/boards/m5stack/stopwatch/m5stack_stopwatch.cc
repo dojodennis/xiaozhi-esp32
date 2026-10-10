@@ -433,8 +433,33 @@ private:
         SetVisible(face_caption_, false);
     }
 
+    void PositionCrestLocked() {
+        // Service reserves the lower half for status/help, with the complete
+        // crest and activity rings above it. Chef keeps its original geometry.
+        for (auto* mark : {crest_band_, crest_star_}) {
+            lv_image_set_pivot(mark, 0, 0);
+            lv_image_set_scale(mark, service_layout_ ? 128 : 256);
+        }
+        lv_obj_set_pos(crest_band_, service_layout_ ? 146 : OrbitCrest::kBandX,
+                       service_layout_ ? 78 : OrbitCrest::kBandY);
+        lv_obj_set_pos(crest_star_, service_layout_ ? 207 : OrbitCrest::kStarX,
+                       service_layout_ ? 138 : OrbitCrest::kStarY);
+        for (int index = 0; index < 3; ++index) {
+            auto* ring = crest_rings_[index];
+            const int diameter = crest_frame_.radii[index] * (service_layout_ ? 1 : 2);
+            if (lv_obj_get_width(ring) != diameter || lv_obj_get_height(ring) != diameter) {
+                lv_obj_set_size(ring, diameter, diameter);
+            }
+            lv_obj_align(ring, LV_ALIGN_CENTER, 0, service_layout_ ? -68 : 0);
+        }
+    }
+
     void HideOrbitServiceLocked() {
         service_layout_ = false;
+        // Some Chef screens pause crest rendering, so restore before leaving.
+        PositionCrestLocked();
+        lv_obj_set_style_bg_opa(crest_caption_, LV_OPA_TRANSP, 0);
+        lv_label_set_long_mode(crest_caption_, LV_LABEL_LONG_CLIP);
         SetVisible(service_panel_, false);
         lv_obj_set_size(crest_caption_, 280, 74);
         lv_obj_align(crest_caption_, LV_ALIGN_CENTER, 0, 97);
@@ -502,15 +527,11 @@ private:
         }
         crest_frame_ = OrbitCrest::Transition(crest_transition_from_, target,
                                               now - crest_transition_ms_, false);
+        PositionCrestLocked();
         lv_obj_set_style_image_opa(crest_band_, crest_frame_.band_opacity, 0);
         lv_obj_set_style_image_opa(crest_star_, crest_frame_.star_opacity, 0);
         for (int index = 0; index < 3; ++index) {
             auto* ring = crest_rings_[index];
-            const int diameter = crest_frame_.radii[index] * 2;
-            if (lv_obj_get_width(ring) != diameter || lv_obj_get_height(ring) != diameter) {
-                lv_obj_set_size(ring, diameter, diameter);
-                lv_obj_center(ring);
-            }
             lv_obj_set_style_arc_color(ring, lv_color_hex(crest_frame_.color), LV_PART_MAIN);
             lv_obj_set_style_arc_opa(ring, crest_frame_.opacity[index], LV_PART_MAIN);
         }
@@ -615,11 +636,13 @@ private:
         lv_obj_set_style_pad_all(service_body_, provisions::service::kPreviewPadding, 0);
         lv_label_set_long_mode(service_body_, LV_LABEL_LONG_WRAP);
         service_help_ = lv_label_create(service_panel_);
-        lv_obj_set_size(service_help_, 318, 54);
+        lv_obj_set_size(service_help_, 264, 54);
         lv_obj_align(service_help_, LV_ALIGN_CENTER, 0, 167);
         lv_obj_set_style_text_font(service_help_, &font_noto_sans_basic_16_4, 0);
         lv_obj_set_style_text_color(service_help_, lv_color_hex(OrbitCrest::kIvory), 0);
         lv_obj_set_style_text_align(service_help_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_bg_color(service_help_, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(service_help_, LV_OPA_COVER, 0);
         lv_label_set_long_mode(service_help_, LV_LABEL_LONG_WRAP);
         SetVisible(service_panel_, false);
 
@@ -2922,13 +2945,16 @@ public:
         dictation_saving_ = false;
         SetVisible(dictation_panel_, false);
         SetVisible(shopping_service_arc_, false);
-        SetVisible(crest_band_, true);
-        SetVisible(crest_star_, true);
+        SetVisible(crest_band_, body.empty());
+        SetVisible(crest_star_, body.empty());
         SetVisible(crest_caption_, true);
         for (auto* ring : crest_rings_)
-            SetVisible(ring, true);
+            SetVisible(ring, body.empty());
         OrbitCrest::State state = OrbitCrest::State::Idle;
         switch (phase) {
+            case ProvisionsServicePhase::Connecting:
+                state = OrbitCrest::State::Connecting;
+                break;
             case ProvisionsServicePhase::Preparing:
             case ProvisionsServicePhase::Processing:
             case ProvisionsServicePhase::Saving:
@@ -2948,8 +2974,11 @@ public:
                 break;
         }
         service_caption_text_ = status;
-        lv_obj_set_size(crest_caption_, 316, body.empty() ? 86 : 48);
-        lv_obj_align(crest_caption_, LV_ALIGN_CENTER, 0, body.empty() ? 133 : -148);
+        lv_obj_set_style_bg_color(crest_caption_, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(crest_caption_, LV_OPA_COVER, 0);
+        lv_label_set_long_mode(crest_caption_, LV_LABEL_LONG_WRAP);
+        lv_obj_set_size(crest_caption_, 300, body.empty() ? 92 : 52);
+        lv_obj_align(crest_caption_, LV_ALIGN_CENTER, 0, body.empty() ? 84 : -151);
         lv_obj_set_style_text_font(crest_caption_,
                                    body.empty() && status.size() <= 30 ? &font_noto_sans_basic_30_4
                                                                        : &font_noto_sans_basic_16_4,
@@ -2957,7 +2986,7 @@ public:
         SetLabelText(service_body_, &service_body_text_, body);
         SetLabelText(service_help_, &service_help_text_, help);
         SetVisible(service_body_, !body.empty());
-        lv_obj_align(service_help_, LV_ALIGN_CENTER, 0, body.empty() ? 192 : 166);
+        lv_obj_align(service_help_, LV_ALIGN_CENTER, 0, 164);
         SetVisible(service_panel_, true);
         lv_obj_move_foreground(service_panel_);
         lv_obj_move_foreground(crest_caption_);
