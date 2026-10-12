@@ -118,8 +118,9 @@ struct Review{
 };
 std::string PreviewPage(const std::string& text,unsigned,unsigned& pages){pages=1;return text;}
 }
+int64_t esp_timer_get_time(){return 1000;}
 void esp_fill_random(void*,size_t){}
-enum class ProvisionsServicePhase{Ready,Preparing,Recording,Processing,Received,Saving,Saved,Lost};
+enum class ProvisionsServicePhase{Ready,Preparing,Recording,Processing,Received,Saving,Saved,Lost,Connecting};
 struct Paint {std::string title,focus;int menu_page=-1;};
 std::string service_heading;
 Paint painted;unsigned paint_count=0,qr_shown=0,qr_hidden=0;
@@ -195,6 +196,7 @@ struct Application {
     provisions::VoiceId orbit_service_review_dismissed_{};
     unsigned orbit_service_text_page_=0,orbit_service_target_page_=0;int64_t orbit_service_review_send_us_=0,orbit_service_review_received_us_=0;
     void OrbitServiceNavigate(bool,bool=false){}
+    bool orbit_service_connected_once_=false;int64_t orbit_service_connect_started_us_=-1;
     bool orbit_mode_switch_pending_=false;std::string orbit_mode_switch_session_;
     uint8_t orbit_menu_index_=0;int state=kDeviceStateIdle;
     unsigned provisions_reconnect_wait_ticks_=3,fenced=0,ended=0,left=0,cancelled=0;

@@ -232,6 +232,48 @@ int main(int argc,char** argv){
 }
 ''', frame=True), model=True, arguments=paths)
 
+    def test_startup_is_pending_bounded_and_does_not_mask_later_disconnect(self):
+        native(service_program(r'''
+int main(){
+    Application app;app.orbit_service_ready_=false;app.protocol->opened=false;
+    auto& record=app.provisions_recorder_->record;
+    record.id=recording;record.conversation_id=binding;
+    record.state=provisions::dictation::State::Reviewed;
+    now_us=0;app.PaintOrbitService();
+    assert(display_phase==ProvisionsServicePhase::Connecting);
+    assert(display_status=="Connecting to Dojo"&&display_help=="Please wait");
+    now_us=3000000;app.PaintOrbitService();
+    assert(display_phase==ProvisionsServicePhase::Connecting);
+    now_us=14999999;app.PaintOrbitService();
+    assert(display_phase==ProvisionsServicePhase::Connecting);
+    now_us=15000000;app.PaintOrbitService();
+    assert(display_phase==ProvisionsServicePhase::Lost);
+    assert(display_status=="Unable to connect to Dojo");
+    now_us=60000000;app.PaintOrbitService();
+    assert(display_phase==ProvisionsServicePhase::Lost);
+    app.protocol->opened=true;app.orbit_service_ready_=true;app.TickOrbitService();
+    assert(display_phase==ProvisionsServicePhase::Ready);
+    assert(display_status=="Sent to Dojo\nReview at desk");
+    app.protocol->opened=false;app.PaintOrbitService();
+    assert(display_phase==ProvisionsServicePhase::Lost);
+    assert(display_status=="Connection lost. Recording kept");
+    app.orbit_service_ready_=false;app.PaintOrbitService();
+    assert(display_phase==ProvisionsServicePhase::Lost);
+    app.orbit_service_recovery_=true;app.PaintOrbitService();
+    assert(display_status=="Sync recovery. Pair again afterward");
+    assert(record.id==recording&&record.conversation_id==binding);
+    assert(record.state==provisions::dictation::State::Reviewed);
+    assert(app.provisions_recorder_->starts==0);
+    // A real failure inside the initial grace must still appear immediately.
+    Application fast;fast.orbit_service_ready_=false;fast.protocol->opened=false;
+    now_us=0;fast.PaintOrbitService();
+    now_us=1000000;fast.protocol->opened=true;fast.PaintOrbitService();
+    now_us=2000000;fast.protocol->opened=false;fast.PaintOrbitService();
+    assert(display_phase==ProvisionsServicePhase::Lost);
+    assert(display_status=="Connection lost. Recording kept");
+}
+'''), model=True)
+
     def test_non_capture_gateway_retains_existing_retry_budget(self):
         native(retry_program(r'''
     Application legacy;

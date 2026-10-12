@@ -545,7 +545,7 @@ void Application::TickOrbitService() {
             recorder->RequestReplay();
     } else if (orbit_service_ready_ && r.state == provisions::dictation::State::Reviewed &&
                !recorder->PendingCount() && !previous_binding_record) {
-        orbit_service_status_ = "Sent to Dojo. Review at the desk";
+        orbit_service_status_ = "Sent to Dojo\nReview at desk";
     }
     if (orbit_view_.load() == OrbitView::Service)
         PaintOrbitService();
@@ -561,6 +561,15 @@ void Application::PaintOrbitService() {
     ProvisionsServicePhase phase = ProvisionsServicePhase::Ready;
     const auto protocol = GetProtocol();
     const bool connected = protocol && protocol->IsAudioChannelOpened();
+    const int64_t now = esp_timer_get_time();
+    if (orbit_service_connect_started_us_ < 0)
+        orbit_service_connect_started_us_ = now;
+    if (connected || orbit_service_ready_)
+        orbit_service_connected_once_ = true;
+    // First connection is pending, not lost. The grace is bounded and never
+    // hides a disconnect after this boot has reached an authenticated socket.
+    const bool starting =
+        !orbit_service_connected_once_ && now - orbit_service_connect_started_us_ < 15000000;
     if (orbit_service_recording_.load()) {
         const bool recording =
             manual_listening_requested_.load() &&
@@ -579,8 +588,17 @@ void Application::PaintOrbitService() {
         help = "hold blue to pair · recording kept";
         if (orbit_service_recovery_)
             status = "Sync recovery. Pair again afterward";
-        else if (!connected)
-            status = "Connection lost. Recording kept";
+        else if (!connected) {
+            if (starting) {
+                phase = ProvisionsServicePhase::Connecting;
+                status = "Connecting to Dojo";
+                help = "Please wait";
+            } else {
+                status = orbit_service_connected_once_ ? "Connection lost. Recording kept"
+                                                       : "Unable to connect to Dojo";
+                help = "Retrying connection";
+            }
+        }
     } else {
         using provisions::service::Stage;
         const auto stage = orbit_service_review_.stage();
@@ -599,12 +617,12 @@ void Application::PaintOrbitService() {
             status = stage == Stage::Confirm ? "Confirm this note" : "Choose destination";
             body = provisions::service::PreviewPage(orbit_service_review_.TargetLabel(),
                                                     orbit_service_target_page_, displayed_pages);
-            help = stage == Stage::Confirm ? "yellow confirms · blue cancels"
-                                           : "blue changes · yellow chooses";
+            help = stage == Stage::Confirm ? "Yellow: confirm · Blue: cancel"
+                                           : "Blue: change · Yellow: choose";
             if (displayed_pages > 1)
-                help = "swipe up/down to read destination\n" + help;
+                help = "Swipe to read destination\n" + help;
             if (!orbit_service_review_.GuestAllowed())
-                help += "\nGuest notes need desk review";
+                status += "\nGuest notes: desk review";
         } else if (stage == Stage::Saving) {
             phase = ProvisionsServicePhase::Saving;
             status = "Saving note to Dojo";
@@ -623,12 +641,11 @@ void Application::PaintOrbitService() {
                      : snapshot.complete   ? "Transcript received"
                                            : "Transcribing";
             status += " · part " + std::to_string(snapshot.cursor.sequence + 1);
-            help = "swipe up/down to read";
+            help = "Swipe: read";
             if (snapshot.complete)
-                help += stage == Stage::Saved ? "\nyellow records · blue next note"
-                        : orbit_service_review_.text_reviewed()
-                            ? "\nyellow chooses · blue next note"
-                            : "\nRead all pages before choosing";
+                help += stage == Stage::Saved                   ? "\nYellow: record · Blue: next"
+                        : orbit_service_review_.text_reviewed() ? "\nYellow: choose · Blue: next"
+                                                                : "\nRead all pages to choose";
             else
                 help += "\nWaiting for complete recording";
         } else {
@@ -641,7 +658,7 @@ void Application::PaintOrbitService() {
             } else {
                 if (status == "Connection lost. Recording kept")
                     status = "Connected. Recording kept";
-                help = "yellow records · hold blue to pair";
+                help = "Yellow: record\nHold blue: pair";
             }
         }
     }

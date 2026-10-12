@@ -126,7 +126,7 @@ APP_STUB = r'''
 [[maybe_unused]] static constexpr char kServiceTag[]="OrbitService";
 int64_t esp_timer_get_time(){return 1000;}
 void esp_fill_random(void* data,size_t bytes){std::memset(data,0xAB,bytes);}
-enum class ProvisionsServicePhase {Ready,Preparing,Recording,Processing,Received,Saving,Saved,Lost};
+enum class ProvisionsServicePhase {Ready,Preparing,Recording,Processing,Received,Saving,Saved,Lost,Connecting};
 std::string display_body;bool display_accepts=true;unsigned display_calls=0;
 bool ProvisionsShowOrbitService(ProvisionsServicePhase,const std::string&,const std::string& body,const std::string&){
     display_body=body;++display_calls;return display_accepts;
@@ -153,6 +153,7 @@ struct Fence {bool value=false;bool Fenced(){return value;}};
 struct Application {
     enum class OrbitView{Service,Menu};std::atomic<OrbitView> orbit_view_{OrbitView::Service};
     std::atomic<bool> orbit_service_recording_{false},manual_listening_requested_{false};
+    bool orbit_service_connected_once_=false;int64_t orbit_service_connect_started_us_=-1;
     bool orbit_service_ready_=true,orbit_service_recovery_=false;
     std::string orbit_service_status_,orbit_service_code_;unsigned stopped=0;
     unsigned provisions_reconnect_wait_ticks_=0,orbit_service_text_page_=0,orbit_service_target_page_=0;

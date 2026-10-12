@@ -342,6 +342,8 @@ private:
     std::atomic<bool> orbit_service_mode_{false};
     std::atomic<bool> orbit_service_recording_{false};
     bool orbit_service_ready_ = false;
+    bool orbit_service_connected_once_ = false;
+    int64_t orbit_service_connect_started_us_ = -1;
     bool orbit_service_recovery_ = false;
     std::string orbit_service_table_;
     std::string orbit_service_code_;
