@@ -46,9 +46,11 @@ class ProvisionsButtonChordTests(unittest.TestCase):
                     ButtonChord c;
                     assert(c.TalkDown(0) == Edge::kArmTalk);
                     assert(c.BlueDown(W) == Edge::kChord);
+                    assert(c.ChordHeld());
                     assert(!c.TalkWindowElapsed());
                     assert(c.SwallowBlueGesture());
                     c.BlueUp();
+                    assert(!c.ChordHeld());
                     assert(c.SwallowBlueGesture());  // The blue click fires after release.
                     assert(!c.TalkUp());
                     // Next blue press on its own acts normally again.
@@ -129,10 +131,14 @@ class ProvisionsButtonChordTests(unittest.TestCase):
         self.assertIn("button2_.OnPressDown", board)
         self.assertIn("button2_.OnPressUp", board)
         self.assertIn("ButtonChord::kWindowUs", board)
+        self.assertIn("ChordHeld()", board)
+        self.assertIn("kExhibitionModeHoldUs", board)
         self.assertIn("ToggleTimerFace()", board)
         self.assertIn("kTimerFaceIdleUs = 30LL * 1000 * 1000", board)
         # Every blue gesture checks the chord before silencing, dictation, retry or volume.
-        buttons = board.split("void InitializeButtons()", 1)[1].split("button1_.OnPressDown", 1)[1]
+        buttons = board.split("void InitializeButtons()", 1)[1]
+        buttons = buttons.split("// Talk and blue together", 1)[1]
+        buttons = buttons.split("button1_.OnPressDown", 1)[1]
         buttons = buttons.split("#else\n        // Button1", 1)[0]
         for gesture in ("button2_.OnClick", "button2_.OnDoubleClick", "button2_.OnLongPress"):
             body = buttons.split(gesture, 1)[1].split("});", 1)[0]

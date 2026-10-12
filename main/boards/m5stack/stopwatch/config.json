@@ -33,7 +33,8 @@
                 "CONFIG_SECURE_FLASH_ENC_ENABLED=n",
                 "CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=n",
                 "CONFIG_NVS_ENCRYPTION=n",
-                "CONFIG_NVS_SEC_KEY_PROTECT_USING_FLASH_ENC=n"
+                "CONFIG_NVS_SEC_KEY_PROTECT_USING_FLASH_ENC=n",
+                "CONFIG_PROVISIONS_RUNTIME_EXHIBITION_DEMO=y"
             ]
         },
         {

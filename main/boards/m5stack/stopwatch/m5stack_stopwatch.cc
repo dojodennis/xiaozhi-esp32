@@ -18,8 +18,11 @@
 #include "provisions_hardware_facts.h"
 #include "provisions_timer_snapshot.h"
 #include "utf8_ellipsis.h"
-#if CONFIG_PROVISIONS_EXHIBITION_DEMO
+#if CONFIG_PROVISIONS_EXHIBITION_DEMO || CONFIG_PROVISIONS_RUNTIME_EXHIBITION_DEMO
+#define ORBIT_EXHIBITION_DEMO_ENABLED 1
 #include "orbit_exhibition_demo_audio.h"
+#else
+#define ORBIT_EXHIBITION_DEMO_ENABLED 0
 #endif
 #if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
 #include <esp_pthread.h>
@@ -101,9 +104,12 @@ constexpr int64_t kOrbitTickIntervalUs = 1000LL * 1000;
 constexpr int kOrbitArcDiameter = ProvisionsStopwatchOrbit::kSlotRadius * 2;
 constexpr int kOrbitLabelWidth = 94;
 constexpr int kOrbitAlarmMaximumNames = 2;
-#if CONFIG_PROVISIONS_EXHIBITION_DEMO
+#if ORBIT_EXHIBITION_DEMO_ENABLED
 constexpr int64_t kExhibitionWorkingDelayUs = 1200LL * 1000;
 constexpr int64_t kExhibitionReplyDurationUs = 3900LL * 1000;
+#endif
+#if CONFIG_PROVISIONS_RUNTIME_EXHIBITION_DEMO
+constexpr int64_t kExhibitionModeHoldUs = 4LL * 1000 * 1000;
 #endif
 
 constexpr uint32_t kColorGold = 0xD4B67A;
@@ -292,6 +298,9 @@ private:
     std::atomic<bool> reply_visible_{false};
     std::atomic<bool> power_save_active_{false};
     std::atomic<bool> timer_alarm_active_{false};
+#if ORBIT_EXHIBITION_DEMO_ENABLED
+    std::atomic<bool> exhibition_override_{false};
+#endif
     std::atomic<uint32_t> reply_generation_{0};
     // Banner over the reply text: the last receipt's title and state colour
     // ("REPLIED" in green, "NO NEW REPLY" in amber). Written and read under
@@ -675,6 +684,22 @@ private:
                               orbit::service_schedule::ScheduleDemo::FixtureTime, true);
         return;
 #endif
+#if ORBIT_EXHIBITION_DEMO_ENABLED
+        if (exhibition_override_.load()) {
+            SetVisible(top_bar_, false);
+            SetVisible(brand_label_, false);
+            lv_obj_t* normal[] = {title_label_, brand_rule_, hero_halo_, status_bar_, hint_panel_};
+            for (auto* object : normal)
+                SetVisible(object, false);
+            SetVisible(reply_header_label_, false);
+            SetVisible(reply_panel_, false);
+            SetVisible(crest_layer_, !power_save_active_.load());
+            SetVisible(dictation_panel_, false);
+            SetVisible(orbit_layer_, false);
+            SetVisible(alarm_layer_, false);
+            return;
+        }
+#endif
         const bool display_awake = !power_save_active_.load();
         const bool show_alarm = display_awake && timer_alarm_active_.load();
         const bool show_reply = display_awake && !show_alarm && visible && !TimerFaceForced();
@@ -902,6 +927,10 @@ private:
     }
 
     void RefreshOrbit() {
+#if ORBIT_EXHIBITION_DEMO_ENABLED
+        if (exhibition_override_.load())
+            return;
+#endif
         AlarmOutputChange output_change;
         {
             DisplayLockGuard lock(this);
@@ -1830,6 +1859,10 @@ public:
                                                             timer_snapshot_.timers);
             }
             snapshot_received_monotonic_ms_ = esp_timer_get_time() / 1000;
+#if ORBIT_EXHIBITION_DEMO_ENABLED
+            if (exhibition_override_.load())
+                return;
+#endif
             output_change = RefreshOrbitLocked();
         }
         ApplyAlarmOutputChange(output_change);
@@ -1847,6 +1880,10 @@ public:
             timer_snapshot_ = ProvisionsTimerSnapshot::Snapshot{};
             orbit_slot_board_ = ProvisionsStopwatchOrbit::SlotBoard{};
             output_change = timer_alarm_state_.Reset();
+#if ORBIT_EXHIBITION_DEMO_ENABLED
+            if (exhibition_override_.load())
+                return;
+#endif
             SetReplyLayoutLocked(reply_visible_.load());
         }
         ApplyAlarmOutputChange(output_change);
@@ -1937,6 +1974,10 @@ public:
     // timers, so a spoken timer command can follow; a second chord or 30 s idle
     // returns to the normal face. Recording is unaffected by the face.
     void ToggleTimerFace() {
+#if ORBIT_EXHIBITION_DEMO_ENABLED
+        if (exhibition_override_.load())
+            return;
+#endif
         AlarmOutputChange output_change;
         {
             DisplayLockGuard lock(this);
@@ -1958,6 +1999,10 @@ public:
     void SetEmotion(const char* emotion) override { (void)emotion; }
 
     void SetChatMessage(const char* role, const char* content) override {
+#if ORBIT_EXHIBITION_DEMO_ENABLED
+        if (exhibition_override_.load())
+            return;
+#endif
         if (role == nullptr || content == nullptr || content[0] == '\0' ||
             std::strcmp(role, "assistant") != 0) {
             return;
@@ -2024,6 +2069,10 @@ public:
         }
         const VisualState state = StateForStatus(status);
         resting_state_.store(state);
+#if ORBIT_EXHIBITION_DEMO_ENABLED
+        if (exhibition_override_.load())
+            return;
+#endif
         if (receipt_visible_.load() && state != VisualState::kListening &&
             state != VisualState::kConnecting && state != VisualState::kUnavailable) {
             if (reply_visible_.load() && state == VisualState::kReady) {
@@ -2044,6 +2093,10 @@ public:
     }
 
     void ShowNotification(const char* notification, int duration_ms = 3000) override {
+#if ORBIT_EXHIBITION_DEMO_ENABLED
+        if (exhibition_override_.load())
+            return;
+#endif
         const char* title = nullptr;
         const VisualState state = StateForNotification(notification, &title);
         const char* caption = OrbitCrest::ResultCaption(notification);
@@ -2093,10 +2146,46 @@ private:
     }
 
 public:
-#if CONFIG_PROVISIONS_EXHIBITION_DEMO
+#if ORBIT_EXHIBITION_DEMO_ENABLED
+    void SetExhibitionMode(bool active) {
+        if (active)
+            PauseTimerAlarmOutput(true);
+        AlarmOutputChange output_change = AlarmOutputChange::kNone;
+        {
+            DisplayLockGuard lock(this);
+            exhibition_override_.store(active);
+            receipt_visible_.store(false);
+            reply_visible_.store(false);
+            ClearReplyLocked();
+            if (!active) {
+                ApplyVisualStateLocked(resting_state_.load());
+                if (crest_timer_text_ != nullptr)
+                    lv_label_set_text(crest_timer_text_, crest_timer_text_value_.c_str());
+                output_change = RefreshOrbitLocked();
+                SetReplyLayoutLocked(false);
+            }
+        }
+        ApplyAlarmOutputChange(output_change);
+        if (!active)
+            PauseTimerAlarmOutput(false);
+    }
+
+    void ShowExhibitionState(const char* status, const char* timer_text) {
+        DisplayLockGuard lock(this);
+        if (!exhibition_override_.load())
+            return;
+        receipt_visible_.store(false);
+        reply_visible_.store(false);
+        ClearReplyLocked();
+        ApplyVisualStateLocked(StateForStatus(status));
+        if (crest_timer_text_ != nullptr)
+            lv_label_set_text(crest_timer_text_, timer_text);
+    }
+
     void ShowExhibitionDemoResult() {
         DisplayLockGuard lock(this);
-        resting_state_.store(VisualState::kReady);
+        if (!exhibition_override_.load())
+            return;
         receipt_visible_.store(false);
         ClearReplyLocked();
         SetCrestResultLocked("2 SEA BASS\nUSE BY TUESDAY", 5000);
@@ -2113,11 +2202,19 @@ public:
         if (crest_timer_text_ == nullptr || crest_timer_text_value_ == text)
             return;
         crest_timer_text_value_ = text;
+#if ORBIT_EXHIBITION_DEMO_ENABLED
+        if (exhibition_override_.load())
+            return;
+#endif
         lv_label_set_text(crest_timer_text_, crest_timer_text_value_.c_str());
     }
 
     void SetDictationScreen(bool visible, const std::string& status,
                             const std::string& action) override {
+#if ORBIT_EXHIBITION_DEMO_ENABLED
+        if (exhibition_override_.load())
+            return;
+#endif
         DisplayLockGuard lock(this);
         if (dictation_panel_ == nullptr)
             return;
@@ -2193,11 +2290,16 @@ private:
     std::atomic<int64_t> display_idle_deadline_us_{0};
     provisions::LocalCapturePulse capture_haptic_pulse_;
     bool display_dimmed_ = false;
-#if CONFIG_PROVISIONS_EXHIBITION_DEMO
+#if ORBIT_EXHIBITION_DEMO_ENABLED
     enum class ExhibitionPhase : uint8_t { kIdle, kListening, kWorking, kSpeaking };
+    std::atomic<bool> exhibition_mode_active_{false};
     std::atomic<ExhibitionPhase> exhibition_phase_{ExhibitionPhase::kIdle};
     esp_timer_handle_t exhibition_work_timer_ = nullptr;
     esp_timer_handle_t exhibition_reply_timer_ = nullptr;
+#if CONFIG_PROVISIONS_RUNTIME_EXHIBITION_DEMO
+    esp_timer_handle_t exhibition_mode_hold_timer_ = nullptr;
+    std::atomic<bool> exhibition_mode_hold_pending_{false};
+#endif
 
     void StopExhibitionTimer(esp_timer_handle_t timer) {
         if (timer == nullptr)
@@ -2208,52 +2310,58 @@ private:
     }
 
     void ShowExhibitionReady() {
+        exhibition_mode_active_.store(true);
         exhibition_phase_.store(ExhibitionPhase::kIdle);
-        display_->SetStatus("Ready");
-        display_->SetTimerText("DEMO - HOLD YELLOW");
+        display_->SetExhibitionMode(true);
+        display_->ShowExhibitionState("Ready", "DEMO - HOLD YELLOW");
     }
 
     void StartExhibitionDemo() {
+        if (!exhibition_mode_active_.load())
+            return;
         ExhibitionPhase expected = ExhibitionPhase::kIdle;
         if (!exhibition_phase_.compare_exchange_strong(expected, ExhibitionPhase::kListening))
             return;
         StopExhibitionTimer(exhibition_work_timer_);
         StopExhibitionTimer(exhibition_reply_timer_);
         ResetDisplayIdleTimer();
-        display_->SetStatus("Listening");
-        display_->SetTimerText("DEMO - RELEASE TO ASK");
+        display_->ShowExhibitionState("Listening", "DEMO - RELEASE TO ASK");
         PulseLocalCaptureHaptic(70);
     }
 
     void FinishExhibitionListening() {
+        if (!exhibition_mode_active_.load())
+            return;
         ExhibitionPhase expected = ExhibitionPhase::kListening;
         if (!exhibition_phase_.compare_exchange_strong(expected, ExhibitionPhase::kWorking))
             return;
-        display_->SetStatus("Working");
-        display_->SetTimerText("DEMO - LOCAL REPLY");
+        display_->ShowExhibitionState("Working", "DEMO - LOCAL REPLY");
         ESP_ERROR_CHECK(
             esp_timer_start_once(exhibition_work_timer_, kExhibitionWorkingDelayUs));
     }
 
     void PlayExhibitionReply() {
+        if (!exhibition_mode_active_.load())
+            return;
         if (exhibition_phase_.exchange(ExhibitionPhase::kSpeaking) !=
             ExhibitionPhase::kWorking) {
             return;
         }
-        display_->SetStatus("Speaking");
-        display_->SetTimerText("DEMO - NO DATA SAVED");
+        display_->ShowExhibitionState("Speaking", "DEMO - NO DATA SAVED");
         Application::GetInstance().PlaySound(orbit::exhibition_demo::kSeaBassReply);
         ESP_ERROR_CHECK(
             esp_timer_start_once(exhibition_reply_timer_, kExhibitionReplyDurationUs));
     }
 
     void FinishExhibitionReply() {
+        if (!exhibition_mode_active_.load())
+            return;
         if (exhibition_phase_.exchange(ExhibitionPhase::kIdle) !=
             ExhibitionPhase::kSpeaking) {
             return;
         }
+        display_->ShowExhibitionState("Ready", "DEMO - YELLOW TO REPLAY");
         display_->ShowExhibitionDemoResult();
-        display_->SetTimerText("DEMO - YELLOW TO REPLAY");
     }
 
     void InitializeExhibitionDemoTimers() {
@@ -2280,6 +2388,65 @@ private:
         };
         ESP_ERROR_CHECK(esp_timer_create(&reply_args, &exhibition_reply_timer_));
     }
+#if CONFIG_PROVISIONS_RUNTIME_EXHIBITION_DEMO
+    void ToggleRuntimeExhibitionMode() {
+        const bool entering = !exhibition_mode_active_.load();
+        if (entering && Application::GetInstance().GetDeviceState() != kDeviceStateIdle) {
+            ESP_LOGW(TAG, "Runtime exhibition mode requires idle state");
+            return;
+        }
+        StopExhibitionTimer(exhibition_work_timer_);
+        StopExhibitionTimer(exhibition_reply_timer_);
+        exhibition_phase_.store(ExhibitionPhase::kIdle);
+        exhibition_mode_active_.store(entering);
+        if (entering) {
+            ShowExhibitionReady();
+        } else {
+            display_->SetExhibitionMode(false);
+        }
+        PulseLocalCaptureHaptic(140);
+        ESP_LOGI(TAG, "Runtime exhibition mode %s", entering ? "entered" : "exited");
+    }
+
+    void InitializeExhibitionModeHoldTimer() {
+        esp_timer_create_args_t args = {
+            .callback = [](void* raw) {
+                auto* self = static_cast<M5StackStopwatchBoard*>(raw);
+                bool held = false;
+                {
+                    std::lock_guard<std::mutex> lock(self->chord_mutex_);
+                    held = self->chord_.ChordHeld();
+                }
+                if (!held || !self->exhibition_mode_hold_pending_.exchange(false))
+                    return;
+                Application::GetInstance().Schedule(
+                    [self]() { self->ToggleRuntimeExhibitionMode(); });
+            },
+            .arg = this,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "orbit_demo_mode",
+            .skip_unhandled_events = true,
+        };
+        ESP_ERROR_CHECK(esp_timer_create(&args, &exhibition_mode_hold_timer_));
+    }
+
+    void ArmExhibitionModeHold() {
+        exhibition_mode_hold_pending_.store(true);
+        StopExhibitionTimer(exhibition_mode_hold_timer_);
+        ESP_ERROR_CHECK(
+            esp_timer_start_once(exhibition_mode_hold_timer_, kExhibitionModeHoldUs));
+    }
+
+    void FinishExhibitionModeChord() {
+        if (!exhibition_mode_hold_pending_.exchange(false))
+            return;
+        StopExhibitionTimer(exhibition_mode_hold_timer_);
+        if (!exhibition_mode_active_.load()) {
+            ResetDisplayIdleTimer();
+            Application::GetInstance().Schedule([this]() { display_->ToggleTimerFace(); });
+        }
+    }
+#endif
 #endif
 #if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
     std::unique_ptr<orbit::service_schedule::HardwareBench> bench_;
@@ -2572,8 +2739,15 @@ private:
     bool TalkReleased() {
         if (chord_timer_ != nullptr)
             esp_timer_stop(chord_timer_);
-        std::lock_guard<std::mutex> lock(chord_mutex_);
-        return chord_.TalkUp();
+        bool started = false;
+        {
+            std::lock_guard<std::mutex> lock(chord_mutex_);
+            started = chord_.TalkUp();
+        }
+#if CONFIG_PROVISIONS_RUNTIME_EXHIBITION_DEMO
+        FinishExhibitionModeChord();
+#endif
+        return started;
     }
 
     void BluePressed() {
@@ -2590,8 +2764,13 @@ private:
     }
 
     void BlueReleased() {
-        std::lock_guard<std::mutex> lock(chord_mutex_);
-        chord_.BlueUp();
+        {
+            std::lock_guard<std::mutex> lock(chord_mutex_);
+            chord_.BlueUp();
+        }
+#if CONFIG_PROVISIONS_RUNTIME_EXHIBITION_DEMO
+        FinishExhibitionModeChord();
+#endif
     }
 
     bool BlueGestureInChord() {
@@ -2600,8 +2779,12 @@ private:
     }
 
     void OnButtonChord() {
+#if CONFIG_PROVISIONS_RUNTIME_EXHIBITION_DEMO
+        ArmExhibitionModeHold();
+#else
         ResetDisplayIdleTimer();
         Application::GetInstance().Schedule([this]() { display_->ToggleTimerFace(); });
+#endif
     }
 
     void InitializeButtons() {
@@ -2634,14 +2817,37 @@ private:
         });
 #else
         // Talk and blue together (within ButtonChord::kWindowUs, either order)
-        // toggle the timer face and fire neither single-button action.
+        // fire neither single-button action. A short chord toggles the timer
+        // face; holding it for four seconds toggles the local exhibition mode.
         button1_.OnPressDown([this]() {
             ResetDisplayIdleTimer();
+#if CONFIG_PROVISIONS_RUNTIME_EXHIBITION_DEMO
+            if (exhibition_mode_active_.load()) {
+                ArmTalkStart([this]() {
+                    Application::GetInstance().Schedule(
+                        [this]() { StartExhibitionDemo(); });
+                });
+            } else {
+                ArmTalkStart([]() { Application::GetInstance().StartListening(); });
+            }
+#else
             ArmTalkStart([]() { Application::GetInstance().StartListening(); });
+#endif
         });
         button1_.OnPressUp([this]() {
-            if (TalkReleased())
+            const bool started = TalkReleased();
+            if (!started)
+                return;
+#if CONFIG_PROVISIONS_RUNTIME_EXHIBITION_DEMO
+            if (exhibition_mode_active_.load()) {
+                Application::GetInstance().Schedule(
+                    [this]() { FinishExhibitionListening(); });
+            } else {
                 Application::GetInstance().StopListening();
+            }
+#else
+            Application::GetInstance().StopListening();
+#endif
         });
         button2_.OnPressDown([this]() { BluePressed(); });
         button2_.OnPressUp([this]() { BlueReleased(); });
@@ -2652,6 +2858,10 @@ private:
         button2_.OnDoubleClick([this]() {
             if (BlueGestureInChord())
                 return;
+#if CONFIG_PROVISIONS_RUNTIME_EXHIBITION_DEMO
+            if (exhibition_mode_active_.load())
+                return;
+#endif
             ResetDisplayIdleTimer();
             Application::GetInstance().Schedule([this]() {
                 if (display_->SilenceTimerAlarm())
@@ -2662,6 +2872,10 @@ private:
         button2_.OnLongPress([this]() {
             if (BlueGestureInChord())
                 return;
+#if CONFIG_PROVISIONS_RUNTIME_EXHIBITION_DEMO
+            if (exhibition_mode_active_.load())
+                return;
+#endif
             ResetDisplayIdleTimer();
             Application::GetInstance().Schedule([this]() {
                 if (display_->SilenceTimerAlarm())
@@ -2680,6 +2894,15 @@ private:
                 return;
             ResetDisplayIdleTimer();
             Application::GetInstance().Schedule([this]() {
+#if CONFIG_PROVISIONS_RUNTIME_EXHIBITION_DEMO
+                if (exhibition_mode_active_.load()) {
+                    auto* codec = GetAudioCodec();
+                    const bool maximum = codec->output_volume() >= kMaximumOutputVolume;
+                    codec->SetOutputVolume(maximum ? kDefaultOutputVolume
+                                                   : kMaximumOutputVolume);
+                    return;
+                }
+#endif
                 if (display_->SilenceTimerAlarm()) {
                     return;
                 }
@@ -2838,8 +3061,11 @@ public:
         InitializeCaptureHapticTimer();
         InitializeTalkChordTimer();
 #endif
-#if CONFIG_PROVISIONS_EXHIBITION_DEMO
+#if ORBIT_EXHIBITION_DEMO_ENABLED
         InitializeExhibitionDemoTimers();
+#endif
+#if CONFIG_PROVISIONS_RUNTIME_EXHIBITION_DEMO
+        InitializeExhibitionModeHoldTimer();
 #endif
 #if !CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
         display_->SetTimerAlarmOutputCallback([this](bool active) {

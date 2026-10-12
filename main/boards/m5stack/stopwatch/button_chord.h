@@ -72,6 +72,10 @@ public:
     // a chord, do nothing".
     bool SwallowBlueGesture() const { return swallow_blue_; }
 
+    // The board uses the held state for the deliberately slow exhibition-mode
+    // toggle. A release cancels that hold without changing the short chord.
+    bool ChordHeld() const { return chord_ && talk_down_ && blue_down_; }
+
 private:
     Edge BeginChord() {
         chord_ = swallow_blue_ = true;

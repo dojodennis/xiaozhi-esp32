@@ -78,7 +78,8 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
             "CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO=y",
         }
         self.assertEqual(demo - provisions, demo_only)
-        self.assertEqual(provisions - demo, set())
+        runtime_only = {"CONFIG_PROVISIONS_RUNTIME_EXHIBITION_DEMO=y"}
+        self.assertEqual(provisions - demo, runtime_only)
         exhibition_only = {
             "CONFIG_PROVISIONS_LOCAL_CAPTURE=n",
             "CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO=n",
@@ -86,7 +87,7 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
             "CONFIG_PROVISIONS_EXHIBITION_DEMO=y",
         }
         self.assertEqual(exhibition - provisions, exhibition_only)
-        self.assertEqual(provisions - exhibition, set())
+        self.assertEqual(provisions - exhibition, runtime_only)
         accepted = json.loads((BOARD_DIR / "bench_profile.json").read_text())["builds"][0]
         hardware_bench = json.loads((BOARD_DIR / "hardware_bench_profile.json").read_text())["builds"][0]
         self.assertEqual(hardware_bench, builds[bench_name])
@@ -114,14 +115,17 @@ class ProvisionsStopWatchProfileTests(unittest.TestCase):
                 encoding="utf-8"
             )
         )
-        self.assertIn("CONFIG_PROVISIONS_EXHIBITION_DEMO", source)
+        self.assertIn("CONFIG_PROVISIONS_RUNTIME_EXHIBITION_DEMO", source)
         self.assertIn("network disabled", source)
-        self.assertIn('display_->SetStatus("Listening")', source)
-        self.assertIn('display_->SetStatus("Working")', source)
-        self.assertIn('display_->SetStatus("Speaking")', source)
+        self.assertIn('ShowExhibitionState("Listening"', source)
+        self.assertIn('ShowExhibitionState("Working"', source)
+        self.assertIn('ShowExhibitionState("Speaking"', source)
         self.assertIn("orbit::exhibition_demo::kSeaBassReply", source)
         self.assertIn('SetCrestResultLocked("2 SEA BASS\\nUSE BY TUESDAY"', source)
         self.assertIn("PROVISIONS_EXHIBITION_DEMO_SOUNDS", cmake)
+        self.assertIn("kExhibitionModeHoldUs = 4LL * 1000 * 1000", source)
+        self.assertIn("ToggleRuntimeExhibitionMode", source)
+        self.assertIn("SetExhibitionMode(false)", source)
         self.assertTrue(manifest["demo_only"])
         self.assertFalse(manifest["authoritative_writes"])
         clip = ROOT / "main/assets/provisions" / manifest["phrases"][0]["file"]

@@ -1137,7 +1137,7 @@ if(CONFIG_PROVISIONS_LOCAL_CAPTURE)
         "assets/provisions/saved_on_orbit.ogg"
         "assets/provisions/could_not_save.ogg")
 endif()
-if(CONFIG_PROVISIONS_EXHIBITION_DEMO)
+if(CONFIG_PROVISIONS_EXHIBITION_DEMO OR CONFIG_PROVISIONS_RUNTIME_EXHIBITION_DEMO)
     set(PROVISIONS_EXHIBITION_DEMO_SOUNDS
         "assets/provisions/exhibition_sea_bass.ogg")
 endif()

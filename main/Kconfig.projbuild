@@ -935,6 +935,15 @@ config PROVISIONS_EXHIBITION_DEMO
         reply through the real speaker. No microphone, network, enrollment,
         gateway session or authoritative write is started.
 
+config PROVISIONS_RUNTIME_EXHIBITION_DEMO
+    bool "Hidden runtime Orbit exhibition mode"
+    depends on BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH && PROVISIONS_GATEWAY_REQUIRED && PROVISIONS_LOCAL_CAPTURE && !PROVISIONS_SCHEDULE_HARDWARE_BENCH
+    default n
+    help
+        Keeps the ordinary connected Orbit firmware as the default. Holding
+        yellow and blue together for four seconds enters or exits a local
+        exhibition interaction without persisting the mode across reboot.
+
 config PROVISIONS_SCHEDULE_HARDWARE_BENCH
     bool "Isolated Orbit schedule hardware bench (real speaker, network disabled)"
     depends on BOARD_TYPE_M5STACK_PROVISIONS_STOPWATCH && PROVISIONS_LOCAL_CAPTURE && WAKE_WORD_DISABLED
