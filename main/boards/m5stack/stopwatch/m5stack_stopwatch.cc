@@ -15,6 +15,7 @@
 #if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
 #include <esp_pthread.h>
 #include "service_schedule_hardware_bench.h"
+#include "output_path_readback.h"
 #endif
 #if CONFIG_PROVISIONS_SCHEDULE_BENCH_DEMO
 #include "codecs/dummy_audio_codec.h"
@@ -1570,6 +1571,7 @@ private:
     bool display_dimmed_ = false;
 #if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
     std::unique_ptr<orbit::service_schedule::HardwareBench> bench_;
+    std::unique_ptr<orbit::service_schedule::OutputPathReadbackWorker> output_readback_;
     std::atomic<orbit::service_schedule::HardwareBench*> bench_published_{nullptr};
     std::shared_ptr<const orbit::service_schedule::WorkerPublication> bench_rendered_;
     esp_timer_handle_t bench_timer_ = nullptr;
@@ -1578,6 +1580,120 @@ private:
     bool bench_motor_fault_ = false;
     uint64_t bench_display_sequence_ = 0;
     std::string bench_display_status_;
+
+    static orbit::service_schedule::OutputReadValue OutputRegisterValue(esp_err_t error,
+                                                                        uint16_t value) {
+        using orbit::service_schedule::OutputReadStatus;
+        return error == ESP_OK
+                   ? orbit::service_schedule::OutputReadValue{OutputReadStatus::Ok, 0, value}
+                   : orbit::service_schedule::OutputReadValue{
+                         OutputReadStatus::ReadFailed, static_cast<int>(error), 0};
+    }
+
+    orbit::service_schedule::IoExpanderRegisters CaptureOutputIoExpander() {
+        using orbit::service_schedule::IoExpanderRegisters;
+        using orbit::service_schedule::OutputReadStatus;
+        IoExpanderRegisters result;
+        i2c_device_config_t config = {
+            .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+            .device_address = M5IOE1_I2C_ADDR,
+            .scl_speed_hz = M5IOE1_I2C_FREQ_100K,
+        };
+        i2c_master_dev_handle_t device = nullptr;
+        const auto added = i2c_master_bus_add_device(i2c_bus_, &config, &device);
+        if (added != ESP_OK) {
+            const orbit::service_schedule::OutputReadValue unavailable{
+                OutputReadStatus::Unavailable, static_cast<int>(added), 0};
+            result.mode = result.drive = result.output = result.input = unavailable;
+            return result;
+        }
+        const auto read = [device](uint8_t reg) {
+            uint8_t bytes[2] = {};
+            const auto error =
+                i2c_master_transmit_receive(device, &reg, 1, bytes, sizeof(bytes), 100);
+            return OutputRegisterValue(
+                error, static_cast<uint16_t>(bytes[0] | (uint16_t{bytes[1]} << 8)));
+        };
+        result.mode = read(M5IOE1_REG_GPIO_MODE_L);
+        result.drive = read(M5IOE1_REG_GPIO_DRV_L);
+        result.output = read(M5IOE1_REG_GPIO_OUT_L);
+        result.input = read(M5IOE1_REG_GPIO_IN_L);
+        const auto removed = i2c_master_bus_rm_device(device);
+        if (removed != ESP_OK)
+            ESP_LOGE(TAG, "bench_output_readback IOE device removal failed: %s",
+                     esp_err_to_name(removed));
+        return result;
+    }
+
+    orbit::service_schedule::CodecOutputReadback CaptureOutputCodec() {
+        using BenchStatus = Es8311BenchReadValue::Status;
+        using orbit::service_schedule::CodecOutputReadback;
+        using orbit::service_schedule::OutputReadStatus;
+        const auto source = static_cast<ProvisionsStopwatchAudioCodec*>(GetAudioCodec())
+                                ->CaptureBenchOutputReadback();
+        const auto copy = [](const Es8311BenchReadValue& value) {
+            OutputReadStatus status = OutputReadStatus::Unavailable;
+            switch (value.status) {
+                case BenchStatus::Ok:
+                    status = OutputReadStatus::Ok;
+                    break;
+                case BenchStatus::Unavailable:
+                    status = OutputReadStatus::Unavailable;
+                    break;
+                case BenchStatus::Closed:
+                    status = OutputReadStatus::Closed;
+                    break;
+                case BenchStatus::ReadFailed:
+                    status = OutputReadStatus::ReadFailed;
+                    break;
+            }
+            return orbit::service_schedule::OutputReadValue{status, value.driver_error,
+                                                             value.value};
+        };
+        return {source.requested_volume, source.available, source.open, copy(source.clock_01),
+                copy(source.clock_02), copy(source.mute_31), copy(source.volume_32)};
+    }
+
+    void LogOutputReadValue(const char* name,
+                            const orbit::service_schedule::OutputReadValue& value) {
+        ESP_LOGI(TAG, "bench_output_readback_value name=%s status=%s error=%d value=%d", name,
+                 orbit::service_schedule::OutputReadStatusName(value.status), value.driver_error,
+                 value.valid() ? static_cast<int>(value.value) : -1);
+    }
+
+    void PollOutputReadback() {
+        if (!output_readback_)
+            return;
+        while (const auto snapshot = output_readback_->Take()) {
+            ESP_LOGI(TAG,
+                     "bench_output_readback capture=%llu captured_t=%lld trigger_t=%lld "
+                     "trace_seq=%llu attempt=%llu trigger_gen=%lu gen_before=%lu gen_after=%lu "
+                     "attribution=%s requested=%d codec_available=%d codec_open=%d",
+                     static_cast<unsigned long long>(snapshot->capture_sequence),
+                     static_cast<long long>(snapshot->captured_at_ms),
+                     static_cast<long long>(snapshot->trigger.at_ms),
+                     static_cast<unsigned long long>(snapshot->trigger.trace_sequence),
+                     static_cast<unsigned long long>(snapshot->trigger.attempt),
+                     static_cast<unsigned long>(snapshot->trigger.playback_generation),
+                     static_cast<unsigned long>(snapshot->generation_before),
+                     static_cast<unsigned long>(snapshot->generation_after),
+                     snapshot->exact_trigger_generation() ? "exact" : "stale_or_changed",
+                     snapshot->codec.requested_volume, snapshot->codec.available,
+                     snapshot->codec.open);
+            LogOutputReadValue("es8311_01", snapshot->codec.clock_01);
+            LogOutputReadValue("es8311_02", snapshot->codec.clock_02);
+            LogOutputReadValue("es8311_31", snapshot->codec.mute_31);
+            LogOutputReadValue("es8311_32", snapshot->codec.volume_32);
+            LogOutputReadValue("ioe_g3_mode", snapshot->codec_power.mode);
+            LogOutputReadValue("ioe_g3_drive", snapshot->codec_power.drive);
+            LogOutputReadValue("ioe_g3_output", snapshot->codec_power.output);
+            LogOutputReadValue("ioe_g3_input", snapshot->codec_power.input);
+            LogOutputReadValue("ioe_g10_mode", snapshot->amplifier_enable.mode);
+            LogOutputReadValue("ioe_g10_drive", snapshot->amplifier_enable.drive);
+            LogOutputReadValue("ioe_g10_output", snapshot->amplifier_enable.output);
+            LogOutputReadValue("ioe_g10_input", snapshot->amplifier_enable.input);
+        }
+    }
 
     void PollHardwareBench() {
         if (!bench_)
@@ -1620,7 +1736,12 @@ private:
                      static_cast<unsigned long long>(trace.square_sum),
                      static_cast<unsigned long>(event->errors), event->decode_in_flight,
                      event->output_in_flight, static_cast<unsigned long long>(event->lost_events));
+            if (output_readback_ && std::string_view(event->reason) == "first_write") {
+                output_readback_->Submit({event->at_ms, trace.sequence, event->attempt,
+                                          trace.generation});
+            }
         }
+        PollOutputReadback();
     }
     void QueueBenchGesture(bool blue) {
         auto* bench = bench_published_.load();
@@ -1655,6 +1776,26 @@ private:
             return;
         }
         auto& audio = Application::GetInstance().GetAudioService();
+        auto readback_config = esp_pthread_get_default_config();
+        readback_config.stack_size = 8 * 1024;
+        readback_config.prio = 1;
+        readback_config.thread_name = "orbit_output_diag";
+        readback_config.inherit_cfg = false;
+        if (esp_pthread_set_cfg(&readback_config) != ESP_OK) {
+            display_->RenderHardwareBench({}, "OUTPUT CHECK CONFIG FAILED");
+            esp_pthread_set_cfg(&prior);
+            return;
+        }
+        output_readback_ =
+            std::make_unique<orbit::service_schedule::OutputPathReadbackWorker>(
+                orbit::service_schedule::OutputPathReadbackHooks{
+                    [] { return esp_timer_get_time() / 1000; },
+                    [&audio] { return audio.BenchPlaybackGeneration(); },
+                    [this] { return CaptureOutputCodec(); },
+                    [this] { return CaptureOutputIoExpander(); },
+                    static_cast<uint8_t>(IOE_PIN_CODEC_POWER),
+                    static_cast<uint8_t>(IOE_PIN_PA_EN)});
+        esp_pthread_set_cfg(&config);
         orbit::service_schedule::AlarmOutputHooks hooks{
             [&audio]() { return audio.PlayLocalFeedback(Lang::Sounds::OGG_EXCLAMATION); },
             [&audio]() { audio.CancelLocalFeedback(); },

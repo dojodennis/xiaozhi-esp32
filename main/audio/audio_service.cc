@@ -1346,6 +1346,11 @@ std::optional<LocalFeedbackTrace::Event> AudioService::TakeBenchAudioTrace() {
     std::lock_guard<std::mutex> lock(audio_queue_mutex_);
     return local_feedback_trace_.Pop();
 }
+
+uint32_t AudioService::BenchPlaybackGeneration() {
+    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+    return playback_generation_;
+}
 #endif
 
 void AudioService::CancelLocalFeedback() {

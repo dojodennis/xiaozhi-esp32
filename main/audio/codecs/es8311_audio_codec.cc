@@ -360,6 +360,40 @@ bool Es8311AudioCodec::PrepareInputCapture() {
            i2s_channel_enable(rx_handle_) == ESP_OK;
 }
 
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+Es8311BenchOutputReadback Es8311AudioCodec::CaptureBenchOutputReadback() {
+    std::lock_guard<std::mutex> lock(data_if_mutex_);
+    Es8311BenchOutputReadback result;
+    result.requested_volume = output_volume_;
+    result.available = codec_if_ != nullptr && ctrl_if_ != nullptr;
+    result.open = dev_ != nullptr;
+
+    auto unavailable = result.available ? Es8311BenchReadValue::Status::Closed
+                                        : Es8311BenchReadValue::Status::Unavailable;
+    result.clock_01.status = unavailable;
+    result.clock_02.status = unavailable;
+    result.mute_31.status = unavailable;
+    result.volume_32.status = unavailable;
+    if (!result.available || !result.open)
+        return result;
+
+    const auto read = [this](int reg) {
+        int value = 0;
+        const int error = esp_codec_dev_read_reg(dev_, reg, &value);
+        if (error != ESP_CODEC_DEV_OK)
+            return Es8311BenchReadValue{Es8311BenchReadValue::Status::ReadFailed, error, 0};
+        return Es8311BenchReadValue{Es8311BenchReadValue::Status::Ok, 0,
+                                    static_cast<uint8_t>(value)};
+    };
+    // Exact bounded set only: clock source/divider, DAC mute and DAC volume.
+    result.clock_01 = read(0x01);
+    result.clock_02 = read(0x02);
+    result.mute_31 = read(0x31);
+    result.volume_32 = read(0x32);
+    return result;
+}
+#endif
+
 #if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
 bool Es8311AudioCodec::EnableOutputAdmitted(const provisions::audio_admission::Reservation& token) {
     const auto* gate = admission_.load();

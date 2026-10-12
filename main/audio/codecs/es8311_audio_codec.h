@@ -9,6 +9,25 @@
 #include <esp_codec_dev_defaults.h>
 #include <mutex>
 
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+struct Es8311BenchReadValue {
+    enum class Status : uint8_t { Ok, Unavailable, Closed, ReadFailed };
+    Status status = Status::Unavailable;
+    int driver_error = 0;
+    uint8_t value = 0;
+};
+
+struct Es8311BenchOutputReadback {
+    int requested_volume = -1;
+    bool available = false;
+    bool open = false;
+    Es8311BenchReadValue clock_01;
+    Es8311BenchReadValue clock_02;
+    Es8311BenchReadValue mute_31;
+    Es8311BenchReadValue volume_32;
+};
+#endif
+
 class Es8311AudioCodec : public AudioCodec {
 private:
     const audio_codec_data_if_t* data_if_ = nullptr;
@@ -59,6 +78,9 @@ public:
     bool IsInputClosedForFence() const override { return fence_rx_closed_.load(); }
     bool IsOutputClosedForFence() const override { return fence_tx_closed_.load(); }
     bool EnableOutputAdmitted(const provisions::audio_admission::Reservation& token) override;
+#endif
+#if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
+    Es8311BenchOutputReadback CaptureBenchOutputReadback();
 #endif
 };
 

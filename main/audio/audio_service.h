@@ -307,6 +307,7 @@ public:
     uint32_t LocalFeedbackErrors() const { return local_feedback_errors_.load(); }
 #if CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
     std::optional<LocalFeedbackTrace::Event> TakeBenchAudioTrace();
+    uint32_t BenchPlaybackGeneration();
 #endif
 #endif
     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
