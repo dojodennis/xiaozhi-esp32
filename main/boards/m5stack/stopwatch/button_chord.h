@@ -43,10 +43,21 @@ public:
     // True when the release must stop a Talk capture that actually started.
     bool TalkUp() {
         const bool started = talk_started_;
+        // Released inside the window with no chord: a click. The microphone
+        // never opens for it, but the menu confirms on it, so a quick yellow
+        // tap on "Timers" works the first time instead of needing a hold.
+        talk_clicked_ = talk_down_ && !talk_started_ && !chord_;
         talk_down_ = talk_started_ = false;
         if (!blue_down_)
             chord_ = false;
         return started;
+    }
+
+    // True once per click reported by TalkUp().
+    bool TakeTalkClick() {
+        const bool clicked = talk_clicked_;
+        talk_clicked_ = false;
+        return clicked;
     }
 
     Edge BlueDown(int64_t now_us) {
@@ -72,13 +83,17 @@ public:
     // a chord, do nothing".
     bool SwallowBlueGesture() const { return swallow_blue_; }
 
+    // Both buttons are down inside a chord. The lock commits only after they
+    // have been held, so a brush in a pocket does not lock or unlock.
+    bool BothHeld() const { return chord_ && talk_down_ && blue_down_; }
+
 private:
     Edge BeginChord() {
         chord_ = swallow_blue_ = true;
         talk_started_ = false;
         return Edge::kChord;
     }
-    bool talk_down_ = false, talk_started_ = false, blue_down_ = false;
+    bool talk_down_ = false, talk_started_ = false, talk_clicked_ = false, blue_down_ = false;
     bool chord_ = false, swallow_blue_ = false;
     int64_t talk_down_us_ = 0, blue_down_us_ = 0;
 };

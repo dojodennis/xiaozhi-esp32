@@ -19,5 +19,16 @@
       "bytes": 8621,
       "sha256": "43480b0cd0fcde24fcb4d802283e2b07774cb91022f93b4a8e7508c6f6235573"
     }
+  ],
+  "tones": [
+    {
+      "file": "alarm.ogg",
+      "use": "timer alarm beat (provisions::feedback::kAlarm)",
+      "synthesis": "three pips 2000/2600/2000 Hz with a 30% second harmonic, 140/140/160 ms, 90 ms gaps, 6 ms raised-cosine fades, peak -1.4 dBFS, 0.68 s; encoded libopus 24000 Hz mono, 48 kbps VBR, 60 ms frames",
+      "why": "the stock exclamation.ogg is a 200 Hz tone the StopWatch speaker cannot reproduce; only its edges were audible as clicks",
+      "generated_date": "2026-09-21",
+      "bytes": 3213,
+      "sha256": "4d8acd04631e5d3f21220a65a740d8237065f915487aeb16eb5ee33b2c526e74"
+    }
   ]
 }

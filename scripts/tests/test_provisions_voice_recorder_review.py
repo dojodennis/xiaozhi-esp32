@@ -427,6 +427,21 @@ void bounded_offer_cases() {
         assert(recorder.PendingCount()==1&&recorder.NeedsAttention()&&!recorder.HasFault());
     }
     join();
+    fresh();
+    {
+        // Four retired recordings must not block the next note or shopping item.
+        VoiceRecorder recorder;initialize(recorder);authorize(recorder);
+        for(uint32_t press=1;press<=4;++press) {
+            record(recorder,press);replay(recorder);
+            auto retired=offered.back().receipt;retired.needs_attention=true;
+            acknowledge(recorder,retired);
+        }
+        assert(recorder.PendingCount()==4&&recorder.NeedsAttention());
+        record(recorder,5);
+        assert(recorder.PendingCount()==4);
+        assert(notices.back()==std::make_pair(VoiceRecorder::Result::Saved,uint32_t(5)));
+    }
+    join();
     std::cout<<"Bounded automatic offers and needs_attention retirement cases passed\n";
 }
 
@@ -581,7 +596,7 @@ PHYSICAL = r"""
 #define CONFIG_PROVISIONS_LOCAL_CAPTURE 1
 #define CONFIG_PROVISIONS_GATEWAY_REQUIRED 1
 constexpr int MAIN_EVENT_START_LISTENING=1,MAIN_EVENT_STOP_LISTENING=2,MAIN_EVENT_DICTATION_MODE=4,MAIN_EVENT_DICTATION_CONTROL=8,MAIN_EVENT_DICTATION_CAP=16,AS_EVENT_LOCAL_RECORDING_RUNNING=32;
-constexpr int kDeviceStateIdle=0,kDeviceStateListening=1;
+constexpr int kDeviceStateIdle=0,kDeviceStateListening=1,kDeviceStateSpeaking=2,kAbortReasonNone=0;
 std::atomic<unsigned> app_events{0};
 void xEventGroupSetBits(int,unsigned bits){app_events.fetch_or(bits);}void xEventGroupClearBits(int,unsigned bits){app_events.fetch_and(~bits);}
 struct WebsocketProtocol {
@@ -594,6 +609,18 @@ struct WebsocketProtocol {
 struct Display {bool visible=false;std::string status,action;void SetStatus(const char* s){status=s?s:"";}void SetDictationScreen(bool v,const std::string& s,const std::string& a){visible=v;status=s;action=a;}};
 struct Board {Display display;static Board& GetInstance(){static Board board;return board;}Display* GetDisplay(){return &display;}};
 int64_t DictationNow(bool trusted){return trusted?1788712345678LL:0;}
+std::string DictationHeardFace(const std::string& heard, bool ok) {
+    std::string status;
+    status.reserve(heard.size() + 12);
+    for (char character : heard)
+        status += character == '|' ? '\n' : character;
+    status += '\n';
+    status += ok ? "RECORDED" : "TRY AGAIN";
+    return status;
+}
+uint8_t g_shopping_focus=0;int64_t g_shopping_focus_since_us=0;uint8_t g_shopping_appended=0;uint8_t g_shopping_batch=0;
+size_t g_shopping_scroll=0;int64_t g_shopping_scroll_at_us=0;constexpr int64_t kShoppingScrollIdleUs=8*1000000;
+bool ProvisionsTimerFaceShowing(){return false;}
 namespace Lang { namespace Sounds { constexpr const char* OGG_POPUP="OGG_POPUP"; } }
 
 struct AudioService {
@@ -612,14 +639,28 @@ struct Application {
  std::atomic<uint32_t> dictation_closed_press_{0};uint32_t provisions_recording_started_press_=0,dictation_authorization_seen_=0;
  bool provisions_recording_was_dictation_=false,dictation_has_assignment_proof_=true;VoiceId dictation_assignment_proof_=context().conversation_id;
  std::atomic<bool> provisions_network_busy_{false},provisions_response_pending_{false};
- int64_t dictation_next_receipt_us_=0,dictation_last_send_us_=0;std::string dictation_sent_control_;
+ int64_t dictation_next_receipt_us_=0,dictation_last_send_us_=0,dictation_review_since_us_=0,dictation_heard_at_us_=0;std::string dictation_sent_control_,dictation_heard_,dictation_heard_incoming_;
+ bool dictation_heard_ok_=true,dictation_heard_incoming_ok_=true,dictation_review_pending_=false,dictation_heard_voice_done_=false;
+ std::atomic<bool> dictation_readback_{false};
  std::vector<std::string> sounds;
  struct TimerPlayer{bool fenced=false;bool Fenced(){return fenced;}}timer_player_;
+ enum class OrbitView : uint8_t { Home, Menu, Shopping, Notes };
+ std::atomic<OrbitView> orbit_view_{OrbitView::Home};
+ uint8_t orbit_menu_index_=0;std::string shopping_list_face_;
+ std::vector<std::string> shopping_list_items_;uint8_t shopping_focus_=0;int64_t shopping_focus_since_us_=0;
+ void PaintOrbitView(){}
+ void HandleOrbitMenuBlue(){}
+ bool ConfirmOrbitMenu(){return false;}
+ bool IsOrbitShoppingFace()const{return orbit_view_.load()==OrbitView::Shopping;}
+ void RememberShoppingListSpeech(const std::string&){}
+ void HandleOrbitMenuBlueOnMain(){}
+ void ConfirmOrbitMenuOnMain(){}
+ void RememberShoppingListFace(const std::string&){}
  std::shared_ptr<WebsocketProtocol> GetProtocol(){return protocol;}int GetDeviceState(){return state;}void SetDeviceState(int value){state=value;}
  const char* GetProvisionsIdleStatus() const{return "Ready";}
  bool IsLiteMode()const{return protocol&&protocol->IsLiteMode();}
  void PlaySound(const std::string_view& s){sounds.emplace_back(std::string(s));}
- void Schedule(std::function<void()> fn){fn();}void HandleVoiceRecordingResult(VoiceRecorder::Result,uint32_t){assert(false);}
+ void AbortSpeaking(int){}void Schedule(std::function<void()> fn){fn();}void HandleVoiceRecordingResult(VoiceRecorder::Result,uint32_t){assert(false);}
  void StartListening();void StopListening();bool BeginLocalRecordingOnMain();void EndLocalRecordingOnMain();void ToggleDictationScreen();void DictationButton();void CloseDictationInputOnMain();void ServiceDictation();void HandleDictationControlOnMain();
  __FENCE__
  void Samples(uint32_t press,const int16_t* pcm,size_t frames,size_t channels) __SAMPLES__
@@ -648,8 +689,13 @@ void dictation_main_consumer_cases(){
   app.CloseDictationInputOnMain();app.HandleDictationControlOnMain();drain();
   assert(recorder.DictationRecord().pending==dictation::Action::Stop&&recorder.DictationRecord().frozen_count==1);
   app.StopListening();app.EndLocalRecordingOnMain();app.ServiceDictation();assert(app.protocol->controls.back().find("expected_segments")!=std::string::npos);
-  dictation_ack(recorder,dictation::State::Stopped);app.ServiceDictation();drain();app.ServiceDictation();
-  assert(Board::GetInstance().display.status.find("Stopped")!=std::string::npos||Board::GetInstance().display.status.find("Control pending")!=std::string::npos);
+  dictation_ack(recorder,dictation::State::Stopped);app.timer_player_.fenced=true;app.ServiceDictation();drain();app.ServiceDictation();
+  // A running countdown owns the output slot: only a receipt, never a resume.
+  assert(recorder.DictationRecord().pending!=dictation::Action::Resume);
+  dictation_ack(recorder,dictation::State::Stopped);app.timer_player_.fenced=false;app.ServiceDictation();drain();app.ServiceDictation();
+  assert(recorder.DictationRecord().pending==dictation::Action::Resume);
+  assert(!app.protocol->controls.empty()&&app.protocol->controls.back().find("resume")!=std::string::npos);
+  assert(Board::GetInstance().display.status.find("Paused")==std::string::npos);
  }
  join();
 }

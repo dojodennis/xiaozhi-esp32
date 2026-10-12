@@ -11,6 +11,8 @@ public:
 
     bool Begin(i2c_master_bus_handle_t bus, uint8_t address = 0x15);
     bool ReadPressed(bool& pressed);
+    // Same frame as ReadPressed plus the first finger's panel coordinates.
+    bool ReadTouch(bool& pressed, uint16_t& x, uint16_t& y);
 
 private:
     bool ReadRegister(uint8_t reg, uint8_t* data, size_t size);

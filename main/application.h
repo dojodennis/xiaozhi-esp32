@@ -107,6 +107,9 @@ public:
     // Blue dismissal of the timer takeover: reports each due ring timer to the
     // gateway (timers_v1 only). Main task. No-op without local capture.
     void DismissDueTimers();
+    // Blue ack while an automatic alarm-listen window is open: close it
+    // instead of uploading kitchen noise as a talk turn.
+    void AbortAlarmListening();
     // Physical Talk press-down (ESP_TIMER_TASK) for capture diagnostics only.
     void NoteTalkPressDown(int64_t now_us);
 
@@ -127,6 +130,19 @@ public:
     void ToggleDictationScreen();
     void DictationButton();
     bool IsDictationScreen() const { return dictation_screen_.load(); }
+    // Blue: open or return to the menu, or advance the highlighted item.
+    // Yellow on a menu item confirms. Alarm silence still wins on blue.
+    void HandleOrbitMenuBlue();
+    bool ConfirmOrbitMenu();
+    bool IsOrbitShoppingFace() const;
+    bool IsOrbitNotesFace() const;
+    bool IsOrbitMenuFace() const;
+    // Finger swipe on the shopping face: down pages toward older items, up
+    // toward newer. Snaps back to live on the newest page, a new add, or idle.
+    void HandleShoppingSwipe(bool down);
+    // Sideways thumb swipe on any face: swaps the shopping list and the timer
+    // dial, either direction. The same destinations as the menu's two items.
+    void HandleOrbitFaceSwipe(bool right);
 #endif
 
     /**
@@ -293,9 +309,34 @@ private:
     std::string dictation_sent_control_;
     int64_t dictation_last_send_us_ = 0;
     int64_t dictation_next_receipt_us_ = 0;
+    std::string dictation_heard_;
+    std::string dictation_heard_incoming_;
+    bool dictation_heard_ok_ = true;
+    bool dictation_heard_incoming_ok_ = true;
+    bool dictation_review_pending_ = false;
+    int64_t dictation_review_since_us_ = 0;
+    int64_t dictation_heard_at_us_ = 0;
+    std::atomic<bool> dictation_readback_{false};
+    bool dictation_heard_voice_done_ = false;
     void CloseDictationInputOnMain();
     void HandleDictationControlOnMain();
     void ServiceDictation();
+    enum class OrbitView : uint8_t { Home, Menu, Shopping, Notes };
+    std::atomic<OrbitView> orbit_view_{OrbitView::Home};
+    uint8_t orbit_menu_index_ = 0;
+    std::string shopping_list_face_;
+    std::vector<std::string> shopping_list_items_;
+    std::vector<std::string> notes_items_;
+    void HandleOrbitMenuBlueOnMain();
+    void ConfirmOrbitMenuOnMain();
+    void LeaveDictationScreenOnMain();
+    void OpenOrbitShoppingOnMain();
+    void OpenOrbitTimersOnMain();
+    void OpenOrbitNotesOnMain();
+    void RememberShoppingListFace(const std::string& text);
+    void RememberShoppingListSpeech(const std::string& spoken);
+    void RememberNotesFace(const std::string& text);
+    void PaintOrbitView();
 #endif
     int clock_ticks_ = 0;
     TaskHandle_t activation_task_handle_ = nullptr;

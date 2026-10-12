@@ -33,13 +33,17 @@ class ProvisionsButtonChordTests(unittest.TestCase):
                     assert(!c.TalkWindowElapsed());  // Exactly one start.
                     assert(c.TalkUp());
                     assert(!c.SwallowBlueGesture());
+                    assert(!c.TakeTalkClick());  // A hold is not a click.
                 }
                 {
-                    // A tap shorter than the window never opens the microphone.
+                    // A tap shorter than the window never opens the microphone,
+                    // but it is a click: the menu confirms on it, exactly once.
                     ButtonChord c;
                     assert(c.TalkDown(0) == Edge::kArmTalk);
                     assert(!c.TalkUp());
                     assert(!c.TalkWindowElapsed());
+                    assert(c.TakeTalkClick());
+                    assert(!c.TakeTalkClick());
                 }
                 {
                     // Talk then blue inside the window: chord, no Talk, blue swallowed.
@@ -50,6 +54,18 @@ class ProvisionsButtonChordTests(unittest.TestCase):
                     assert(c.SwallowBlueGesture());
                     c.BlueUp();
                     assert(c.SwallowBlueGesture());  // The blue click fires after release.
+                    assert(!c.TalkUp());
+                    assert(!c.TakeTalkClick());  // A chord release is not a click.
+                    assert(!c.BothHeld());
+                }
+                {
+                    // Both still down: the lock may commit. A release ends it.
+                    ButtonChord c;
+                    assert(c.TalkDown(0) == Edge::kArmTalk);
+                    assert(c.BlueDown(10) == Edge::kChord);
+                    assert(c.BothHeld());
+                    c.BlueUp();
+                    assert(!c.BothHeld());
                     assert(!c.TalkUp());
                     // Next blue press on its own acts normally again.
                     assert(c.BlueDown(10 * W) == Edge::kNone);
@@ -130,6 +146,15 @@ class ProvisionsButtonChordTests(unittest.TestCase):
         self.assertIn("button2_.OnPressUp", board)
         self.assertIn("ButtonChord::kWindowUs", board)
         self.assertIn("ToggleTimerFace()", board)
+        # A yellow click (release inside the window) confirms the menu without
+        # opening the microphone; only a started capture is stopped.
+        release = board.split("button1_.OnPressUp", 1)[1].split("});", 1)[0]
+        self.assertIn("if (TalkReleased()) {", release)
+        self.assertIn("StopListening();", release)
+        self.assertIn("TalkClicked()", release)
+        self.assertIn("!orbit_locked_.load()", release)
+        self.assertIn("ConfirmOrbitMenu();", release)
+        self.assertNotIn("StartListening", release)
         self.assertIn("kTimerFaceIdleUs = 30LL * 1000 * 1000", board)
         # Every blue gesture checks the chord before silencing, dictation, retry or volume.
         buttons = board.split("void InitializeButtons()", 1)[1].split("button1_.OnPressDown", 1)[1]

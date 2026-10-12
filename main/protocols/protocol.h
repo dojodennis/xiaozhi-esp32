@@ -89,6 +89,9 @@ public:
     virtual bool SendAudio(std::unique_ptr<AudioStreamPacket> packet) = 0;
     virtual void SendWakeWordDetected(const std::string& wake_word);
     virtual void SendStartListening(ListeningMode mode);
+    // One-shot: the next listen start is from the shopping-list face, so the
+    // gateway files bare items. Cleared when that start is sent.
+    void SetListenShopping(bool shopping);
     virtual void SendStopListening();
     virtual void SendAbortSpeaking(AbortReason reason);
     virtual void SendMcpMessage(const std::string& message);

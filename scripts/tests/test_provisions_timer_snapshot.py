@@ -56,7 +56,8 @@ class ProvisionsTimerSnapshotTests(unittest.TestCase):
         silence = board.split("bool SilenceTimerAlarm()", 1)[1].split(
             "bool HasTimerAlarm()", 1
         )[0]
-        self.assertIn("timer_alarm_state_.Silence()", silence)
+        self.assertIn("DismissDueTimersLocked()", silence)
+        self.assertNotIn("timer_alarm_state_.Silence()", silence)
         self.assertIn("ApplyAlarmOutputChange(output_change)", silence)
         self.assertNotIn("timer_snapshot_ =", silence)
         alarm_output = board.split("SetTimerAlarmOutputCallback", 1)[1].split(
@@ -64,8 +65,9 @@ class ProvisionsTimerSnapshotTests(unittest.TestCase):
         )[0]
         self.assertIn("active ? HIGH : LOW", alarm_output)
         self.assertIn("PlayLocalFeedback", alarm_output)
-        self.assertIn("OGG_EXCLAMATION", alarm_output)
+        self.assertIn("provisions::feedback::kAlarm", alarm_output)
         self.assertIn("CancelLocalFeedback", alarm_output)
+        self.assertIn("IsPlaybackIdle()", alarm_output)
 
         alarm_listening = application.split("void Application::ServiceAlarmListening", 1)[
             1
@@ -74,6 +76,21 @@ class ProvisionsTimerSnapshotTests(unittest.TestCase):
         self.assertIn(
             "alarm_listen_next_us_ = now_us + kAnnouncementGraceUs", alarm_listening
         )
+        # A window never opens over the announcement or a chime beat, and the
+        # spacing counts from the resume after a hold - otherwise the next
+        # window opened in the same pass and the odd (speaker) beat never came.
+        self.assertIn("if (!audio_service_.IsPlaybackIdle())", alarm_listening)
+        hold_release = alarm_listening.split("alarm_output_held_ = false;", 1)[1].split(
+            "const uint32_t open_press", 1
+        )[0]
+        self.assertIn("display->PauseTimerAlarmOutput(false);", hold_release)
+        self.assertIn("alarm_listen_next_us_ = now_us + kSpacingUs;", hold_release)
+        abort = application.split("void Application::AbortAlarmListening", 1)[1].split(
+            "void Application::NoteTalkPressDown", 1
+        )[0]
+        self.assertIn("StopListening()", abort)
+        self.assertIn("alarm_listen_attempts_ = kMaxWindows", abort)
+        self.assertIn("AbortAlarmListening()", board)
 
     @unittest.skipUnless(
         shutil.which("c++") and shutil.which("cc"),

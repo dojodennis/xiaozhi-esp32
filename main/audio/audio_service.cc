@@ -554,16 +554,6 @@ void AudioService::AudioOutputTask() {
         audio_queue_cv_.notify_all();
         lock.unlock();
 
-        if (!codec_->output_enabled()) {
-            esp_timer_stop(audio_power_timer_);
-            esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
-#if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
-            codec_->EnableOutputAdmitted(output_work.Token());
-#else
-            codec_->EnableOutput(true);
-#endif
-        }
-
         lock.lock();
         const bool current =
             task->playback_generation == playback_generation_ && !service_stopped_.load()
@@ -571,16 +561,27 @@ void AudioService::AudioOutputTask() {
             && output_work.Allowed() && task->ordinary_owner == ordinary_owner_
 #endif
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
-            && local_recording_press_.load() == 0 &&
-            local_physical_boundary_.load() == local_output_boundary_.load()
+            && ((task->playback_id == 0 && local_feedback_active_) ||
+                (local_recording_press_.load() == 0 &&
+                 local_physical_boundary_.load() == local_output_boundary_.load()))
 #endif
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
-            && (timer_output_owner_.load() == 0 || timer_output_owner_.load() == task->playback_id)
+            && (timer_output_owner_.load() == 0 || timer_output_owner_.load() == task->playback_id ||
+                (task->playback_id == 0 && local_feedback_active_))
 #endif
             ;
         lock.unlock();
         bool played = false;
         if (current) {
+            if (!codec_->output_enabled()) {
+                esp_timer_stop(audio_power_timer_);
+                esp_timer_start_periodic(audio_power_timer_, AUDIO_POWER_CHECK_INTERVAL_MS * 1000);
+#if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
+                codec_->EnableOutputAdmitted(output_work.Token());
+#else
+                codec_->EnableOutput(true);
+#endif
+            }
 #if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
             played = codec_->OutputDataAdmitted(task->pcm, output_work.Token());
 #else
@@ -680,7 +681,12 @@ void AudioService::OpusCodecTask() {
             AudioAdmissionWork decode_work(
                 &audio_admission_, AudioAdmissionWork::Producer::Decode,
                 OutputParentLocked(packet->playback_id, ordinary_owner_));
-            if (!decode_work.Allowed())
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+            const bool local_chime = packet->playback_id == 0 && local_feedback_active_;
+#else
+            const bool local_chime = false;
+#endif
+            if (!local_chime && !decode_work.Allowed())
                 continue;
             const uint64_t ordinary_owner = ordinary_owner_;
 #endif
@@ -1297,12 +1303,15 @@ void AudioService::SetCallbacks(AudioServiceCallbacks& callbacks) { callbacks_ =
 bool AudioService::PlayLocalFeedback(const std::string_view& sound) {
     std::lock_guard<std::mutex> lock(audio_queue_mutex_);
 #if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
-    AudioAdmissionWork work(&audio_admission_, AudioAdmissionWork::Producer::Notification);
-    if (!work.Allowed() || ordinary_owner_ != 0)
+    if (ordinary_owner_ != 0)
         return false;
 #endif
     if (sound.empty() || sound.size() > 32768 || service_stopped_.load() ||
-        local_recording_press_.load() != 0 || timer_output_owner_.load() != 0)
+        local_recording_press_.load() != 0)
+        return false;
+    if (timer_output_owner_.load() != 0 &&
+        (!audio_decode_queue_.empty() || !audio_playback_queue_.empty() || decode_in_flight_ ||
+         output_in_flight_))
         return false;
     ++playback_generation_;
     audio_decode_queue_.clear();
@@ -1329,8 +1338,7 @@ void AudioService::CancelLocalFeedback() {
 
 void AudioService::FillLocalFeedbackLocked() {
 #if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
-    AudioAdmissionWork work(&audio_admission_, AudioAdmissionWork::Producer::Decode);
-    if (!work.Allowed() || ordinary_owner_ != 0) {
+    if (ordinary_owner_ != 0) {
         local_feedback_ = {};
         return;
     }
@@ -1368,11 +1376,7 @@ void AudioService::FillLocalFeedbackLocked() {
     }
     if (local_feedback_offset_ == local_feedback_.size() || local_feedback_demuxer_.HasError())
         local_feedback_ = {};
-    if (packet
-#if CONFIG_PROVISIONS_OUTPUT_FENCE_V1
-        && work.Allowed()
-#endif
-    )
+    if (packet)
         audio_decode_queue_.push_back(std::move(packet));
 }
 #endif

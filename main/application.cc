@@ -73,18 +73,24 @@ bool HasExactKeys(const cJSON* object, std::initializer_list<std::string_view> e
     return true;
 }
 
-bool IsApprovedShortText(const char* text) {
+bool IsApprovedTextUpTo(const char* text, size_t limit) {
     if (text == nullptr) {
         return false;
     }
     const size_t length = std::strlen(text);
-    if (length == 0 || length > 48) {
+    if (length == 0 || length > limit) {
         return false;
     }
     return std::all_of(text, text + length, [](unsigned char character) {
         return character >= 0x20 && character <= 0x7e;
     });
 }
+
+bool IsApprovedShortText(const char* text) { return IsApprovedTextUpTo(text, 48); }
+
+// Terminal face text: a shopping batch or read lists up to 24 '|'-separated
+// lines, so the face may run to 500 printable characters.
+bool IsApprovedFaceText(const char* text) { return IsApprovedTextUpTo(text, 500); }
 
 bool IsApprovedReceiptText(std::string_view text) {
     return text == "Found" || text == "No match" || text == "Draft only" || text == "Cancelled" ||
@@ -512,7 +518,8 @@ void Application::Run() {
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED && !CONFIG_PROVISIONS_SCHEDULE_HARDWARE_BENCH
             HandleProvisionsGatewayMaintenance();
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
-            if (GetDeviceState() == kDeviceStateIdle)
+            if (GetDeviceState() == kDeviceStateIdle && !dictation_screen_.load() &&
+                orbit_view_.load() == OrbitView::Home && !ProvisionsTimerFaceShowing())
                 display->SetStatus(GetProvisionsIdleStatus());
 #endif
 #endif
@@ -960,11 +967,23 @@ void Application::InitializeProtocol() {
             return;
 #endif
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        if ((IsOrbitShoppingFace() || IsOrbitNotesFace()) &&
+            manual_listening_requested_.load(std::memory_order_acquire))
+            return;
+        if (!dictation_screen_.load() && !IsOrbitShoppingFace() && !IsOrbitNotesFace() &&
+            (manual_listening_requested_.load(std::memory_order_acquire) ||
+             ProvisionsReplyInterrupted() || !GetProtocol() ||
+             !protocol->IsCurrentVoiceTurn(protocol->voice_turn_id()))) {
+            return;
+        }
+#else
         if (manual_listening_requested_.load(std::memory_order_acquire) ||
             ProvisionsReplyInterrupted() || !GetProtocol() ||
             !protocol->IsCurrentVoiceTurn(protocol->voice_turn_id())) {
             return;
         }
+#endif
 #endif
         if (GetDeviceState() == kDeviceStateSpeaking) {
             audio_service_.PushPacketToDecodeQueue(std::move(packet));
@@ -1165,7 +1184,7 @@ void Application::InitializeProtocol() {
                                cJSON_IsString(reply_state) &&
                                strcmp(reply_state->valuestring, "heartbeat") == 0;
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
-        if (!heartbeat && timer_player_.Fenced()) {
+        if (!heartbeat && timer_player_.Fenced() && !dictation_screen_.load()) {
             reject_gateway_frame();
             return;
         }
@@ -1179,11 +1198,20 @@ void Application::InitializeProtocol() {
                 return;
             }
             gateway_turn = static_cast<uint32_t>(turn->valuedouble);
-            if (!GetProtocol() || !GetProtocol()->IsCurrentVoiceTurn(gateway_turn) ||
-                ProvisionsReplyInterrupted() ||
+            if (!GetProtocol()) {
+                return;
+            }
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+            // Talk-path guards belong on the paint callback. Dictation review
+            // must not be dropped here: local-capture listen zeroes
+            // capture_press, so ProvisionsReplyInterrupted() stays true.
+#else
+            if (ProvisionsReplyInterrupted() ||
+                !GetProtocol()->IsCurrentVoiceTurn(gateway_turn) ||
                 manual_listening_requested_.load(std::memory_order_acquire)) {
                 return;
             }
+#endif
         }
 #endif
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
@@ -1258,11 +1286,23 @@ void Application::InitializeProtocol() {
             } else if (valid && (strcmp(state->valuestring, "success") == 0 ||
                                  strcmp(state->valuestring, "not_found") == 0 ||
                                  strcmp(state->valuestring, "warning") == 0)) {
-                valid = HasExactKeys(root, {"session_id", "type", "state", "text", "turn_id"}) &&
-                        cJSON_IsString(text) && IsApprovedShortText(text->valuestring);
-                terminal = valid;
-                if (valid) {
+                const bool text_ok =
+                    cJSON_IsString(text) && IsApprovedFaceText(text->valuestring);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                // Dictation review must not close the socket over an extra key.
+                if (text_ok && (dictation_screen_.load() || dictation_review_pending_)) {
+                    valid = true;
+                    terminal = true;
                     display_text = text->valuestring;
+                } else
+#endif
+                {
+                    valid = HasExactKeys(root, {"session_id", "type", "state", "text", "turn_id"}) &&
+                            text_ok;
+                    terminal = valid;
+                    if (valid) {
+                        display_text = text->valuestring;
+                    }
                 }
             } else {
                 valid = false;
@@ -1270,11 +1310,18 @@ void Application::InitializeProtocol() {
 
             if (!valid) {
                 ESP_LOGE(TAG, "Rejecting malformed Provisions state frame");
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                if (dictation_screen_.load() || dictation_review_pending_)
+                    return;
+#endif
                 reject_gateway_frame();
                 return;
             }
             if (working) {
-                InvalidateProvisionsTtsTurn();
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                if (!(dictation_screen_.load() || dictation_review_pending_))
+#endif
+                    InvalidateProvisionsTtsTurn();
                 Schedule(
                     [this, gateway_turn, gateway_session = std::string(session->valuestring)]() {
                         if (GetProtocol() && GetProtocol()->IsAudioChannelOpened() &&
@@ -1287,14 +1334,52 @@ void Application::InitializeProtocol() {
                 return;
             }
             if (terminal) {
-                InvalidateProvisionsTtsTurn();
-                Schedule([this, display, gateway_turn,
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                if (!(dictation_screen_.load() || dictation_review_pending_ ||
+                      IsOrbitShoppingFace() || IsOrbitNotesFace()))
+#endif
+                    InvalidateProvisionsTtsTurn();
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                const bool heard_ok = strcmp(state->valuestring, "success") == 0;
+#else
+                const bool heard_ok = false;
+#endif
+                Schedule([this, display, gateway_turn, heard_ok,
                           gateway_session = std::string(session->valuestring),
                           message = std::move(display_text)]() {
-                    if (!GetProtocol() || !GetProtocol()->IsAudioChannelOpened() ||
-                        GetProtocol()->session_id() != gateway_session ||
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                    RememberShoppingListFace(message);
+                    RememberNotesFace(message);
+                    if (orbit_view_.load() == OrbitView::Shopping ||
+                        orbit_view_.load() == OrbitView::Notes) {
+                        if (GetProtocol() && GetProtocol()->IsAudioChannelOpened() &&
+                            GetProtocol()->session_id() == gateway_session) {
+                            SetProvisionsResponsePending(false);
+                        }
+                        return;
+                    }
+                    if (dictation_screen_.load()) {
+                        dictation_heard_ = message;
+                        dictation_heard_incoming_.clear();
+                        dictation_heard_ok_ = heard_ok;
+                        dictation_review_pending_ = true;
+                        dictation_heard_at_us_ = esp_timer_get_time();
+                        ESP_LOGI(TAG, "Dictation review face: %s", message.c_str());
+                        ServiceDictation();
+                        if (GetProtocol() && GetProtocol()->IsAudioChannelOpened() &&
+                            GetProtocol()->session_id() == gateway_session) {
+                            SetProvisionsResponsePending(false);
+                        }
+                        return;
+                    }
+#endif
+                    if (!GetProtocol() || GetProtocol()->session_id() != gateway_session) {
+                        return;
+                    }
+                    if (!GetProtocol()->IsAudioChannelOpened() ||
+                        ProvisionsReplyInterrupted() ||
                         !GetProtocol()->IsCurrentVoiceTurn(gateway_turn) ||
-                        ProvisionsReplyInterrupted() || manual_listening_requested_.load()) {
+                        manual_listening_requested_.load()) {
                         return;
                     }
                     SetProvisionsResponsePending(false);
@@ -1373,15 +1458,39 @@ void Application::InitializeProtocol() {
                     provisions_tts_turn_.WithCurrent(token, [this, &gateway_session,
                                                              gateway_turn]() {
                         if (!GetProtocol() || !GetProtocol()->IsAudioChannelOpened() ||
-                            GetProtocol()->session_id() != gateway_session ||
-                            !GetProtocol()->IsCurrentVoiceTurn(gateway_turn) ||
-                            ProvisionsReplyInterrupted() || manual_listening_requested_.load()) {
+                            GetProtocol()->session_id() != gateway_session) {
                             return;
                         }
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                        if ((IsOrbitShoppingFace() || IsOrbitNotesFace()) &&
+                            manual_listening_requested_.load())
+                            return;
+                        if (!dictation_screen_.load() && !IsOrbitShoppingFace() &&
+                            !IsOrbitNotesFace() &&
+                            (!GetProtocol()->IsCurrentVoiceTurn(gateway_turn) ||
+                             ProvisionsReplyInterrupted() ||
+                             manual_listening_requested_.load())) {
+                            return;
+                        }
+#else
+                        if (!GetProtocol()->IsCurrentVoiceTurn(gateway_turn) ||
+                            ProvisionsReplyInterrupted() ||
+                            manual_listening_requested_.load()) {
+                            return;
+                        }
+#endif
                         SetProvisionsResponsePending(false);
                         aborted_ = false;
                         Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                        if (dictation_screen_.load())
+                            dictation_readback_.store(true);
+#endif
                         SetDeviceState(kDeviceStateSpeaking);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                        if (dictation_screen_.load())
+                            ServiceDictation();
+#endif
                     });
                 });
 #else
@@ -1406,9 +1515,34 @@ void Application::InitializeProtocol() {
                     provisions_tts_turn_.WithCurrent(token, [this, &gateway_session,
                                                              gateway_turn]() {
                         if (!GetProtocol() || !GetProtocol()->IsAudioChannelOpened() ||
-                            GetProtocol()->session_id() != gateway_session ||
-                            !GetProtocol()->IsCurrentVoiceTurn(gateway_turn) ||
-                            ProvisionsReplyInterrupted() || manual_listening_requested_.load()) {
+                            GetProtocol()->session_id() != gateway_session) {
+                            return;
+                        }
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                        if (dictation_screen_.load()) {
+                            dictation_readback_.store(false);
+                            if (!dictation_heard_.empty()) {
+                                dictation_heard_at_us_ = esp_timer_get_time();
+                                dictation_heard_voice_done_ = true;
+                            }
+                            SetProvisionsResponsePending(false);
+                            Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+                            if (GetDeviceState() == kDeviceStateSpeaking)
+                                SetDeviceState(kDeviceStateIdle);
+                            ServiceDictation();
+                            return;
+                        }
+                        if (IsOrbitShoppingFace() || IsOrbitNotesFace()) {
+                            SetProvisionsResponsePending(false);
+                            Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+                            if (GetDeviceState() == kDeviceStateSpeaking)
+                                SetDeviceState(kDeviceStateIdle);
+                            return;
+                        }
+#endif
+                        if (!GetProtocol()->IsCurrentVoiceTurn(gateway_turn) ||
+                            ProvisionsReplyInterrupted() ||
+                            manual_listening_requested_.load()) {
                             return;
                         }
                         SetProvisionsResponsePending(false);
@@ -1520,9 +1654,22 @@ void Application::InitializeProtocol() {
                     ]() {
                         if (!GetProtocol() || !GetProtocol()->IsAudioChannelOpened() ||
                             GetProtocol()->session_id() != gateway_session ||
-                            GetDeviceState() != kDeviceStateSpeaking ||
-                            !GetProtocol()->IsCurrentVoiceTurn(gateway_turn) ||
-                            ProvisionsReplyInterrupted() || manual_listening_requested_.load()) {
+                            GetDeviceState() != kDeviceStateSpeaking) {
+                            return;
+                        }
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+                        if (orbit_view_.load() == OrbitView::Shopping) {
+                            RememberShoppingListSpeech(message);
+                            return;
+                        }
+                        if (orbit_view_.load() == OrbitView::Notes)
+                            return;
+                        if (dictation_screen_.load())
+                            return;
+#endif
+                        if (!GetProtocol()->IsCurrentVoiceTurn(gateway_turn) ||
+                            ProvisionsReplyInterrupted() ||
+                            manual_listening_requested_.load()) {
                             return;
                         }
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
@@ -1715,7 +1862,11 @@ const char* Application::GetProvisionsIdleStatus() const {
 void Application::SetProvisionsResponsePending(bool pending) {
     provisions_response_pending_.store(pending);
     provisions_response_ticks_ = 0;
-    if (GetDeviceState() == kDeviceStateIdle) {
+    if (GetDeviceState() == kDeviceStateIdle
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+        && !dictation_screen_.load() && !IsOrbitShoppingFace() && !IsOrbitNotesFace()
+#endif
+    ) {
         Board::GetInstance().GetDisplay()->SetStatus(GetProvisionsIdleStatus());
     }
 }
@@ -2004,14 +2155,18 @@ void Application::HandleVoiceRecordingResult(provisions::VoiceRecorder::Result r
         return;
     }
     if (result == Result::DictationRecorded) {
-        std::lock_guard<std::mutex> lock(provisions_recording_control_mutex_);
-        if (press != 0 && provisions_physical_press_.IsCurrent(press) &&
-            !manual_listening_requested_.load()) {
-            auto& board = Board::GetInstance();
-            board.GetDisplay()->ShowLocalCaptureReceipt();
-            board.PulseLocalCaptureHaptic(90);
-            audio_service_.PlayLocalFeedback(Lang::Sounds::OGG_SUCCESS);
+        {
+            std::lock_guard<std::mutex> lock(provisions_recording_control_mutex_);
+            if (press != 0 && provisions_physical_press_.IsCurrent(press) &&
+                !manual_listening_requested_.load()) {
+                auto& board = Board::GetInstance();
+                if (!dictation_screen_.load())
+                    board.GetDisplay()->ShowLocalCaptureReceipt();
+                board.PulseLocalCaptureHaptic(90);
+                audio_service_.PlayLocalFeedback(Lang::Sounds::OGG_SUCCESS);
+            }
         }
+        ServiceDictation();
         return;
     }
     // Main-task result publication is serialized with recording startup.
@@ -2438,11 +2593,8 @@ bool Application::BeginLocalRecordingOnMain() {
             FenceDictationThrough(press);
             return false;
         }
-        if (recorder && recorder->DictationAuthorization() != dictation_authorization_seen_) {
+        if (recorder && recorder->DictationAuthorization() != dictation_authorization_seen_)
             dictation_authorization_seen_ = recorder->DictationAuthorization();
-            FenceDictationThrough(press);
-            return false;
-        }
         if (!recorder || !dictation_has_assignment_proof_) {
             FenceDictationThrough(press);
             return false;
@@ -2459,6 +2611,10 @@ bool Application::BeginLocalRecordingOnMain() {
     } else
         began = recorder && recorder->Begin(press, captured_ms);
     if (!began) {
+        // The previous clip still owns a buffer and still uploads. Saying the
+        // save failed here made a shopping add look rejected.
+        if (recorder && recorder->CaptureOpen())
+            return false;
         if (provisions_physical_press_.id() == press && manual_listening_requested_.load()) {
             provisions_recording_failed_.store(true);
             Schedule([this, press]() {
@@ -2485,23 +2641,32 @@ bool Application::BeginLocalRecordingOnMain() {
 }
 
 void Application::EndLocalRecordingOnMain() {
-    std::lock_guard<std::mutex> lock(provisions_recording_control_mutex_);
-    if (manual_listening_requested_.load())
-        return;  // An older stop event cannot close the newer still-held press.
-    const uint32_t press = provisions_physical_press_.id();
-    const uint32_t started = provisions_recording_started_press_;
-    if (auto recorder = std::atomic_load(&provisions_recorder_))
-        recorder->Release(press);
-    audio_service_.StopLocalRecording();
-    if (started != 0) {
+    {
+        std::lock_guard<std::mutex> lock(provisions_recording_control_mutex_);
+        if (manual_listening_requested_.load())
+            return;  // An older stop event cannot close the newer still-held press.
+        const uint32_t press = provisions_physical_press_.id();
+        const uint32_t started = provisions_recording_started_press_;
         if (auto recorder = std::atomic_load(&provisions_recorder_))
-            recorder->Release(started);
-        provisions_recording_saving_.store(!provisions_recording_failed_.load());
+            recorder->Release(press);
+        audio_service_.StopLocalRecording();
+        if (started != 0) {
+            if (auto recorder = std::atomic_load(&provisions_recorder_))
+                recorder->Release(started);
+            provisions_recording_saving_.store(!provisions_recording_failed_.load());
+        }
+        provisions_recording_started_press_ = 0;
+        audio_service_.CloseVoiceUploadGate();
+        if (!dictation_screen_.load())
+            audio_service_.ResetDecoder();
+        audio_service_.ReconcileLocalRecording(press);
     }
-    provisions_recording_started_press_ = 0;
-    audio_service_.CloseVoiceUploadGate();
-    audio_service_.ResetDecoder();
-    audio_service_.ReconcileLocalRecording(press);
+    if (dictation_screen_.load()) {
+        dictation_review_pending_ = true;
+        dictation_review_since_us_ = esp_timer_get_time();
+        if (dictation_heard_.empty() && dictation_heard_incoming_.empty())
+            Board::GetInstance().GetDisplay()->SetDictationScreen(true, "Saving", "Start");
+    }
 }
 
 void Application::RetrySavedVoiceRecording() {
@@ -2757,6 +2922,9 @@ void Application::HandleWakeWordDetectedEvent() {
             ;
 
         if (state == kDeviceStateListening) {
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+            GetProtocol()->SetListenShopping(orbit_view_.load() == OrbitView::Shopping);
+#endif
             GetProtocol()->SendStartListening(GetDefaultListeningMode());
             audio_service_.ResetDecoder();
             audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);
@@ -2849,6 +3017,9 @@ void Application::HandleStateChangedEvent() {
     switch (new_state) {
         case kDeviceStateUnknown:
         case kDeviceStateIdle:
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+            if (!dictation_screen_.load() && !IsOrbitShoppingFace() && !IsOrbitNotesFace()) {
+#endif
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
             display->SetStatus(GetProvisionsIdleStatus());
 #else
@@ -2856,6 +3027,9 @@ void Application::HandleStateChangedEvent() {
 #endif
             display->ClearChatMessages();    // Clear messages first
             display->SetEmotion("neutral");  // Then set emotion (wechat mode checks child count)
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+            }
+#endif
             audio_service_.EnableVoiceProcessing(false);
             audio_service_.EnableWakeWordDetection(true);
             break;
@@ -2866,13 +3040,16 @@ void Application::HandleStateChangedEvent() {
             break;
         case kDeviceStateListening:
 #if CONFIG_PROVISIONS_LOCAL_CAPTURE
+            if (!IsOrbitShoppingFace() && !IsOrbitNotesFace()) {
             display->SetStatus(audio_service_.IsLocalRecordingReady(provisions_physical_press_.id())
                                    ? Lang::Strings::LISTENING
                                    : "Preparing microphone");
+            display->SetEmotion("neutral");
+            }
 #else
             display->SetStatus(Lang::Strings::LISTENING);
-#endif
             display->SetEmotion("neutral");
+#endif
 
             // Make sure the audio processor is running
             if (play_popup_on_listening_ || !audio_service_.IsAudioProcessorRunning()) {
@@ -2890,7 +3067,10 @@ void Application::HandleStateChangedEvent() {
             }
             break;
         case kDeviceStateSpeaking:
-            display->SetStatus(Lang::Strings::SPEAKING);
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+            if (!dictation_screen_.load() && !IsOrbitShoppingFace() && !IsOrbitNotesFace())
+#endif
+                display->SetStatus(Lang::Strings::SPEAKING);
 
             if (listening_mode_ != kListeningModeRealtime) {
                 audio_service_.EnableVoiceProcessing(false);
@@ -2946,6 +3126,9 @@ void Application::StartListeningAudio() {
     const auto physical_press = provisions_physical_press_.id();
 #endif
     // Send the start listening command
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    GetProtocol()->SetListenShopping(orbit_view_.load() == OrbitView::Shopping);
+#endif
     GetProtocol()->SendStartListening(listening_mode_);
 #if CONFIG_PROVISIONS_GATEWAY_REQUIRED
     if (!GetProtocol()->IsCurrentVoiceTurn(GetProtocol()->voice_turn_id())) {
@@ -3076,7 +3259,10 @@ void Application::AbortSpeaking(AbortReason reason) {
     InvalidateProvisionsTtsTurn();
     SetProvisionsResponsePending(false);
     Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
-    Board::GetInstance().GetDisplay()->SetStatus("Listening");
+#if CONFIG_PROVISIONS_LOCAL_CAPTURE
+    if (!IsOrbitShoppingFace() && !IsOrbitNotesFace())
+#endif
+        Board::GetInstance().GetDisplay()->SetStatus("Listening");
     audio_service_.ResetDecoder();
     // Orbit Lite: the press cuts playback now and flushes the jitter buffer;
     // the abort frame below is the fork's existing shape
@@ -3471,6 +3657,13 @@ void Application::ServiceAlarmListening(bool ringing, bool ready, int64_t now_us
             (now_us >= alarm_hold_since_us_ + kHoldMinUs && turn_quiet)) {
             alarm_output_held_ = false;
             display->PauseTimerAlarmOutput(false);
+            // The ring resumes here, on phase 0 (motor). Count the spacing to
+            // the next window from this resume: measured from the window that
+            // opened, a hold of six seconds or more had already used it up, so
+            // the next window opened in this same pass and the chime - phase 1,
+            // one second after resume - never got a beat. Motor blip, no sound.
+            if (ringing && alarm_listen_next_us_ < now_us + kSpacingUs)
+                alarm_listen_next_us_ = now_us + kSpacingUs;
         }
     }
     const uint32_t open_press = alarm_listen_open_press_.load();
@@ -3497,7 +3690,10 @@ void Application::ServiceAlarmListening(bool ringing, bool ready, int64_t now_us
         alarm_listen_attempts_ = 0;
         alarm_listen_next_us_ = 0;
         alarm_listen_blocked_logged_ = false;
-        alarm_listen_press_.store(0);
+        // alarm_listen_press_ deliberately stays set: the window's capture is
+        // still on its way up after a tap or button dismissal, and untagged it
+        // becomes an ordinary question the gateway answers with "I didn't
+        // catch that". The next window or a fresh talk press replaces it.
         return;
     }
     if (alarm_listen_attempts_ == 0 && alarm_listen_next_us_ == 0) {
@@ -3507,6 +3703,12 @@ void Application::ServiceAlarmListening(bool ringing, bool ready, int64_t now_us
     if (open_press != 0 || alarm_output_held_ || alarm_listen_attempts_ >= kMaxWindows)
         return;
     if (alarm_listen_next_us_ != 0 && now_us < alarm_listen_next_us_)
+        return;
+    // Never open a window over the spoken timer name or a chime beat:
+    // PauseTimerAlarmOutput(true) cancels the clip and StartListening clears
+    // the output queue, so the ring would click and fall silent. The chime is
+    // 0.9 s of every 2 s beat; the next pass finds the speaker idle.
+    if (!audio_service_.IsPlaybackIdle())
         return;
     const auto protocol = GetProtocol();
     const bool connected = protocol && protocol->IsAudioChannelOpened();
@@ -3540,6 +3742,18 @@ void Application::ServiceAlarmListening(bool ringing, bool ready, int64_t now_us
     ++alarm_listen_attempts_;
     ESP_LOGI(TAG, "alarm listening window %d/%d press=%u", alarm_listen_attempts_, kMaxWindows,
              static_cast<unsigned>(press));
+}
+
+void Application::AbortAlarmListening() {
+    // The chef already acked with blue. Close the automatic window so the
+    // next clip is not kitchen noise spoken back as "I didn't catch that".
+    constexpr int kMaxWindows = 6;
+    alarm_listen_attempts_ = kMaxWindows;
+    alarm_listen_next_us_ = 0;
+    alarm_listen_close_us_ = 0;
+    alarm_listen_open_press_.store(0);
+    if (manual_listening_requested_.load())
+        StopListening();
 }
 
 void Application::NoteTalkPressDown(int64_t now_us) {
@@ -3578,4 +3792,5 @@ void Application::DismissDueTimers() {
 #else
 void Application::NoteTalkPressDown(int64_t) {}
 void Application::DismissDueTimers() {}
+void Application::AbortAlarmListening() {}
 #endif

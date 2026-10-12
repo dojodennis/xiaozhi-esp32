@@ -77,3 +77,7 @@ CONFIG_LV_USE_WIN=n
 
 CONFIG_LV_BUILD_EXAMPLES=n
 CONFIG_LV_BUILD_DEMOS=n
+
+# Named so the component manager can evaluate espressif/esp_h264 on ESP32-S3.
+# Leave off. Orbit does not fetch that component.
+CONFIG_ESP_VIDEO_USE_CUSTOMIZED_ESP_H264_VERSION=n

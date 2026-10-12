@@ -57,21 +57,26 @@ timer takeover owns blue while a timer is due.
 | Gesture | Where | Result |
 | --- | --- | --- |
 | Talk hold | any face | Records while held and sends on release. Capture starts 150 ms after press-down (the chord window). |
-| Talk tap shorter than 150 ms | any face | Nothing: the microphone never opens. |
-| Talk + blue together (within 150 ms, either order) | any face | Toggles the timer face (the orbit dial, "NO TIMERS" when empty). Neither single-button action fires; blue click/double/long from that press are swallowed. |
-| Talk + blue together again | timer face | Back to the normal face (also after 30 s idle; a Talk press on the face resets the 30 s). |
+| Talk tap shorter than 150 ms | menu | Confirms the highlighted item ("Shopping list" or "Timers") on release. The microphone never opens. |
+| Talk tap shorter than 150 ms | otherwise | Nothing: the microphone never opens. |
+| Thumb swipe left or right | any face (not while ringing) | Swaps the shopping list and the timer dial; either direction flips to the other face. |
+| Thumb swipe up or down | shopping list | Pages the list one screenful; finger moving down pulls older items into view. |
+| Tap (no swipe) | timer side | Toggles the six-timer overview, on release. |
+| Any touch | ringing takeover | Dismisses the due timers on first contact. |
+| Talk + blue together, held | any face | Locks the glass after both buttons have been down for 0.6 s (press them within 150 ms of each other). The screen dims to a padlock. Touches and single buttons do nothing, so a pocket cannot start a recording. A ringing timer can still be stopped. |
+| Talk + blue together, held | lock screen | Unlocks and restores the face that was underneath. |
+| Thumb swipe left or right | menu | Flips the logo between the shopping list and the timers. Yellow confirms. |
 | Talk hold | timer face | Records as normal, so "set a timer for ..." works from the dial. |
 | Blue click / double / long | ringing takeover | Silences (motor off, takeover stays). |
 | Blue click / double / long | silenced takeover | Dismisses every due timer: takeover clears, motor stays off, and each timer is reported to the gateway (`timer` / `dismiss`). |
-| Blue click | dictation screen | Dictation control. |
-| Blue click | otherwise | Volume: pilot floor <-> maximum. |
+| Blue click | otherwise | Opens the menu ("Shopping list" / "Timers"); in the menu, advances the highlight. Yellow confirms. |
 | Blue double-click | otherwise | Opens/closes the dictation screen. |
 | Blue long-press | otherwise | Retries a saved recording the server offered a retry for. |
 
 Two-button chord: pressing Talk and blue within 150 ms of each other is one
 gesture. The Talk start is held for that window so a chord never leaves a
 stray capture; a normal Talk hold therefore begins recording 150 ms after
-the press.
+the press. Holding the chord for 0.6 s locks or unlocks the glass.
 
 -----------
 ## hardware

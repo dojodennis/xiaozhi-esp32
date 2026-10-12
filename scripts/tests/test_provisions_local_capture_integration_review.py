@@ -50,7 +50,8 @@ constexpr int kDeviceStateIdle=0;
 static constexpr const char* TAG="review";
 #define ESP_LOGW(...) ((void)0)
 void xEventGroupSetBits(int,int){}
-namespace Lang {namespace Sounds {constexpr std::string_view OGG_SUCCESS="success tone";}}
+namespace Lang {namespace Sounds {constexpr std::string_view OGG_SUCCESS="success tone",OGG_POPUP="popup";}}
+int64_t esp_timer_get_time(){return 0;}
 namespace provisions {
 namespace feedback {
 constexpr std::string_view kSaved="Saved on Orbit. I'll sync when connected.";
@@ -68,6 +69,7 @@ struct VoiceRecorder {
     bool CanRetry() const {return false;}
     std::function<void()> before_begin;
     bool Begin(uint32_t press,uint64_t){if(before_begin)before_begin();if(!allow_begin)return false;begun=press;return true;}
+    bool CaptureOpen() const{return false;}
     void Release(uint32_t press){released=press;}
     void RequestReplay(){++replays;}
 };
@@ -77,6 +79,7 @@ struct Display {
     void SetChatMessage(const char* r,const char* t){role=r;text=t;}
     void SetStatus(const char* value){status=value;}
     void ShowLocalCaptureReceipt(int=1800){++local_receipts;}
+    void SetDictationScreen(bool,const std::string&,const std::string&){}
 };
 struct Board {
     Display display;unsigned haptics=0;uint32_t haptic_ms=0;
@@ -112,6 +115,7 @@ struct Application {
     uint32_t dictation_authorization_seen_=0;bool dictation_has_assignment_proof_=false;std::string dictation_assignment_proof_;
     void FenceDictationThrough(uint32_t press){dictation_closed_press_=press;}
     void ServiceDictation(){} void HandleStartListeningEvent(){}
+    bool IsOrbitShoppingFace()const{return false;}
 
     std::mutex provisions_recording_control_mutex_;
     ProvisionsReplyTurn provisions_physical_press_;
@@ -132,6 +136,9 @@ struct Application {
         alert_status=status;alert_text=text;alert_sound=std::string(sound);
     }
     uint32_t provisions_recording_started_press_=0;
+    bool dictation_review_pending_=false;int64_t dictation_review_since_us_=0;
+    std::string dictation_heard_,dictation_heard_incoming_;
+    void PlaySound(std::string_view){}
     bool BeginLocalRecordingOnMain();void EndLocalRecordingOnMain();
     void StartAndRun(){StartListening();BeginLocalRecordingOnMain();}
     void StopAndRun(){StopListening();EndLocalRecordingOnMain();}
@@ -421,6 +428,10 @@ int main(){
 #define AS_EVENT_LOCAL_RECORDING_RUNNING 4
 void xEventGroupSetBits(int,int) {}
 void xEventGroupClearBits(int,int) {}
+int64_t esp_timer_get_time(){return 0;}
+namespace Lang {namespace Sounds {constexpr const char* OGG_POPUP="popup";}}
+struct Display {void SetDictationScreen(bool,const std::string&,const std::string&){}};
+struct Board {Display display;static Board& GetInstance(){static Board b;return b;}Display* GetDisplay(){return &display;}};
 struct Latch {
     std::mutex mutex;std::condition_variable changed;bool set=false;
     void signal(){std::lock_guard<std::mutex> lock(mutex);set=true;changed.notify_all();}
@@ -442,6 +453,7 @@ struct VoiceRecorder {
     std::function<void(uint32_t)> after_begin;
     VoiceRecorder(){context.conversation_id[0]=1;}
     bool Begin(uint32_t press,uint64_t time){bool ok=core.Begin(press,context,time);if(after_begin)after_begin(press);return ok;}
+    bool CaptureOpen() const{return !core.IsIdle();}
     void Release(uint32_t press){core.Release(press);}
     void Fail(uint32_t press){core.Fail(press);core.Release(press);}
 };
@@ -469,6 +481,7 @@ struct Application {
     uint32_t dictation_authorization_seen_=0;bool dictation_has_assignment_proof_=false;std::string dictation_assignment_proof_;
     void FenceDictationThrough(uint32_t press){dictation_closed_press_=press;}
     void ServiceDictation(){} void HandleStartListeningEvent(){}
+    bool IsOrbitShoppingFace()const{return false;}
 
     ProvisionsReplyTurn provisions_physical_press_;
     std::atomic<bool> manual_listening_requested_{false},has_server_time_{false};
@@ -481,6 +494,9 @@ struct Application {
     void Schedule(std::function<void()>){ }
     void HandleVoiceRecordingResult(provisions::VoiceRecorder::Result,uint32_t){}
     uint32_t provisions_recording_started_press_=0;
+    bool dictation_review_pending_=false;int64_t dictation_review_since_us_=0;
+    std::string dictation_heard_,dictation_heard_incoming_;
+    void PlaySound(const char*){}
     bool BeginLocalRecordingOnMain();void EndLocalRecordingOnMain();
     void StartAndRun(){StartListening();BeginLocalRecordingOnMain();}
     void StopAndRun(){StopListening();EndLocalRecordingOnMain();}
@@ -572,10 +588,11 @@ TaskHandle_t xTaskGetCurrentTaskHandle(){return current_task;}
 void xEventGroupSetBits(int,int){}
 namespace provisions {
 struct VoiceReplay {VoiceCapture capture;size_t bytes=0;uint8_t* frames=nullptr;};
-std::string VoiceCaptureStart(const VoiceReplay&,const std::string&,uint32_t turn,bool deferred,bool alarm_stop){
-    return "start:"+std::to_string(turn)+(deferred?":deferred":":live")+(alarm_stop?":alarm_stop":"");
+std::string VoiceCaptureStart(const VoiceReplay&,const std::string&,uint32_t turn,bool deferred,bool alarm_stop,bool shopping=false){
+    return "start:"+std::to_string(turn)+(deferred?":deferred":":live")+(alarm_stop?":alarm_stop":"")+(shopping?":shopping":"");
 }
 }
+bool ProvisionsListenShopping(){return false;}
 struct Observed {
     std::vector<std::string> frames;TaskHandle_t disposal=nullptr;
     unsigned closes=0;bool connected=true;
@@ -706,6 +723,7 @@ struct Application {
     uint32_t dictation_authorization_seen_=0;bool dictation_has_assignment_proof_=false;std::string dictation_assignment_proof_;
     void FenceDictationThrough(uint32_t press){dictation_closed_press_=press;}
     void ServiceDictation(){} void HandleStartListeningEvent(){}
+    bool IsOrbitShoppingFace()const{return false;}
 
     std::shared_ptr<Protocol> protocol=std::make_shared<Protocol>();
     std::unique_ptr<Ota> ota_=std::make_unique<Ota>();
@@ -791,6 +809,7 @@ struct Application {
     uint32_t dictation_authorization_seen_=0;bool dictation_has_assignment_proof_=false;std::string dictation_assignment_proof_;
     void FenceDictationThrough(uint32_t press){dictation_closed_press_=press;}
     void ServiceDictation(){} void HandleStartListeningEvent(){}
+    bool IsOrbitShoppingFace()const{return false;}
 
     std::atomic<bool> provisions_recording_failed_{false},provisions_recording_saving_{false},provisions_response_pending_{false};
     std::atomic<const char*> lite_idle_status_{nullptr};

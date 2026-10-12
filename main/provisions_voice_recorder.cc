@@ -241,6 +241,10 @@ void VoiceRecorder::Release(uint32_t press) {
         Wake();
     }
 }
+bool VoiceRecorder::CaptureOpen() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return recording_ && !recording_->IsIdle();
+}
 void VoiceRecorder::RequestReplay() {
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -775,10 +779,50 @@ bool VoiceRecorder::EvictForNewCapture(uint64_t now_unix_ms) {
     notify_(Result::Evicted, press);
     return true;
 }
+// Worker only. A needs_attention command recording is kept for an explicit
+// retry, but four of them fill the journal and every new note or shopping item
+// then reports "Couldn't save". Drop the oldest one so the new press can be
+// stored. Never a dictation segment, and never one the user just asked to retry.
+bool VoiceRecorder::EvictNeedsAttentionForNewCapture() {
+    if (!outbox_.journal())
+        return false;
+    size_t selected = VoiceOutbox::kSlots;
+    uint64_t oldest = UINT64_MAX;
+    VoiceId request_id{}, conversation_id{};
+    for (size_t slot = 0; slot < VoiceOutbox::kSlots; ++slot) {
+        if (!attention_[slot] || retry_pending_[slot])
+            continue;
+        SavedVoiceCapture saved;
+        if (outbox_.journal()->Read(slot, saved) != VoiceStoreResult::Ok ||
+            saved.capture.IsDictation() || saved.sequence >= oldest)
+            continue;
+        selected = slot;
+        oldest = saved.sequence;
+        request_id = saved.capture.request_id;
+        conversation_id = saved.capture.conversation_id;
+    }
+    if (selected == VoiceOutbox::kSlots ||
+        outbox_.journal()->RemoveAfterReceipt(selected, request_id, conversation_id) !=
+            VoiceStoreResult::Ok)
+        return false;
+    const uint32_t press = presses_[selected];
+    attention_[selected] = false;
+    offered_[selected] = false;
+    offers_[selected] = 0;
+    retry_tokens_[selected] = {};
+    retry_used_[selected] = retry_pending_[selected] = false;
+    awaiting_receipt_[selected] = false;
+    awaiting_receipt_unix_ms_[selected] = 0;
+    awaiting_receipt_mono_us_[selected] = 0;
+    ForgetAwaitingReceipt(selected);
+    notify_(Result::Evicted, press);
+    return true;
+}
 VoiceStoreResult VoiceRecorder::Store(const VoiceCapture& capture, VoiceBytes frames,
                                       SavedVoiceCapture& saved) {
     auto result = outbox_.journal()->Save(capture, frames, saved);
-    if (result == VoiceStoreResult::Full && EvictForNewCapture(capture.captured_unix_ms))
+    if (result == VoiceStoreResult::Full &&
+        (EvictForNewCapture(capture.captured_unix_ms) || EvictNeedsAttentionForNewCapture()))
         result = outbox_.journal()->Save(capture, frames, saved);
     return result;
 }

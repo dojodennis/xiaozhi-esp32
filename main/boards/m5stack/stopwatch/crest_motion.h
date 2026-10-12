@@ -64,7 +64,7 @@ inline const char* Caption(State state) {
         case State::Connecting:
             return "Connecting";
         case State::Thinking:
-            return "Thinking";
+            return "";
         case State::Error:
             return "Please try again";
         default:

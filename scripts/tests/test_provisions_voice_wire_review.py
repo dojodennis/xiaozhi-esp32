@@ -152,6 +152,14 @@ int main() {
     start=parse(VoiceCaptureStart(replay,session,1,false));cap=cJSON_GetObjectItemCaseSensitive(start.get(),"capture");
     assert(cJSON_IsNull(cJSON_GetObjectItemCaseSensitive(cap,"source_request_id")));
     assert(cJSON_IsNull(cJSON_GetObjectItemCaseSensitive(cap,"source_revision")));
+    assert(cJSON_GetArraySize(start.get())==8);
+    assert(cJSON_GetObjectItemCaseSensitive(start.get(),"shopping")==nullptr);
+    auto shop=parse(VoiceCaptureStart(replay,session,1,false,false,true));
+    assert(cJSON_GetArraySize(shop.get())==9);
+    assert(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(shop.get(),"shopping")));
+    auto alarm_shop=parse(VoiceCaptureStart(replay,session,1,false,true,true));
+    assert(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(alarm_shop.get(),"alarm_stop")));
+    assert(cJSON_GetObjectItemCaseSensitive(alarm_shop.get(),"shopping")==nullptr);
 
     const std::string retry="44444444-5555-4666-8777-888888888888";
     for(bool used:{false,true}) {

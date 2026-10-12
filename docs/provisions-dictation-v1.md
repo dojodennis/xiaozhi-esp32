@@ -74,7 +74,11 @@ sequence, terminal state, transcript-persisted flag, metadata, digest and byte c
 are checked. The inner segment UUID is a separately validated server ID. A terminal
 manifest update commits before the raw slot is erased, preserving total counts
 when acknowledged slots are reclaimed. Pending, failed, unknown and malformed
-receipts leave the raw part intact. No transcript text returns to the screen.
+receipts leave the raw part intact. Raw journal text is never sent back. After a
+transcribed hold, the existing provisions success `text` may carry a number-first
+shopping face (printable ASCII, at most 48 characters, `|` as a line break). While
+the dictation panel is open that string is painted there with a local `RECORDED`
+or `TRY AGAIN` qualifier. It is not a transcript dump and must not say SAVED.
 
 Host validation compiles the production journal, NVS adapter, recording worker,
 wire parser, application press/mode/cap methods and AudioService capture fences.
